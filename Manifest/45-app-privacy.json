@@ -1,0 +1,264 @@
+{
+  "schema": 1,
+  "categories": [
+    {
+      "id": "app-privacy",
+      "name": "App permissions",
+      "order": 90,
+      "items": [
+        {
+          "id": "perm-account-info",
+          "settingsPath": "Settings > Privacy and security > Account info, and turn access back on.",
+          "symptoms": ["app cannot see my name", "profile picture missing in app", "account info blocked"],
+          "bloat": 1,
+          "name": "Account info",
+          "desc": "Stops apps reading your name, picture, and other account details. Written the same way the Settings toggle writes it, so you can turn any of it back on there.",
+          "risk": 0, "tier": 1, "default": true, "order": 57,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\userAccountInformation", "name": "Value", "kind": "String", "value": "Deny" }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "perm-contacts",
+          "settingsPath": "Settings > Privacy and security > Contacts, and turn access back on. Calendar, Email, and Messaging have their own pages beside it.",
+          "symptoms": ["contacts missing", "calendar not working", "mail cannot see contacts", "no contacts in app", "address book empty", "app cannot access email", "messages not working"],
+          "bloat": 1,
+          "name": "Contacts, calendar, email, and messages",
+          "desc": "Stops apps reading your contacts, appointments, mail, messages, and task lists.",
+          "riskNote": "Anything you actually use for mail, calendar, or messaging stops seeing that data - which for a Store mail or calendar app means it shows nothing. Each one is a separate switch in Settings, Privacy and security, so you can put back only what you need.",
+          "risk": 1, "tier": 2, "default": true, "order": 57,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\contacts", "name": "Value", "kind": "String", "value": "Deny" },
+                { "path": "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\appointments", "name": "Value", "kind": "String", "value": "Deny" },
+                { "path": "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\email", "name": "Value", "kind": "String", "value": "Deny" },
+                { "path": "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\chat", "name": "Value", "kind": "String", "value": "Deny" },
+                { "path": "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\userDataTasks", "name": "Value", "kind": "String", "value": "Deny" }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "perm-call-history",
+          "settingsPath": "Settings > Privacy and security > Call history, and turn access back on.",
+          "symptoms": ["phone link no calls", "call history missing", "cannot see calls"],
+          "bloat": 1,
+          "name": "Phone calls and call history",
+          "desc": "Stops apps placing calls through a paired phone or reading the call log.",
+          "risk": 0, "tier": 2, "default": true, "order": 57,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\phoneCall", "name": "Value", "kind": "String", "value": "Deny" },
+                { "path": "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\phoneCallHistory", "name": "Value", "kind": "String", "value": "Deny" }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "perm-notifications",
+          "settingsPath": "Settings > Privacy and security > Notifications, and turn notification access back on.",
+          "symptoms": ["app cannot read notifications", "notification mirroring broken", "phone link notifications missing", "notifications not forwarding"],
+          "bloat": 1,
+          "name": "Apps reading notifications",
+          "desc": "Stops apps reading the notifications other apps raise, which is how a companion app mirrors your alerts elsewhere.",
+          "risk": 0, "tier": 2, "default": true, "order": 57,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\userNotificationListener", "name": "Value", "kind": "String", "value": "Deny" }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "perm-diagnostics",
+          "settingsPath": "Settings > Privacy and security > App diagnostics, and turn access back on.",
+          "symptoms": ["app cannot see other apps", "task manager app broken", "optimizer not working"],
+          "bloat": 1,
+          "name": "App diagnostics",
+          "desc": "Stops one app reading which other apps are running, and their process details.",
+          "risk": 0, "tier": 2, "default": true, "order": 57,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\appDiagnostics", "name": "Value", "kind": "String", "value": "Deny" }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "perm-radios",
+          "settingsPath": "Settings > Privacy and security > Radios and Other devices, and turn access back on.",
+          "symptoms": ["bluetooth not working in app", "app cannot find devices", "cannot pair device", "bluetooth permission denied", "app cannot turn on bluetooth"],
+          "bloat": 1,
+          "name": "Radios and unpaired devices",
+          "desc": "Stops apps switching Bluetooth and Wi-Fi radios on or off, and stops them talking to nearby devices you have not paired.",
+          "riskNote": "An app that legitimately drives a wireless accessory - a headset utility, a fitness tracker, a game controller companion - loses the ability to find or reconnect to it until you allow it again in Settings.",
+          "risk": 1, "tier": 2, "default": false, "order": 57,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\radios", "name": "Value", "kind": "String", "value": "Deny" },
+                { "path": "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\bluetoothSync", "name": "Value", "kind": "String", "value": "Deny" }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "perm-camera",
+          "settingsPath": "Settings > Privacy and security > Camera, and turn camera access back on for apps.",
+          "symptoms": ["camera not working", "webcam not working", "camera broken", "no camera found", "camera black screen", "camera not detected", "app cannot find camera", "video call no camera", "camera access denied", "camera permission", "zoom camera not working", "teams camera not working", "camera app not working"],
+          "bloat": 1,
+          "name": "Camera",
+          "desc": "Denies every Store app access to the camera. Desktop programs are not governed by this switch.",
+          "riskNote": "The Camera app, Windows Hello face sign-in, and any Store app you use for video calls stop seeing the camera. Desktop programs like Zoom or Discord are unaffected, because this setting only covers Store apps. Reversible here and in Settings.",
+          "risk": 1, "tier": 3, "default": false, "order": 57,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\webcam", "name": "Value", "kind": "String", "value": "Deny" }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "perm-mic",
+          "settingsPath": "Settings > Privacy and security > Microphone, and turn microphone access back on for apps.",
+          "symptoms": ["microphone not working", "mic not working", "no sound from mic", "mic not detected", "app cannot hear me", "nobody can hear me", "microphone access denied", "mic permission", "voice recording silent", "teams mic not working", "zoom mic not working", "discord mic not working", "no audio input"],
+          "bloat": 1,
+          "name": "Microphone",
+          "desc": "Denies every Store app access to the microphone. Desktop programs are not governed by this switch.",
+          "riskNote": "Voice typing, Store voice-call apps, and anything using the built-in speech stack stop hearing the microphone. Desktop programs are unaffected. Reversible here and in Settings.",
+          "risk": 1, "tier": 3, "default": false, "order": 57,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone", "name": "Value", "kind": "String", "value": "Deny" }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "perm-libraries",
+          "settingsPath": "Settings > Privacy and security > Documents, Pictures, Videos, and File system, and turn access back on for apps.",
+          "symptoms": ["app cannot open files", "cannot save file", "app has no permission", "access denied in app", "cannot open documents", "cannot see my pictures", "file access denied", "app cannot read folder"],
+          "bloat": 1,
+          "name": "Documents, Pictures, Videos, and the file system",
+          "desc": "Denies Store apps the blanket access to your libraries and to the rest of the disk. Files you hand an app through a file picker still open normally.",
+          "riskNote": "A Store photo or media app that browses your Pictures folder by itself will show an empty library. Opening a file through File Explorer or a file picker still works, because that grants access to the one file. Desktop programs are unaffected.",
+          "risk": 1, "tier": 3, "default": false, "order": 57,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\documentsLibrary", "name": "Value", "kind": "String", "value": "Deny" },
+                { "path": "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\picturesLibrary", "name": "Value", "kind": "String", "value": "Deny" },
+                { "path": "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\videosLibrary", "name": "Value", "kind": "String", "value": "Deny" },
+                { "path": "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\broadFileSystemAccess", "name": "Value", "kind": "String", "value": "Deny" }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "perm-screen-capture",
+          "settingsPath": "Settings > Privacy and security > Screenshots and apps, and turn access back on.",
+          "symptoms": ["screen recording black", "screenshot black", "cannot record screen", "screen share not working", "screen capture broken", "black screen when sharing", "obs black screen", "recording shows nothing"],
+          "bloat": 1,
+          "name": "Screenshots and screen capture",
+          "desc": "Stops Store apps capturing the screen without the recording border.",
+          "riskNote": "Store screen recorders and screenshot tools stop working, and so does screen sharing in any Store app. The Snipping Tool and desktop capture programs like OBS are unaffected.",
+          "risk": 1, "tier": 3, "default": false, "order": 57,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\graphicsCaptureProgrammatic", "name": "Value", "kind": "String", "value": "Deny" },
+                { "path": "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\graphicsCaptureWithoutBorder", "name": "Value", "kind": "String", "value": "Deny" }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "perm-voice-activation",
+          "settingsPath": "Settings > Privacy and security > Voice activation, and turn wake words back on.",
+          "symptoms": ["wake word not working", "hey cortana not working", "voice assistant not responding", "voice activation off", "alexa not waking"],
+          "bloat": 1,
+          "name": "Wake words and voice activation",
+          "desc": "Stops apps listening for a wake word in the background, including above the lock screen.",
+          "risk": 0, "tier": 2, "default": true, "order": 57,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "Software\\Microsoft\\Speech_OneCore\\Settings\\VoiceActivation\\UserPreferenceForAllApps", "name": "AgentActivationEnabled", "kind": "DWord", "value": 0 },
+                { "path": "Software\\Microsoft\\Speech_OneCore\\Settings\\VoiceActivation\\UserPreferenceForAllApps", "name": "AgentActivationOnLockScreenEnabled", "kind": "DWord", "value": 0 }
+              ]
+            },
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\AppPrivacy", "name": "LetAppsActivateWithVoice", "kind": "DWord", "value": 2 },
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\AppPrivacy", "name": "LetAppsActivateWithVoiceAboveLock", "kind": "DWord", "value": 2 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "perm-speech-online",
+          "settingsPath": "Settings > Privacy and security > Speech, and turn online speech recognition back on.",
+          "symptoms": ["dictation not working", "speech recognition not working", "voice typing broken", "win+h not working", "cannot dictate"],
+          "bloat": 1,
+          "name": "Online speech recognition",
+          "desc": "Stops speech being sent to Microsoft for recognition. Offline dictation and accessibility speech still work.",
+          "risk": 0, "tier": 1, "default": true, "order": 57,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "Software\\Microsoft\\Speech_OneCore\\Settings\\OnlineSpeechPrivacy", "name": "HasAccepted", "kind": "DWord", "value": 0 }
+              ]
+            },
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\InputPersonalization", "name": "AllowInputPersonalization", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "perm-ai",
+          "settingsPath": "Settings > Privacy and security > Generative AI, and turn access back on for the app.",
+          "symptoms": ["app cannot use ai", "ai permission denied", "app says no ai access", "ai blocked for app"],
+          "bloat": 1,
+          "name": "App access to on-device AI",
+          "desc": "Stops apps calling the generative AI and on-device model APIs Windows now exposes to them. Policy rather than a per-user switch, because Windows does not offer one yet.",
+          "risk": 0, "tier": 1, "default": true, "order": 57,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\AppPrivacy", "name": "LetAppsAccessGenerativeAI", "kind": "DWord", "value": 2 },
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\AppPrivacy", "name": "LetAppsAccessSystemAIModels", "kind": "DWord", "value": 2 }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

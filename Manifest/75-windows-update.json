@@ -1,0 +1,251 @@
+{
+    "schema":  1,
+    "categories":  [
+                       {
+                           "id":  "update",
+                           "name":  "Windows Update behavior",
+                           "order":  110,
+                           "items":  [
+                                         {
+                                             "id":  "wu-no-restart-signed-in",
+                                             "settingsPath": "Settings > Windows Update > Advanced options.",
+                                             "symptoms": ["pc not restarting for updates", "updates waiting to restart"],
+                                             "name":  "Never restart while someone is signed in",
+                                             "desc":  "Windows waits for the machine to be idle and signed out instead of restarting under you.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  70,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU",
+                                                                                    "name":  "NoAutoRebootWithLoggedOnUsers",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "wu-early-updates",
+                                             "settingsPath": "Settings > Windows Update, and turn on Get the latest updates as soon as they are available.",
+                                             "symptoms": ["updates arriving late", "not getting updates early"],
+                                             "name":  "Opt out of early update delivery",
+                                             "desc":  "Turns off 'get the latest updates as soon as they are available', so this machine is not in the first wave.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  71,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Microsoft\\WindowsUpdate\\UX\\Settings",
+                                                                                    "name":  "IsContinuousInnovationOptedIn",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "wu-restart-nags",
+                                             "settingsPath": "Undo the run.",
+                                             "symptoms": ["no restart reminder", "missed an update restart"],
+                                             "name":  "Restart reminders and notifications",
+                                             "desc":  "Stops the 'restart now' toasts and the full-screen reminder after an update installs.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  72,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Microsoft\\WindowsUpdate\\UX\\Settings",
+                                                                                    "name":  "SetAutoRestartNotificationDisable",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Microsoft\\WindowsUpdate\\UX\\Settings",
+                                                                                    "name":  "RestartNotificationsAllowed2",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate",
+                                                                                    "name":  "SetAutoRestartNotificationDisable",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  2,
+                                             "riskNote":  "You stop being told a restart is pending. The restart still happens eventually, so this trades a warning for quiet - check Windows Update yourself now and then."
+                                         },
+                                         {
+                                             "id":  "wu-no-drivers",
+                                             "settingsPath": "Settings > Windows Update > Advanced options > Optional updates, or install the driver from the manufacturer.",
+                                             "symptoms": ["driver missing", "no driver found", "device not working", "unknown device", "driver not installing", "windows update no drivers", "hardware not detected", "yellow triangle in device manager"],
+                                             "name":  "Keep drivers out of Windows Update",
+                                             "desc":  "Quality updates stop carrying driver packages, so Windows cannot replace a working driver with its own.",
+                                             "risk":  1,
+                                             "default":  true,
+                                             "order":  73,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate",
+                                                                                    "name":  "ExcludeWUDriversInQualityUpdate",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  4,
+                                             "riskNote":  "New hardware you plug in may not get a driver automatically any more - you fetch it from the vendor instead. Security updates are unaffected; this is only the driver half."
+                                         },
+                                         {
+                                             "id":  "wu-defer-feature",
+                                             "settingsPath": "Settings > Windows Update > Advanced options, and clear the feature update deferral. Undoing the run does the same.",
+                                             "symptoms": ["not offered new windows", "cannot upgrade windows", "feature update missing", "stuck on old version", "windows 11 upgrade not offered", "version update not showing", "no new version", "update deferred"],
+                                             "name":  "Defer annual feature updates",
+                                             "desc":  "Holds the annual Windows version upgrade back. Monthly security updates keep arriving normally. 365 days unless you set your own below.",
+                                             "risk":  1,
+                                             "default":  true,
+                                             "order":  74,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "script",
+                                                                 "handler":  "SetUpdateDeferral",
+                                                                 "kind":  "feature",
+                                                                 "days":  365
+                                                             }
+                                                         ],
+                                             "tier":  4,
+                                             "riskNote":  "A feature update is the one thing that reliably undoes a debloat, which is why this is here - but a version that goes out of support stops getting security updates entirely. Windows also force-installs a feature update once your build is near end of service, deferral or not. Home editions ignore this policy."
+                                         },
+                                         {
+                                             "id":  "wu-defer-quality",
+                                             "settingsPath": "Settings > Windows Update > Advanced options, and clear the quality update deferral. Undoing the run does the same.",
+                                             "symptoms": ["updates late", "updates delayed", "no updates yet", "patch tuesday missing", "security update late", "updates not appearing", "update held back"],
+                                             "name":  "Defer monthly security updates",
+                                             "desc":  "Delays quality updates, so a bad patch has time to be pulled before it reaches this machine. 7 days unless you set your own below.",
+                                             "risk":  2,
+                                             "default":  false,
+                                             "order":  75,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "script",
+                                                                 "handler":  "SetUpdateDeferral",
+                                                                 "kind":  "quality",
+                                                                 "days":  7
+                                                             }
+                                                         ],
+                                             "tier":  0,
+                                             "riskNote":  "Opt-in because it delays security patches. Seven days of exposure to something already being exploited is a real cost, and it buys you avoiding a bad patch that would probably have been pulled anyway. Home editions ignore this policy."
+                                         },
+                                         {
+                                             "id":  "wu-notify-first",
+                                             "settingsPath": "Settings > Windows Update > Advanced options, and let updates download automatically again.",
+                                             "symptoms": ["updates not downloading", "update waiting for me", "auto update off", "updates need clicking", "no automatic updates"],
+                                             "name":  "Ask before downloading updates",
+                                             "desc":  "Windows notifies you that updates are available and waits, instead of downloading and installing on its own.",
+                                             "risk":  2,
+                                             "default":  false,
+                                             "order":  76,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU",
+                                                                                    "name":  "NoAutoUpdate",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU",
+                                                                                    "name":  "AUOptions",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  2
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  0,
+                                             "riskNote":  "Nothing installs until you say so, which means nothing installs if you stop looking. This is the option that leaves machines years behind on patches. Home editions ignore it. Do not tick this and 'Turn Windows Update off' together - they set the same value and the last one wins."
+                                         },
+                                         {
+                                             "id":  "wu-other-products",
+                                             "settingsPath": "Settings > Windows Update > Advanced options, and turn on updates for other Microsoft products.",
+                                             "symptoms": ["office not updating", "other products not updating", "microsoft apps out of date"],
+                                             "name":  "Updates for other Microsoft products",
+                                             "desc":  "Stops Windows Update also servicing Office and other Microsoft software.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  77,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate",
+                                                                                    "name":  "AllowMUUpdateService",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  0,
+                                             "riskNote":  "Office stops being patched through Windows Update. Click-to-Run installs of Microsoft 365 update themselves separately and are unaffected, but an MSI Office install would stop getting security fixes."
+                                         },
+                                         {
+                                             "id":  "wu-off",
+                                             "settingsPath": "Settings > Windows Update. If it says your organization manages updates, undo the run - that removes the policy.",
+                                             "symptoms": ["no updates", "updates not working", "windows update broken", "update bugged", "windows update not working", "cannot update windows", "updates not downloading", "update stuck", "no security updates", "update service not running", "windows not updating", "update error", "managed by your organization", "update button missing", "auto update broken", "automatic updates off", "updates not installing", "update check fails"],
+                                             "bloat": 6,
+                                             "name":  "Turn Windows Update off completely",
+                                             "desc":  "Sets the policy that stops Windows checking for, downloading, or installing anything.",
+                                             "risk":  2,
+                                             "default":  false,
+                                             "order":  78,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU",
+                                                                                    "name":  "NoAutoUpdate",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  0,
+                                             "riskNote":  "This one is genuinely dangerous and no preset selects it. The machine stops receiving security updates, including fixes for flaws being exploited right now, and it will not tell you. Defender definitions still arrive through their own channel, which is the only thing standing between you and the internet afterwards. The services themselves are left running and are never disabled by this toolkit, so undoing it puts you straight back on updates."
+                                         }
+                                     ]
+                       }
+                   ]
+}

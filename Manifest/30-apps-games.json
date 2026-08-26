@@ -1,0 +1,566 @@
+{
+    "schema":  1,
+    "categories":  [
+                       {
+                           "id":  "consumer",
+                           "name":  "Social, streaming, and shopping apps",
+                           "order":  60,
+                           "items":  [
+                                         {
+                                             "id":  "social",
+                                             "settingsPath": "Reinstall from the Microsoft Store.",
+                                             "symptoms": ["social app missing", "facebook app gone", "instagram app gone", "tiktok missing"],
+                                             "bloat": 3,
+                                             "name":  "Social apps",
+                                             "desc":  "Instagram, TikTok, Facebook, Messenger, WhatsApp, X, and LinkedIn.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  50,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "*Instagram*",
+                                                                               "*TikTok*",
+                                                                               "*Facebook*",
+                                                                               "*Messenger*",
+                                                                               "*WhatsApp*",
+                                                                               "*Twitter*",
+                                                                               "*.X",
+                                                                               "*LinkedIn*",
+                                                                               "*Snapchat*",
+                                                                               "5319275A.WhatsAppDesktop"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "streaming",
+                                             "settingsPath": "Reinstall from the Microsoft Store.",
+                                             "symptoms": ["spotify missing", "netflix missing", "streaming app gone", "disney app missing"],
+                                             "bloat": 3,
+                                             "name":  "Streaming apps",
+                                             "desc":  "Prime Video, Netflix, Disney+, Hulu, Spotify, Amazon Music, and iHeartRadio.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  50,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "*PrimeVideo*",
+                                                                               "AmazonVideo*",
+                                                                               "*Netflix*",
+                                                                               "*Disney*",
+                                                                               "*Hulu*",
+                                                                               "SpotifyAB.SpotifyMusic",
+                                                                               "*Spotify*",
+                                                                               "*iHeartRadio*",
+                                                                               "*Plex*",
+                                                                               "*Twitch*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "shopping",
+                                             "settingsPath": "Reinstall from the Microsoft Store.",
+                                             "symptoms": ["shopping app missing", "travel app gone"],
+                                             "bloat": 3,
+                                             "name":  "Shopping and travel",
+                                             "desc":  "Amazon Shopping, Alexa, Kindle, Booking.com, Agoda, and eBay.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  50,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "*Amazon*",
+                                                                               "*Alexa*",
+                                                                               "*Kindle*",
+                                                                               "*Booking*",
+                                                                               "*Agoda*",
+                                                                               "*eBay*",
+                                                                               "*Wish*",
+                                                                               "*AliExpress*"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "uninstall",
+                                                                 "match":  [
+                                                                               "Booking.com*",
+                                                                               "Amazon*",
+                                                                               "Agoda*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "adobe",
+                                             "settingsPath": "Reinstall from adobe.com.",
+                                             "symptoms": ["adobe trial gone", "creative cloud missing"],
+                                             "bloat": 3,
+                                             "name":  "Adobe trialware",
+                                             "desc":  "Express, Photoshop Express, and Lightroom trial.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  51,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "AdobeSystemsIncorporated.*",
+                                                                               "*AdobeExpress*",
+                                                                               "*PhotoshopExpress*",
+                                                                               "*Lightroom*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "clipchamp",
+                                             "settingsPath": "Reinstall Clipchamp from the Microsoft Store.",
+                                             "symptoms": ["clipchamp missing", "video editor gone", "no video editor"],
+                                             "bloat": 3,
+                                             "name":  "Clipchamp",
+                                             "desc":  "Microsoft\u0027s bundled video editor.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  51,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Clipchamp.Clipchamp",
+                                                                               "*Clipchamp*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "misc-promo",
+                                             "settingsPath": "Reinstall from the Microsoft Store.",
+                                             "symptoms": ["promo app missing"],
+                                             "bloat": 2,
+                                             "name":  "Assorted promo apps",
+                                             "desc":  "Duolingo, Audible, Opera GX, Grammarly, Dropbox promo, VPN promos, and WildTangent.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  51,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "*Duolingo*",
+                                                                               "*Audible*",
+                                                                               "*Opera*",
+                                                                               "*Grammarly*",
+                                                                               "*Dropbox*",
+                                                                               "*ExpressVPN*",
+                                                                               "*NordVPN*",
+                                                                               "*WildTangent*",
+                                                                               "*Keeper*",
+                                                                               "*McAfee*"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "uninstall",
+                                                                 "match":  [
+                                                                               "Opera GX*",
+                                                                               "Opera Stable*",
+                                                                               "Dropbox*",
+                                                                               "ExpressVPN*",
+                                                                               "NordVPN*",
+                                                                               "WildTangent*",
+                                                                               "Wondershare*",
+                                                                               "Keeper Password*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "cdm",
+                                             "settingsPath": "Undo the run.",
+                                             "symptoms": ["apps not reinstalling", "no suggested apps", "store suggestions gone"],
+                                             "bloat": 2,
+                                             "name":  "Kill ContentDeliveryManager",
+                                             "desc":  "The mechanism that silently installs all of the above. Without this they come back at next sign-in.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  52,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+                                                                                    "name":  "ContentDeliveryAllowed",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+                                                                                    "name":  "SilentInstalledAppsEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+                                                                                    "name":  "PreInstalledAppsEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+                                                                                    "name":  "OemPreInstalledAppsEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+                                                                                    "name":  "PreInstalledAppsEverEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+                                                                                    "name":  "SoftLandingEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+                                                                                    "name":  "SystemPaneSuggestionsEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+                                                                                    "name":  "FeatureManagementEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             },
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "guards":  [
+                                                                                "edition:enterprise"
+                                                                            ],
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent",
+                                                                                    "name":  "DisableWindowsConsumerFeatures",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent",
+                                                                                    "name":  "DisableConsumerAccountStateContent",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent",
+                                                                                    "name":  "DisableSoftLanding",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             },
+                                                             {
+                                                                 "type":  "task",
+                                                                 "tasks":  [
+                                                                               "\\Microsoft\\Windows\\PushToInstall\\*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         }
+                                     ]
+                       },
+                       {
+                           "id":  "games",
+                           "name":  "Games",
+                           "order":  50,
+                           "items":  [
+                                         {
+                                             "id":  "solitaire",
+                                             "settingsPath": "Reinstall Microsoft Solitaire Collection from the Microsoft Store.",
+                                             "symptoms": ["solitaire missing", "solitaire gone", "no card games"],
+                                             "bloat": 3,
+                                             "name":  "Microsoft Solitaire Collection",
+                                             "desc":  "Includes its advertising component.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  53,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.MicrosoftSolitaireCollection",
+                                                                               "*Solitaire*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "king-games",
+                                             "settingsPath": "Reinstall from the Microsoft Store.",
+                                             "symptoms": ["candy crush missing", "king games gone"],
+                                             "bloat": 2,
+                                             "name":  "King games",
+                                             "desc":  "Candy Crush Saga, Candy Crush Soda, Candy Crush Friends, Bubble Witch, and Farm Heroes.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  53,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "king.com.*",
+                                                                               "*CandyCrush*",
+                                                                               "*BubbleWitch*",
+                                                                               "*FarmHeroes*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "casual-games",
+                                             "settingsPath": "Reinstall from the Microsoft Store.",
+                                             "symptoms": ["games missing", "bundled games gone", "game removed"],
+                                             "bloat": 2,
+                                             "name":  "Other bundled games",
+                                             "desc":  "March of Empires, Asphalt 8, Royal Revolt, Hidden City, Disney Magic Kingdoms, and the Roblox promo.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  53,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "*MarchofEmpires*",
+                                                                               "*Asphalt*",
+                                                                               "*RoyalRevolt*",
+                                                                               "*HiddenCity*",
+                                                                               "*DisneyMagicKingdoms*",
+                                                                               "*Roblox*",
+                                                                               "*Gardenscapes*",
+                                                                               "*PhototasticCollage*",
+                                                                               "*PicsArt*",
+                                                                               "*Sway*",
+                                                                               "*Minecraft*Trial*",
+                                                                               "G5Entertainment*",
+                                                                               "GAMELOFTSA.*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "xbox-app",
+                                             "settingsPath": "Reinstall the Xbox app from the Microsoft Store.",
+                                             "symptoms": ["xbox app missing", "game pass missing", "xbox gone", "cannot find xbox app"],
+                                             "bloat": 3,
+                                             "name":  "Xbox app",
+                                             "desc":  "The Game Pass storefront and Xbox social client.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  54,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.GamingApp",
+                                                                               "Microsoft.XboxApp",
+                                                                               "Microsoft.Xbox.TCUI",
+                                                                               "Microsoft.XboxGameCallableUI"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  3,
+                                             "riskNote":  "You lose the storefront and Xbox social features. Games already installed keep working."
+                                         },
+                                         {
+                                             "id":  "gamebar",
+                                             "settingsPath": "Undo the run. Reinstalling Xbox Game Bar from the Microsoft Store on its own is not enough - the ms-gamebar, ms-gamebarservices, and ms-gamingoverlay stubs under Software\\Classes have to go with it.",
+                                             "symptoms": ["game bar not working", "win+g not working", "no game bar", "game overlay missing", "game bar missing", "cannot record game", "game bar will not open", "overlay not showing", "fps counter missing", "you'll need a new app to open ms-gamebar", "need a new app to open this link", "ms-gamebar popup", "ms-gamingoverlay popup", "popup when i connect a controller"],
+                                             "bloat": 3,
+                                             "name":  "Xbox Game Bar",
+                                             "desc":  "The Win+G game overlay.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  54,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.XboxGamingOverlay",
+                                                                               "Microsoft.XboxSpeechToTextOverlay"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\GameDVR",
+                                                                                    "name":  "AppCaptureEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\GameBar",
+                                                                                    "name":  "UseNexusForGameBarEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "Software\\Classes\\ms-gamebar",
+                                                                                    "name":  "URL Protocol",
+                                                                                    "kind":  "String",
+                                                                                    "value":  ""
+                                                                                },
+                                                                                {
+                                                                                    "path":  "Software\\Classes\\ms-gamebar\\shell\\open\\command",
+                                                                                    "name":  "(default)",
+                                                                                    "kind":  "String",
+                                                                                    "value":  "systray.exe"
+                                                                                },
+                                                                                {
+                                                                                    "path":  "Software\\Classes\\ms-gamebarservices",
+                                                                                    "name":  "URL Protocol",
+                                                                                    "kind":  "String",
+                                                                                    "value":  ""
+                                                                                },
+                                                                                {
+                                                                                    "path":  "Software\\Classes\\ms-gamebarservices\\shell\\open\\command",
+                                                                                    "name":  "(default)",
+                                                                                    "kind":  "String",
+                                                                                    "value":  "systray.exe"
+                                                                                },
+                                                                                {
+                                                                                    "path":  "Software\\Classes\\ms-gamingoverlay",
+                                                                                    "name":  "URL Protocol",
+                                                                                    "kind":  "String",
+                                                                                    "value":  ""
+                                                                                },
+                                                                                {
+                                                                                    "path":  "Software\\Classes\\ms-gamingoverlay\\shell\\open\\command",
+                                                                                    "name":  "(default)",
+                                                                                    "kind":  "String",
+                                                                                    "value":  "systray.exe"
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  2,
+                                             "riskNote":  "Removes the Win+G overlay. Some games use it for FPS counters, screenshots, and clip capture. The ms-gamebar, ms-gamebarservices, and ms-gamingoverlay links are pointed at a do-nothing stub so nothing asks for an app to open them; reinstalling Game Bar later needs this run undone as well, or those links stay inert."
+                                         },
+                                         {
+                                             "id":  "gamingservices",
+                                             "settingsPath": "Reinstall Gaming Services from the Microsoft Store, then restart. Undoing the run does the same thing.",
+                                             "symptoms": ["game will not install", "game will not launch", "game pass not working", "xbox app not signing in", "store game broken", "cannot install game", "game pass install error", "xbox sign in failed", "gaming services error", "game crashes on start"],
+                                             "bloat": 3,
+                                             "name":  "Gaming Services and Xbox Identity",
+                                             "desc":  "The Xbox sign-in and Game Pass runtime components.",
+                                             "risk":  2,
+                                             "default":  false,
+                                             "order":  55,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.GamingServices",
+                                                                               "Microsoft.XboxIdentityProvider"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  4,
+                                             "riskNote":  "Game Pass will stop working entirely and several PC games lose Xbox sign-in. This is hard to undo cleanly - reinstalling Gaming Services is notoriously awkward."
+                                         },
+                                         {
+                                             "id":  "gamedvr",
+                                             "settingsPath": "Settings > Gaming > Captures, and turn background recording back on.",
+                                             "symptoms": ["cannot record", "game recording not working", "win+alt+r not working", "clip recording broken", "background recording off", "no game clips", "capture not working"],
+                                             "bloat": 5,
+                                             "name":  "Disable Game DVR background recording",
+                                             "desc":  "A real performance win, and independent of whether Game Bar stays.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  55,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\GameDVR",
+                                                                                    "name":  "AllowGameDVR",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             },
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "System\\GameConfigStore",
+                                                                                    "name":  "GameDVR_Enabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "System\\GameConfigStore",
+                                                                                    "name":  "GameDVR_FSEBehaviorMode",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  2
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "xbox-svc",
+                                             "settingsPath": "services.msc, and set the Xbox services back to Manual.",
+                                             "symptoms": ["xbox slow to sign in", "xbox live not connecting", "game cannot reach xbox", "xbox services error", "multiplayer not working"],
+                                             "bloat": 5,
+                                             "name":  "Xbox services to Manual",
+                                             "desc":  "XblAuthManager, XblGameSave, and XboxNetApiSvc start on demand instead of at boot.",
+                                             "risk":  1,
+                                             "default":  true,
+                                             "order":  56,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "service",
+                                                                 "startupType":  "Manual",
+                                                                 "names":  [
+                                                                               "XblAuthManager",
+                                                                               "XblGameSave",
+                                                                               "XboxNetApiSvc",
+                                                                               "XboxGipSvc"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  2,
+                                             "riskNote":  "Xbox services move to on-demand start. Harmless for most people, but multiplayer sign-in may take a moment longer."
+                                         }
+                                     ]
+                       }
+                   ]
+}

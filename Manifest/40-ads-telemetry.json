@@ -1,0 +1,969 @@
+{
+    "schema":  1,
+    "categories":  [
+                       {
+                           "id":  "ads",
+                           "name":  "News, weather, widgets, and ads",
+                           "order":  70,
+                           "items":  [
+                                         {
+                                             "id":  "bingnews",
+                                             "settingsPath": "Reinstall Microsoft News from the Store.",
+                                             "symptoms": ["news app missing", "msn news gone"],
+                                             "bloat": 2,
+                                             "name":  "Microsoft News",
+                                             "desc":  "The Bing News app and its notification tasks.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  57,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.BingNews",
+                                                                               "*BingNews*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "bingweather",
+                                             "settingsPath": "Reinstall MSN Weather from the Store.",
+                                             "symptoms": ["weather app missing", "weather gone", "no weather app"],
+                                             "bloat": 2,
+                                             "name":  "MSN Weather",
+                                             "desc":  "",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  57,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.BingWeather",
+                                                                               "*BingWeather*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "widgets",
+                                             "settingsPath": "Settings > Personalization > Taskbar, and turn Widgets back on. The package itself may need reinstalling from the Store.",
+                                             "symptoms": ["widgets missing", "no weather on taskbar", "widgets not working", "weather gone", "news feed missing", "widgets button gone", "cannot open widgets"],
+                                             "bloat": 2,
+                                             "name":  "Widgets board and Windows Web Experience Pack",
+                                             "desc":  "The panel, the taskbar button, and Win+W. Uninstalls the Windows Web Experience Pack, which is the package the whole feature ships in.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  58,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.WidgetsPlatformRuntime",
+                                                                               "MicrosoftWindows.Client.WebExperience"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Dsh",
+                                                                                    "name":  "AllowNewsAndInterests",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             },
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                                                                                    "name":  "TaskbarDa",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  2
+                                         },
+                                         {
+                                             "id":  "spotlight",
+                                             "settingsPath": "Settings > Personalization > Lock screen, and set it back to Windows spotlight.",
+                                             "symptoms": ["lock screen picture not changing", "same lock screen every day", "spotlight not working", "lock screen stuck", "no daily image", "wallpaper not changing"],
+                                             "bloat": 2,
+                                             "name":  "Lock screen Spotlight ads",
+                                             "desc":  "Keeps the wallpapers, drops the ads, facts, and tips.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  59,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "guards":  [
+                                                                                "edition:enterprise"
+                                                                            ],
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent",
+                                                                                    "name":  "DisableWindowsSpotlightFeatures",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent",
+                                                                                    "name":  "DisableSpotlightCollectionOnDesktop",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             },
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent",
+                                                                                    "name":  "DisableThirdPartySuggestions",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             },
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+                                                                                    "name":  "RotatingLockScreenOverlayEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+                                                                                    "name":  "SubscribedContent-338387Enabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "start-rec",
+                                             "settingsPath": "Settings > Personalization > Start, and turn the recommendations back on.",
+                                             "symptoms": ["start menu recommended empty", "no recent files in start", "recommended section empty", "start menu blank section"],
+                                             "bloat": 2,
+                                             "name":  "Start menu Recommended section",
+                                             "desc":  "Plus the app promotions that appear in it.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  59,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer",
+                                                                                    "name":  "HideRecommendedSection",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Microsoft\\PolicyManager\\current\\device\\Start",
+                                                                                    "name":  "HideRecommendedSection",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             },
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+                                                                                    "name":  "SubscribedContent-338388Enabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                                                                                    "name":  "Start_IrisRecommendations",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "settings-ads",
+                                             "settingsPath": "Settings > Privacy and security > General, and turn suggested content back on.",
+                                             "symptoms": ["no suggestions in settings"],
+                                             "bloat": 2,
+                                             "name":  "Settings page recommendations",
+                                             "desc":  "The upsell cards on the Settings home page.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  59,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+                                                                                    "name":  "SubscribedContent-338393Enabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+                                                                                    "name":  "SubscribedContent-353694Enabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+                                                                                    "name":  "SubscribedContent-353696Enabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "start-account-nag",
+                                             "settingsPath": "Settings > Personalization > Start.",
+                                             "symptoms": ["no account notifications in start", "start menu account prompt gone", "no backup reminder in start"],
+                                             "bloat": 2,
+                                             "name":  "Account notifications in Start",
+                                             "desc":  "Removes the backup and Microsoft account prompts that appear above the power button.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  60,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                                                                                    "name":  "Start_AccountNotifications",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "oobe-nag",
+                                             "settingsPath": "Undo the run.",
+                                             "symptoms": ["no setup prompts", "finish setting up gone"],
+                                             "bloat": 2,
+                                             "name":  "Finish setting up your device nag",
+                                             "desc":  "The full-screen prompt that appears after updates.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  60,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\UserProfileEngagement",
+                                                                                    "name":  "ScoobeSystemSettingEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "tips",
+                                             "settingsPath": "Settings > System > Notifications, and turn the Windows tips boxes back on.",
+                                             "symptoms": ["no tips", "windows not showing tips"],
+                                             "bloat": 2,
+                                             "name":  "Tips and suggestion notifications",
+                                             "desc":  "",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  60,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+                                                                                    "name":  "SubscribedContent-338389Enabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+                                                                                    "name":  "SubscribedContent-310093Enabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "explorer-ads",
+                                             "settingsPath": "Undo the run.",
+                                             "symptoms": ["explorer banner gone", "no ads in file explorer"],
+                                             "bloat": 2,
+                                             "name":  "File Explorer banner ads",
+                                             "desc":  "Sync provider notifications, which is how Microsoft 365, and OneDrive advertise inside Explorer.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  60,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                                                                                    "name":  "ShowSyncProviderNotifications",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "ad-id",
+                                             "settingsPath": "Settings > Privacy and security > General, and turn the advertising ID back on.",
+                                             "symptoms": ["ads not personalized", "advertising id off", "generic ads"],
+                                             "bloat": 1,
+                                             "name":  "Advertising ID",
+                                             "desc":  "The per-user identifier used for ad personalization.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  60,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\AdvertisingInfo",
+                                                                                    "name":  "DisabledByGroupPolicy",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             },
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AdvertisingInfo",
+                                                                                    "name":  "Enabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "search-hl",
+                                             "settingsPath": "Settings > Privacy and security > Search permissions, and turn search highlights back on.",
+                                             "symptoms": ["search highlights missing", "no illustration in search box", "search box plain"],
+                                             "bloat": 2,
+                                             "name":  "Search highlights",
+                                             "desc":  "Sponsored content in taskbar and Start search. Sets the machine-wide policy alongside the per-user setting, so a feature update cannot turn it back on.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  60,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\SearchSettings",
+                                                                                    "name":  "IsDynamicSearchBoxEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Feeds",
+                                                                                    "name":  "ShellFeedsTaskbarViewMode",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  2
+                                                                                }
+                                                                            ]
+                                                             },
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search",
+                                                                                    "name":  "EnableDynamicContentInWSB",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         }
+                                     ]
+                       },
+                       {
+                           "id":  "privacy",
+                           "name":  "Telemetry and privacy",
+                           "order":  10,
+                           "items":  [
+                                         {
+                                             "id":  "diagtrack",
+                                             "settingsPath": "services.msc, find Connected User Experiences and Telemetry, and set it back to Automatic.",
+                                             "symptoms": ["telemetry off", "diagnostics not working", "feedback hub broken", "company cannot see diagnostics", "intune reporting broken", "management tool no data"],
+                                             "bloat": 1,
+                                             "name":  "DiagTrack service",
+                                             "desc":  "Connected User Experiences and Telemetry.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  61,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "service",
+                                                                 "startupType":  "Disabled",
+                                                                 "names":  [
+                                                                               "DiagTrack",
+                                                                               "dmwappushservice",
+                                                                               "diagnosticshub.standardcollector.service"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "telemetry-level",
+                                             "settingsPath": "Settings > Privacy and security > Diagnostics and feedback, and turn optional diagnostic data back on.",
+                                             "symptoms": ["diagnostic data off", "feedback hub not sending", "no diagnostics", "telemetry disabled", "support cannot see logs"],
+                                             "bloat": 1,
+                                             "name":  "Diagnostic data to minimum",
+                                             "desc":  "Sets the lowest level the edition allows. Home and Pro cannot go as low as Enterprise.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  61,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection",
+                                                                                    "name":  "AllowTelemetry",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection",
+                                                                                    "name":  "AllowDeviceNameInTelemetry",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection",
+                                                                                    "name":  "DoNotShowFeedbackNotifications",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection",
+                                                                                    "name":  "LimitDiagnosticLogCollection",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection",
+                                                                                    "name":  "LimitDumpCollection",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "ceip",
+                                             "settingsPath": "Task Scheduler, or undo the run.",
+                                             "symptoms": ["old program not working", "compatibility fix missing", "program compatibility broken"],
+                                             "bloat": 1,
+                                             "name":  "CEIP and Application Experience tasks",
+                                             "desc":  "Compatibility Appraiser, ProgramDataUpdater, Consolidator, UsbCeip, and KernelCeip.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  62,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "task",
+                                                                 "tasks":  [
+                                                                               "\\Microsoft\\Windows\\Application Experience\\Microsoft Compatibility Appraiser",
+                                                                               "\\Microsoft\\Windows\\Application Experience\\ProgramDataUpdater",
+                                                                               "\\Microsoft\\Windows\\Application Experience\\StartupAppTask",
+                                                                               "\\Microsoft\\Windows\\Application Experience\\PcaPatchDbTask",
+                                                                               "\\Microsoft\\Windows\\Customer Experience Improvement Program\\*",
+                                                                               "\\Microsoft\\Windows\\Autochk\\Proxy",
+                                                                               "\\Microsoft\\Windows\\DiskDiagnostic\\Microsoft-Windows-DiskDiagnosticDataCollector"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "feedback",
+                                             "settingsPath": "Settings > Privacy and security > Diagnostics and feedback, and set feedback frequency back to Automatically.",
+                                             "symptoms": ["no feedback prompts", "windows never asks for feedback"],
+                                             "bloat": 1,
+                                             "name":  "Feedback frequency to Never",
+                                             "desc":  "Plus the Siuf scheduled tasks.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  62,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Siuf\\Rules",
+                                                                                    "name":  "NumberOfSIUFInPeriod",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             },
+                                                             {
+                                                                 "type":  "task",
+                                                                 "tasks":  [
+                                                                               "\\Microsoft\\Windows\\Feedback\\Siuf\\*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "tailored",
+                                             "settingsPath": "Settings > Privacy and security > General, and turn tailored experiences back on.",
+                                             "symptoms": ["no suggestions", "windows not suggesting anything", "tips gone"],
+                                             "bloat": 1,
+                                             "name":  "Tailored experiences",
+                                             "desc":  "Using diagnostic data for personalized tips and ads.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  62,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Privacy",
+                                                                                    "name":  "TailoredExperiencesWithDiagnosticDataEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "activity",
+                                             "settingsPath": "Settings > Privacy and security > Activity history, and turn it back on.",
+                                             "symptoms": ["task view empty", "no recent activity", "timeline empty", "activity history missing", "recent apps gone"],
+                                             "bloat": 1,
+                                             "name":  "Activity history",
+                                             "desc":  "Local collection and cloud upload.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  62,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\System",
+                                                                                    "name":  "EnableActivityFeed",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\System",
+                                                                                    "name":  "PublishUserActivities",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\System",
+                                                                                    "name":  "UploadUserActivities",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "typing-data",
+                                             "settingsPath": "Settings > Privacy and security > Inking and typing personalization, and turn it back on.",
+                                             "symptoms": ["autocorrect worse", "touch keyboard not learning", "predictions bad", "typing suggestions wrong", "keyboard not learning words"],
+                                             "bloat": 1,
+                                             "name":  "Inking, typing, and speech data",
+                                             "desc":  "Stops inking, typing, and speech data being sent for personalization.",
+                                             "risk":  1,
+                                             "default":  true,
+                                             "order":  63,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Input\\TIPC",
+                                                                                    "name":  "Enabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\InputPersonalization",
+                                                                                    "name":  "RestrictImplicitTextCollection",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\InputPersonalization",
+                                                                                    "name":  "RestrictImplicitInkCollection",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Personalization\\Settings",
+                                                                                    "name":  "AcceptedPrivacyPolicy",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  3,
+                                             "riskNote":  "Stops sending typing and inking data to Microsoft. Autocorrect and text suggestions get slightly worse over time."
+                                         },
+                                         {
+                                             "id":  "location",
+                                             "settingsPath": "Settings > Privacy and security > Location, and turn location services back on.",
+                                             "symptoms": ["location not working", "gps not working", "weather wrong location", "maps cannot find me", "wrong time zone", "clock wrong", "weather showing wrong city", "app asking for location", "location services off", "find my location failed"],
+                                             "bloat": 1,
+                                             "name":  "Location services",
+                                             "desc":  "System-wide location services.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  63,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "service",
+                                                                 "startupType":  "Disabled",
+                                                                 "names":  [
+                                                                               "lfsvc"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\LocationAndSensors",
+                                                                                    "name":  "DisableLocation",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  3,
+                                             "riskNote":  "Breaks Find My Device, automatic time zone, and anything weather-related."
+                                         },
+                                         {
+                                             "id":  "delivery-opt",
+                                             "settingsPath": "Settings > Windows Update > Advanced options > Delivery Optimization, and allow downloads from other PCs.",
+                                             "symptoms": ["updates slow", "downloads slow", "update download slow"],
+                                             "bloat": 5,
+                                             "name":  "Delivery Optimization to LAN only",
+                                             "desc":  "Stops the machine seeding Windows updates to strangers over the internet.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  63,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\DeliveryOptimization",
+                                                                                    "name":  "DODownloadMode",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "wer",
+                                             "settingsPath": "services.msc, find Windows Error Reporting Service, and set it back to Manual.",
+                                             "symptoms": ["no crash reports", "error reporting off", "crash dump missing", "support wants a crash report", "no minidump"],
+                                             "bloat": 1,
+                                             "name":  "Windows Error Reporting",
+                                             "desc":  "Windows Error Reporting.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  63,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "service",
+                                                                 "startupType":  "Disabled",
+                                                                 "names":  [
+                                                                               "WerSvc"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "task",
+                                                                 "tasks":  [
+                                                                               "\\Microsoft\\Windows\\Windows Error Reporting\\QueueReporting"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  3,
+                                             "riskNote":  "Some vendor support workflows read Windows Error Reporting logs when diagnosing a fault."
+                                         },
+                                         {
+                                             "id":  "cortana",
+                                             "settingsPath": "Reinstall Cortana from the Microsoft Store.",
+                                             "symptoms": ["cortana missing", "cortana gone", "voice assistant missing"],
+                                             "bloat": 4,
+                                             "name":  "Cortana leftovers",
+                                             "desc":  "Residual packages, policies, and scheduled tasks.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  64,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.549981C3F5F10",
+                                                                               "*Cortana*"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search",
+                                                                                    "name":  "AllowCortana",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "edge-telemetry",
+                                             "settingsPath": "Undo the run, or check edge://settings/privacy.",
+                                             "symptoms": ["edge shopping missing", "edge coupons gone", "edge features missing"],
+                                             "bloat": 1,
+                                             "name":  "Edge telemetry and commerce",
+                                             "desc":  "Shopping, coupons, startup boost, background mode, and its telemetry.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  64,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge",
+                                                                                    "name":  "EdgeShoppingAssistantEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge",
+                                                                                    "name":  "ShowMicrosoftRewards",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge",
+                                                                                    "name":  "StartupBoostEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge",
+                                                                                    "name":  "BackgroundModeEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge",
+                                                                                    "name":  "PersonalizationReportingEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge",
+                                                                                    "name":  "UserFeedbackAllowed",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge",
+                                                                                    "name":  "DiagnosticData",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             },
+                                                             {
+                                                                 "type":  "task",
+                                                                 "tasks":  [
+                                                                               "\\MicrosoftEdgeUpdateTask*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "search-privacy",
+                                             "settingsPath": "Settings > Privacy and security > Search permissions, and turn cloud content search back on.",
+                                             "symptoms": ["search not suggesting", "no account results in search", "search personalization off"],
+                                             "bloat": 1,
+                                             "name":  "Search and personalization tracking",
+                                             "desc":  "Turns off the language-list hand-off to websites, app-launch tracking in Start and search, and cloud search of your Microsoft and work accounts.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  62,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "Control Panel\\International\\User Profile",
+                                                                                    "name":  "HttpAcceptLanguageOptOut",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                                                                                    "name":  "Start_TrackProgs",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\SearchSettings",
+                                                                                    "name":  "IsMSACloudSearchEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\SearchSettings",
+                                                                                    "name":  "IsAADCloudSearchEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             },
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search",
+                                                                                    "name":  "AllowCloudSearch",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "find-my-device",
+                                             "settingsPath": "Settings > Privacy and security > Find my device, and turn it back on.",
+                                             "symptoms": ["find my device not working", "cannot locate pc", "find my device off", "lost laptop tracking"],
+                                             "bloat": 1,
+                                             "name":  "Find My Device location reporting",
+                                             "desc":  "Stops Windows periodically reporting the machine's location to your Microsoft account.",
+                                             "risk":  1,
+                                             "default":  true,
+                                             "order":  62,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\FindMyDevice",
+                                                                                    "name":  "AllowFindMyDevice",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Microsoft\\Settings\\FindMyDevice",
+                                                                                    "name":  "LocationSyncEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  2,
+                                             "riskNote":  "If the machine is lost or stolen you will not be able to locate it from your Microsoft account. Nothing else depends on this."
+                                         }
+                                     ]
+                       }
+                   ]
+}

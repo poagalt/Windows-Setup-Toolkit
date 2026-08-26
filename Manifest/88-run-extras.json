@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "categories": [
+    {
+      "id": "run-extras",
+      "name": "Additional behaviors",
+      "section": "extras",
+      "order": 97,
+      "items": [
+        {
+          "id": "oem-detect",
+          "settingsPath": "Nothing to undo - it only read the manufacturer name.",
+          "symptoms": ["vendor detection"],
+          "name": "Auto-detect manufacturer",
+          "desc": "Reads the SMBIOS vendor and reports which profile the OEM items will use. Removes nothing.",
+          "block": "authority",
+          "risk": 0, "tier": 1, "default": true, "order": 79,
+          "actions": [
+            { "type": "script", "handler": "ReportVendorProfile" }
+          ]
+        },
+        {
+          "id": "rollback-script",
+          "settingsPath": "Nothing to undo - it only writes a script file. Delete the file if you do not want it.",
+          "symptoms": ["rollback script", "undo script", "how do i undo this", "where is the rollback", "undo-windebloat"],
+          "name": "Generate rollback script",
+          "desc": "Writes Undo-WinSetupToolkit.ps1 from this run's journal, so every registry value and service start-type it changed can be put back in one step. It goes in the run folder left on your desktop. Changes nothing on the machine.",
+          "risk": 0, "tier": 1, "default": true, "order": 9995,
+          "revert": "full",
+          "actions": [
+            { "type": "script", "handler": "WriteRollbackScript" }
+          ]
+        },
+        {
+          "id": "defender",
+          "settingsPath": "Nothing to undo - it only checked and reported.",
+          "symptoms": ["defender check", "antivirus status"],
+          "name": "Re-enable and verify Defender",
+          "desc": "Confirms Microsoft Defender took back over after third-party antivirus removal. Removes nothing.",
+          "risk": 0, "tier": 1, "default": true, "order": 47,
+          "actions": [
+            { "type": "script", "handler": "VerifyDefender" }
+          ]
+        },
+        {
+          "id": "issues-doc",
+          "settingsPath": "Nothing to undo - it only writes a text file. Delete the file if you do not want it.",
+          "symptoms": ["issues document", "common issues file", "where is the issues file", "lookup file", "windebloat text file"],
+          "name": "Generate common issues document",
+          "desc": "Writes a text file listing everything this run could plausibly be blamed for later: the phrases you would search for, and how to undo each option on its own. It goes in the run folder left on your desktop, beside the rollback script. Changes nothing on the machine.",
+          "risk": 0, "tier": 1, "default": true, "order": 9990,
+          "revert": "full",
+          "actions": [
+            { "type": "script", "handler": "WriteCommonIssues" }
+          ]
+        },
+        {
+          "id": "irreversible",
+          "settingsPath": "Nothing to undo - it changed no setting, it only governed how this run deleted things.",
+          "symptoms": ["deleted file not in recycle bin", "cannot recover deleted file", "recycle bin emptied", "files gone permanently", "cannot restore files", "no way back"],
+          "bloat": 6,
+          "name": "Make this run permanent",
+          "desc": "Deletes outright instead of to the Recycle Bin, and empties the Recycle Bin when the run finishes.",
+          "risk": 2, "tier": 4, "default": false, "order": 1,
+          "revert": "none",
+          "actions": [
+            { "type": "script", "handler": "EnableIrreversibleMode" }
+          ],
+          "riskNote": "Every file this run deletes is gone for good, and the Recycle Bin is emptied completely at the end - including anything you put there yourself, before this run started. Registry and service changes are still journalled and still reverse, but nothing that touches the file system can be undone. Untick this if you want a way back."
+        }
+      ]
+    }
+  ]
+}

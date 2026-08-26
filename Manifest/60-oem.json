@@ -1,0 +1,568 @@
+{
+    "schema":  1,
+    "categories":  [
+                       {
+                           "id":  "oem",
+                           "name":  "OEM bloat ({vendor} detected)",
+                           "order":  80,
+                           "items":  [
+                                         {
+                                             "id":  "oem-support",
+                                             "settingsPath": "Reinstall it from your manufacturer support site.",
+                                             "symptoms": ["lenovo vantage missing", "hp support assistant missing", "dell support missing", "vendor app gone", "no driver updates", "manufacturer app missing", "support assistant gone"],
+                                             "bloat": 3,
+                                             "name":  "Vendor support and update suites",
+                                             "desc":  "Support Assistant, SupportAssist, Care Center, Samsung Update, and similar.",
+                                             "risk":  1,
+                                             "default":  true,
+                                             "order":  80,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "uninstall",
+                                                                 "guards":  [
+                                                                                "oem:hp"
+                                                                            ],
+                                                                 "timeoutSeconds":  900,
+                                                                 "match":  [
+                                                                               "HP Support Assistant*",
+                                                                               "HP Support Solutions Framework*",
+                                                                               "HP Documentation*",
+                                                                               "HP Notifications*",
+                                                                               "HP Analytics*"
+                                                                           ],
+                                                                 "exclude":  [
+                                                                                 "*Firmware*",
+                                                                                 "*Thermal*",
+                                                                                 "*Power Manager*",
+                                                                                 "*Hotkey*"
+                                                                             ]
+                                                             },
+                                                             {
+                                                                 "type":  "uninstall",
+                                                                 "guards":  [
+                                                                                "oem:dell"
+                                                                            ],
+                                                                 "timeoutSeconds":  900,
+                                                                 "match":  [
+                                                                               "Dell SupportAssist*",
+                                                                               "Dell Digital Delivery*",
+                                                                               "Dell Customer Connect*",
+                                                                               "Dell Watchdog Timer*"
+                                                                           ],
+                                                                 "exclude":  [
+                                                                                 "Dell Command*",
+                                                                                 "Dell Power Manager*",
+                                                                                 "Dell Optimizer*",
+                                                                                 "*Thermal*"
+                                                                             ]
+                                                             },
+                                                             {
+                                                                 "type":  "uninstall",
+                                                                 "guards":  [
+                                                                                "oem:lenovo"
+                                                                            ],
+                                                                 "timeoutSeconds":  900,
+                                                                 "match":  [
+                                                                               "Lenovo Now*",
+                                                                               "Lenovo Welcome*",
+                                                                               "Lenovo Migration Assistant*",
+                                                                               "Lenovo Smart Appearance*",
+                                                                               "Lenovo Voice*",
+                                                                               "Lenovo Bundled Software*"
+                                                                           ],
+                                                                 "exclude":  [
+                                                                                 "Lenovo Vantage*",
+                                                                                 "Lenovo Commercial Vantage*",
+                                                                                 "Lenovo System Interface*",
+                                                                                 "Lenovo Utility*",
+                                                                                 "*Hotkey*"
+                                                                             ]
+                                                             },
+                                                             {
+                                                                 "type":  "uninstall",
+                                                                 "guards":  [
+                                                                                "oem:asus"
+                                                                            ],
+                                                                 "timeoutSeconds":  900,
+                                                                 "match":  [
+                                                                               "ASUS GiftBox*",
+                                                                               "ASUS Product Register*",
+                                                                               "ASUS Splendid*",
+                                                                               "ASUS ScreenXpert*",
+                                                                               "GlideX*"
+                                                                           ],
+                                                                 "exclude":  [
+                                                                                 "Armoury Crate*",
+                                                                                 "ASUS System Control Interface*",
+                                                                                 "MyASUS Service*"
+                                                                             ]
+                                                             },
+                                                             {
+                                                                 "type":  "uninstall",
+                                                                 "guards":  [
+                                                                                "oem:acer"
+                                                                            ],
+                                                                 "timeoutSeconds":  900,
+                                                                 "match":  [
+                                                                               "Acer Care Center*",
+                                                                               "Acer Jumpstart*",
+                                                                               "Acer Product Registration*",
+                                                                               "Acer Collection*",
+                                                                               "Planet9*",
+                                                                               "Acer ExplorerPro*"
+                                                                           ],
+                                                                 "exclude":  [
+                                                                                 "Acer Quick Access*",
+                                                                                 "NitroSense*",
+                                                                                 "PredatorSense*"
+                                                                             ]
+                                                             },
+                                                             {
+                                                                 "type":  "uninstall",
+                                                                 "guards":  [
+                                                                                "oem:samsung"
+                                                                            ],
+                                                                 "timeoutSeconds":  900,
+                                                                 "match":  [
+                                                                               "Samsung Update*",
+                                                                               "Samsung Recovery*",
+                                                                               "Samsung Studio*",
+                                                                               "Samsung PC Cleaner*"
+                                                                           ],
+                                                                 "exclude":  [
+                                                                                 "Samsung Settings*"
+                                                                             ]
+                                                             },
+                                                             {
+                                                                 "type":  "uninstall",
+                                                                 "guards":  [
+                                                                                "oem:msi"
+                                                                            ],
+                                                                 "timeoutSeconds":  900,
+                                                                 "match":  [
+                                                                               "MSI App Player*",
+                                                                               "Norton*",
+                                                                               "MSI Driver*Utility Installer*"
+                                                                           ],
+                                                                 "exclude":  [
+                                                                                 "MSI Center*",
+                                                                                 "Dragon Center*"
+                                                                             ]
+                                                             }
+                                                         ],
+                                             "tier":  3,
+                                             "riskNote":  "Removes the vendor support and update suite. Firmware, power, and thermal tools are excluded and kept."
+                                         },
+                                         {
+                                             "id":  "oem-companion",
+                                             "settingsPath": "Reinstall it from your manufacturer support site.",
+                                             "symptoms": ["vendor companion app missing", "oem app gone"],
+                                             "bloat": 3,
+                                             "name":  "Vendor companion apps",
+                                             "desc":  "myHP, MyASUS, Lenovo Now, Acer Jumpstart, Dell Customer Connect, and the vendor welcome apps.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  81,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "guards":  [
+                                                                                "oem:hp"
+                                                                            ],
+                                                                 "names":  [
+                                                                               "AD2F1837.*",
+                                                                               "*myHP*",
+                                                                               "*HPPrivacySettings*",
+                                                                               "*HPQuickDrop*",
+                                                                               "*HPSystemInformation*",
+                                                                               "*HPWorkWell*",
+                                                                               "*HPDesktopSupportUtilities*"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "guards":  [
+                                                                                "oem:dell"
+                                                                            ],
+                                                                 "names":  [
+                                                                               "DellInc.DellDigitalDelivery*",
+                                                                               "DellInc.MyDell*",
+                                                                               "DellInc.DellCustomerConnect*",
+                                                                               "DellInc.PartnerPromo*",
+                                                                               "DellInc.DellMobileConnect*"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "guards":  [
+                                                                                "oem:lenovo"
+                                                                            ],
+                                                                 "names":  [
+                                                                               "E046963F.LenovoCompanion",
+                                                                               "E046963F.LenovoSettings*",
+                                                                               "*LenovoNow*",
+                                                                               "*LenovoWelcome*",
+                                                                               "LenovoCorporation.LenovoID*",
+                                                                               "*LenovoSmartCommunication*"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "guards":  [
+                                                                                "oem:asus"
+                                                                            ],
+                                                                 "names":  [
+                                                                               "*ASUSGiftBox*",
+                                                                               "*ASUSProductRegistration*",
+                                                                               "*ASUSSplendid*",
+                                                                               "*ScreenXpert*",
+                                                                               "B9ECED6F.*"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "guards":  [
+                                                                                "oem:acer"
+                                                                            ],
+                                                                 "names":  [
+                                                                               "AcerIncorporated.*",
+                                                                               "*AcerCollection*",
+                                                                               "*AcerJumpstart*",
+                                                                               "*AcerRegistration*"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "guards":  [
+                                                                                "oem:samsung"
+                                                                            ],
+                                                                 "names":  [
+                                                                               "SAMSUNGELECTRONICSCO.LTD.*"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "guards":  [
+                                                                                "oem:razer"
+                                                                            ],
+                                                                 "names":  [
+                                                                               "*RazerCortex*"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "guards":  [
+                                                                                "oem:msi"
+                                                                            ],
+                                                                 "names":  [
+                                                                               "*MSIAppPlayer*",
+                                                                               "*MSICenter*Promo*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "oem-security",
+                                             "settingsPath": "Reinstall it from your manufacturer support site.",
+                                             "symptoms": ["vendor security app missing", "fingerprint software gone"],
+                                             "bloat": 3,
+                                             "name":  "Vendor security agents",
+                                             "desc":  "HP Wolf Security, Dell Trusted Device, and the Absolute/Computrace persistence agent.",
+                                             "risk":  1,
+                                             "default":  true,
+                                             "order":  83,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "uninstall",
+                                                                 "guards":  [
+                                                                                "oem:hp"
+                                                                            ],
+                                                                 "timeoutSeconds":  900,
+                                                                 "match":  [
+                                                                               "HP Wolf Security*",
+                                                                               "HP Security Update Service*",
+                                                                               "HP Sure Click*",
+                                                                               "HP Sure Sense*",
+                                                                               "HP Sure Run*",
+                                                                               "HP Client Security Manager*"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "uninstall",
+                                                                 "guards":  [
+                                                                                "oem:dell"
+                                                                            ],
+                                                                 "timeoutSeconds":  900,
+                                                                 "match":  [
+                                                                               "Dell Trusted Device*",
+                                                                               "Dell Data Protection*",
+                                                                               "Dell Encryption*"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "uninstall",
+                                                                 "timeoutSeconds":  600,
+                                                                 "match":  [
+                                                                               "Absolute*",
+                                                                               "Computrace*",
+                                                                               "LoJack*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  3,
+                                             "riskNote":  "Removes vendor endpoint security agents. On a managed work machine this may be required by your employer - check first."
+                                         },
+                                         {
+                                             "id":  "oem-media",
+                                             "settingsPath": "Reinstall it from the vendor, or use another media application.",
+                                             "symptoms": ["media suite missing", "dvd player gone", "bundled media app missing"],
+                                             "bloat": 3,
+                                             "name":  "Bundled media suites",
+                                             "desc":  "CyberLink PowerDirector and PowerDVD, Nero, Power2Go, and WildTangent Games.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  84,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "uninstall",
+                                                                 "timeoutSeconds":  900,
+                                                                 "match":  [
+                                                                               "CyberLink*",
+                                                                               "PowerDVD*",
+                                                                               "PowerDirector*",
+                                                                               "Power2Go*",
+                                                                               "PhotoDirector*",
+                                                                               "MediaShow*",
+                                                                               "Nero*",
+                                                                               "WildTangent*",
+                                                                               "Corel*Trial*",
+                                                                               "Wondershare*",
+                                                                               "Roxio*"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "CyberLinkCorp.*",
+                                                                               "*WildTangent*",
+                                                                               "*PowerDirector*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "oem-reg",
+                                             "settingsPath": "Reinstall from your manufacturer support site.",
+                                             "symptoms": ["registration app missing", "trial offer app gone"],
+                                             "bloat": 2,
+                                             "name":  "Registration and trial-offer apps",
+                                             "desc":  "Product registration, warranty prompts, and bundled trial offers.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  84,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "uninstall",
+                                                                 "match":  [
+                                                                               "*Product Registration*",
+                                                                               "*Registration Service*",
+                                                                               "*Trial*Offer*",
+                                                                               "*Welcome*Center*",
+                                                                               "*Getting Started*"
+                                                                           ],
+                                                                 "exclude":  [
+                                                                                 "Microsoft*",
+                                                                                 "*Visual C++*",
+                                                                                 "*Runtime*"
+                                                                             ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "oem-shortcuts",
+                                             "settingsPath": "Re-create the shortcut yourself.",
+                                             "symptoms": ["desktop shortcut removed", "affiliate icon gone"],
+                                             "bloat": 2,
+                                             "name":  "Affiliate desktop shortcuts and tiles",
+                                             "desc":  "Booking.com, Amazon, and similar planted links across desktop and Start.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  85,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "shortcut",
+                                                                 "names":  [
+                                                                               "Booking.com*",
+                                                                               "Amazon*",
+                                                                               "eBay*",
+                                                                               "Agoda*",
+                                                                               "Get Office*",
+                                                                               "Microsoft 365*",
+                                                                               "Dropbox*",
+                                                                               "Opera*",
+                                                                               "TikTok*",
+                                                                               "Instagram*",
+                                                                               "*Free Trial*",
+                                                                               "WildTangent*",
+                                                                               "*Games*Center*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "gpu-telemetry",
+                                             "settingsPath": "Undo the run.",
+                                             "symptoms": ["nvidia telemetry off", "gpu telemetry"],
+                                             "bloat": 1,
+                                             "name":  "GPU telemetry",
+                                             "desc":  "NVIDIA Telemetry Client and its tasks, plus AMD, and Intel telemetry services. Drivers are untouched.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  86,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "uninstall",
+                                                                 "guards":  [
+                                                                                "gpu:nvidia"
+                                                                            ],
+                                                                 "match":  [
+                                                                               "NVIDIA Telemetry*"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "task",
+                                                                 "guards":  [
+                                                                                "gpu:nvidia"
+                                                                            ],
+                                                                 "tasks":  [
+                                                                               "\\NvTmRep*",
+                                                                               "\\NvTmMon*",
+                                                                               "\\NvTmDataSet*",
+                                                                               "\\NVIDIA*Telemetry*"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "service",
+                                                                 "guards":  [
+                                                                                "gpu:nvidia"
+                                                                            ],
+                                                                 "startupType":  "Disabled",
+                                                                 "names":  [
+                                                                               "NvTelemetryContainer"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "uninstall",
+                                                                 "guards":  [
+                                                                                "gpu:amd"
+                                                                            ],
+                                                                 "match":  [
+                                                                               "AMD User Experience Program*"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "uninstall",
+                                                                 "match":  [
+                                                                               "Intel*Computing Improvement Program*",
+                                                                               "Intel*Driver*Support Assistant*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "wpbt",
+                                             "settingsPath": "Undo the run.",
+                                             "symptoms": ["vendor app not reinstalling", "manufacturer software missing after reinstall"],
+                                             "bloat": 3,
+                                             "name":  "Block firmware-injected vendor software (WPBT)",
+                                             "desc":  "The Windows Platform Binary Table lets the motherboard firmware drop an executable into Windows and run it at every boot, which is how some vendor software survives a clean install. This switches it off.",
+                                             "risk":  1,
+                                             "default":  true,
+                                             "order":  84,
+                                             "reboot":  true,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager",
+                                                                                    "name":  "DisableWpbtExecution",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  3,
+                                             "riskNote":  "WPBT is not only used for bloatware. Business laptops ship anti-theft and asset-tracking agents through it, and a few vendors deliver a genuinely required driver this way, so those stop arriving. Nothing already installed is removed - this only stops the firmware putting it back. Reverses cleanly, but needs a restart either way."
+                                         },
+                                         {
+                                             "id":  "device-companion",
+                                             "settingsPath": "Undo the run.",
+                                             "symptoms": ["device app not installing", "no companion app prompt", "hardware app missing"],
+                                             "bloat": 2,
+                                             "name":  "Stop Windows fetching companion apps for your hardware",
+                                             "desc":  "Turns off the device metadata download that installs a vendor's app when you plug something in. Drivers still install normally.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  85,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Device Metadata",
+                                                                                    "name":  "PreventDeviceMetadataFromNetwork",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Device Metadata",
+                                                                                    "name":  "PreventDeviceMetadataFromNetwork",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  2
+                                         },
+                                         {
+                                             "id":  "driver-coinstallers",
+                                             "settingsPath": "Undo the run.",
+                                             "symptoms": ["driver control panel missing", "graphics control panel missing", "no vendor app after driver install", "audio control panel missing"],
+                                             "bloat": 3,
+                                             "name":  "Block software bundled inside driver packages",
+                                             "desc":  "Driver packages are allowed to carry a co-installer that runs vendor software alongside the driver. This stops that half without touching the driver.",
+                                             "risk":  1,
+                                             "default":  true,
+                                             "order":  85,
+                                             "reboot":  true,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Device Installer",
+                                                                                    "name":  "DisableCoInstallers",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  3,
+                                             "riskNote":  "A few devices use the co-installer to finish their own setup - some fingerprint readers, docking stations, and audio DSPs among them - and can end up half-configured after a driver update. The driver itself always still installs."
+                                         }
+                                     ]
+                       }
+                   ]
+}

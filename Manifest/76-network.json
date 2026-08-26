@@ -1,0 +1,85 @@
+{
+  "schema": 1,
+  "categories": [
+    {
+      "id": "services",
+      "name": "Services, features, and scheduled tasks",
+      "order": 120,
+      "items": [
+        {
+          "id": "net-smb1",
+          "settingsPath": "Turn Windows features on or off, and tick SMB 1.0/CIFS File Sharing Support. Note that SMB 1 is insecure and Microsoft removed it for a reason.",
+          "symptoms": ["cannot reach network drive", "nas not showing", "shared folder missing", "network share not working", "cannot see network computer", "router share missing", "old nas not connecting", "network path not found"],
+          "bloat": 4,
+          "name": "Remove SMB 1.0",
+          "desc": "The 1980s file sharing protocol, still shipped as an optional feature. Windows 11 does not install it by default, so on most machines this finds nothing and says so.",
+          "riskNote": "You lose access to file shares that only speak SMB1: Windows XP machines, and some NAS boxes and printers that were never updated. Everything from Vista onward speaks SMB2 or later.",
+          "risk": 1, "tier": 2, "default": true, "order": 89,
+          "actions": [
+            { "type": "feature", "names": ["SMB1Protocol", "SMB1Protocol-Client", "SMB1Protocol-Server", "SMB1Protocol-Deprecation"] }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "network",
+      "name": "Network and remote access",
+      "section": "add",
+      "order": 93,
+      "items": [
+        {
+          "id": "net-remote-assist",
+          "settingsPath": "Control Panel > System > Remote settings, and allow Remote Assistance connections.",
+          "symptoms": ["remote assistance not working", "cannot get remote help", "remote support blocked"],
+          "name": "Turn off Remote Assistance",
+          "desc": "Stops anyone connecting to this machine through the Windows Remote Assistance invitation path. Remote Desktop is a separate feature and is not affected.",
+          "risk": 0, "tier": 2, "default": true, "order": 89,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Remote Assistance", "name": "fAllowToGetHelp", "kind": "DWord", "value": 0 },
+                { "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Remote Assistance", "name": "fAllowFullControl", "kind": "DWord", "value": 0 },
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows NT\\Terminal Services", "name": "fAllowToGetHelp", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "net-llmnr",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["cannot reach pc by name", "network name not resolving", "computer not found on network", "hostname not working"],
+          "name": "Turn off LLMNR name resolution",
+          "desc": "Windows falls back to shouting a name across the local network when DNS has no answer. That broadcast is trivially answered by anyone else on the network, which is how credential relay attacks start.",
+          "riskNote": "Devices with no DNS entry - some printers, some NAS boxes, other PCs on a router that does not register names - may stop being reachable by name. Reaching them by IP address still works, and mDNS handles most modern devices.",
+          "risk": 1, "tier": 0, "default": false, "order": 89,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows NT\\DNSClient", "name": "EnableMulticast", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "net-ipv6-tunnels",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["teredo not working", "ipv6 not working", "multiplayer not connecting", "cannot join game", "peer to peer broken", "xbox teredo error", "nat type strict"],
+          "name": "Prefer IPv4 and turn off IPv6 tunnels",
+          "desc": "Leaves IPv6 itself working on real network adapters, but stops the Teredo, 6to4, and ISATAP tunnel interfaces and puts IPv4 first when a site answers on both. Takes effect after a restart.",
+          "riskNote": "Teredo is what some peer-to-peer features use to reach each other through a router, Xbox multiplayer among them. If party chat or matchmaking breaks after this, that is why.",
+          "risk": 1, "tier": 0, "default": false, "order": 89,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters", "name": "DisabledComponents", "kind": "DWord", "value": 33 }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

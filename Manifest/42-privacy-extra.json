@@ -1,0 +1,211 @@
+{
+  "schema": 1,
+  "categories": [
+    {
+      "id": "privacy",
+      "name": "Telemetry and privacy",
+      "order": 10,
+      "items": [
+        {
+          "id": "bg-apps",
+          "settingsPath": "Settings > Apps > Installed apps, choose the app, Advanced options, and set Background apps permissions back to Always.",
+          "symptoms": ["no notifications", "notifications not working", "app not updating in background", "mail not showing new messages", "app only updates when open", "live tile not updating", "app notifications missing"],
+          "bloat": 1,
+          "name": "Disable background app permissions",
+          "desc": "For in-box Store apps only.",
+          "risk": 0, "tier": 3, "default": false, "order": 94,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\AppPrivacy", "name": "LetAppsRunInBackground", "kind": "DWord", "value": 2 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "clipboard-cloud",
+          "settingsPath": "Settings > System > Clipboard, and turn clipboard history and sync back on.",
+          "symptoms": ["win+v not working", "clipboard history missing", "no clipboard history", "clipboard not syncing", "copy paste history gone", "clipboard empty", "cannot see copied items"],
+          "bloat": 1,
+          "name": "Clipboard history and cloud clipboard",
+          "desc": "Turns off the Win+V history buffer and stops what you copy syncing to your Microsoft account and your other devices.",
+          "riskNote": "Win+V stops offering anything to paste. Ordinary copy and paste is untouched.",
+          "risk": 1, "tier": 2, "default": false, "order": 56,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\System", "name": "AllowClipboardHistory", "kind": "DWord", "value": 0 },
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\System", "name": "AllowCrossDeviceClipboard", "kind": "DWord", "value": 0 }
+              ]
+            },
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "Software\\Microsoft\\Clipboard", "name": "EnableClipboardHistory", "kind": "DWord", "value": 0 },
+                { "path": "Software\\Microsoft\\Clipboard", "name": "CloudClipboardAutomaticUpload", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "shared-experiences",
+          "settingsPath": "Settings > System > Nearby sharing, and turn it back on.",
+          "symptoms": ["nearby sharing not working", "cannot share to another pc", "phone handoff not working", "continue on pc missing", "nearby share missing"],
+          "bloat": 1,
+          "name": "Shared experiences and Nearby sharing",
+          "desc": "Turns off the Connected Devices Platform: letting apps on other devices open things here, and the Nearby sharing pane.",
+          "risk": 0, "tier": 2, "default": true, "order": 56,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\System", "name": "EnableCdp", "kind": "DWord", "value": 0 },
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\System", "name": "EnableMmx", "kind": "DWord", "value": 0 }
+              ]
+            },
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CDP", "name": "CdpSessionUserAuthzPolicy", "kind": "DWord", "value": 0 },
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CDP", "name": "RomeSdkChannelUserAuthzPolicy", "kind": "DWord", "value": 0 },
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CDP", "name": "NearShareChannelUserAuthzPolicy", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "settings-sync",
+          "settingsPath": "Settings > Accounts > Windows backup, and turn Remember my preferences back on.",
+          "symptoms": ["settings not syncing", "wallpaper not syncing", "preferences not following me", "windows backup off", "settings backup missing"],
+          "bloat": 1,
+          "name": "Settings backup to your Microsoft account",
+          "desc": "Stops Windows syncing your theme, passwords, language, and other preferences to the cloud and on to your other machines.",
+          "riskNote": "A fresh install signed in with the same account no longer restores these settings by itself. Windows Backup will say syncing is turned off by your organization, which here means by this policy.",
+          "risk": 1, "tier": 3, "default": false, "order": 56,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\SettingSync", "name": "DisableSettingSync", "kind": "DWord", "value": 2 },
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\SettingSync", "name": "DisableSettingSyncUserOverride", "kind": "DWord", "value": 1 },
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\SettingSync", "name": "DisableWindowsSettingSync", "kind": "DWord", "value": 2 },
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\SettingSync", "name": "DisableWindowsSettingSyncUserOverride", "kind": "DWord", "value": 1 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "insider",
+          "settingsPath": "Settings > Windows Update > Windows Insider Program, and rejoin.",
+          "symptoms": ["insider builds stopped", "no preview builds", "insider program missing"],
+          "bloat": 5,
+          "name": "Windows Insider Program",
+          "desc": "Blocks preview builds and flighting, and hides the Insider page in Settings.",
+          "riskNote": "If this machine is on an Insider channel today, blocking it here stops future preview builds arriving but does not move it back to the retail channel. Leave this alone if you are deliberately on a preview build.",
+          "risk": 1, "tier": 0, "default": false, "order": 56,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\PreviewBuilds", "name": "AllowBuildPreview", "kind": "DWord", "value": 0 },
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\PreviewBuilds", "name": "EnableConfigFlighting", "kind": "DWord", "value": 0 },
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\PreviewBuilds", "name": "EnableExperimentation", "kind": "DWord", "value": 0 },
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\WindowsSelfHost\\UI\\Visibility", "name": "HideInsiderPage", "kind": "DWord", "value": 1 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "wifi-sense",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["wifi passwords not syncing", "saved networks not following me"],
+          "bloat": 1,
+          "name": "Wi-Fi Sense",
+          "desc": "Stops the machine reporting hotspots it sees and auto-connecting to open networks other people have shared.",
+          "risk": 0, "tier": 1, "default": true, "order": 56,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\PolicyManager\\default\\WiFi\\AllowWiFiHotSpotReporting", "name": "Value", "kind": "DWord", "value": 0 },
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\PolicyManager\\default\\WiFi\\AllowAutoConnectToWiFiSenseHotspots", "name": "Value", "kind": "DWord", "value": 0 },
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\WcmSvc\\wifinetworkmanager\\config", "name": "AutoConnectAllowedOEM", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "office-telemetry",
+          "settingsPath": "Undo the run, then check File > Options > Privacy Settings in any Office app.",
+          "symptoms": ["office feature missing", "designer not working", "translator not working", "office connected experience off", "powerpoint designer gone", "office online features missing"],
+          "bloat": 1,
+          "name": "Microsoft Office telemetry and connected experiences",
+          "desc": "Turns Office's own diagnostic data down to the minimum and switches off the optional cloud features that send document content to Microsoft. Harmless if Office is not installed.",
+          "riskNote": "Optional connected experiences go with it - the online template gallery, translation, designer suggestions, and the research pane stop working. Everything Office does locally is untouched, as is your Microsoft 365 sign-in.",
+          "risk": 1, "tier": 1, "default": true, "order": 56,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "Software\\Policies\\Microsoft\\office\\common\\clienttelemetry", "name": "sendtelemetry", "kind": "DWord", "value": 3 },
+                { "path": "Software\\Policies\\Microsoft\\office\\common\\clienttelemetry", "name": "disableTelemetry", "kind": "DWord", "value": 1 },
+                { "path": "Software\\Policies\\Microsoft\\office\\16.0\\common\\privacy", "name": "disconnectedstate", "kind": "DWord", "value": 2 },
+                { "path": "Software\\Policies\\Microsoft\\office\\16.0\\common\\privacy", "name": "usercontentdisabled", "kind": "DWord", "value": 2 },
+                { "path": "Software\\Policies\\Microsoft\\office\\16.0\\common\\privacy", "name": "downloadcontentdisabled", "kind": "DWord", "value": 2 },
+                { "path": "Software\\Policies\\Microsoft\\office\\16.0\\common\\privacy", "name": "controllerconnectedservicesenabled", "kind": "DWord", "value": 2 },
+                { "path": "Software\\Policies\\Microsoft\\office\\16.0\\common", "name": "qmenable", "kind": "DWord", "value": 0 },
+                { "path": "Software\\Policies\\Microsoft\\office\\16.0\\common", "name": "sendcustomerdata", "kind": "DWord", "value": 0 },
+                { "path": "Software\\Policies\\Microsoft\\office\\16.0\\common", "name": "updatereliabilitydata", "kind": "DWord", "value": 0 },
+                { "path": "Software\\Policies\\Microsoft\\office\\16.0\\osm", "name": "enablelogging", "kind": "DWord", "value": 0 },
+                { "path": "Software\\Policies\\Microsoft\\office\\16.0\\osm", "name": "enableupload", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "app-compat-telemetry",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["old program broken", "legacy app misbehaving", "compatibility problems"],
+          "bloat": 1,
+          "name": "Application compatibility telemetry",
+          "desc": "Turns off the inventory of installed programs Windows sends to Microsoft, and the Program Compatibility Assistant that watches every program you run.",
+          "riskNote": "The Program Compatibility Assistant is the prompt that offers to run an old installer in compatibility mode when it fails. Without it, an old program that would have been fixed automatically simply fails, and you set the compatibility flags yourself on the file's Properties page.",
+          "risk": 1, "tier": 2, "default": false, "order": 56,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\AppCompat", "name": "AITEnable", "kind": "DWord", "value": 0 },
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\AppCompat", "name": "DisableInventory", "kind": "DWord", "value": 1 },
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\AppCompat", "name": "DisableUAR", "kind": "DWord", "value": 1 },
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\AppCompat", "name": "DisablePCA", "kind": "DWord", "value": 1 }
+              ]
+            },
+            { "type": "service", "startupType": "Manual", "names": ["PcaSvc"] }
+          ]
+        },
+        {
+          "id": "connectivity-check",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["no internet but internet works", "globe icon on wifi", "wifi says no internet access", "hotel wifi login not appearing", "captive portal not opening", "network icon wrong", "shows limited connectivity", "no internet icon"],
+          "bloat": 5,
+          "name": "Windows internet connectivity check",
+          "desc": "Stops Windows polling msftconnecttest.com to decide whether you are online.",
+          "riskNote": "The taskbar network icon can no longer tell 'connected' from 'connected but no internet', and captive portal sign-in pages - hotel and airport Wi-Fi - stop opening by themselves. Anything that actually uses the network is unaffected.",
+          "risk": 1, "tier": 0, "default": false, "order": 56,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\NlaSvc\\Parameters\\Internet", "name": "EnableActiveProbing", "kind": "DWord", "value": 0 },
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\NetworkConnectivityStatusIndicator", "name": "NoActiveProbe", "kind": "DWord", "value": 1 }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

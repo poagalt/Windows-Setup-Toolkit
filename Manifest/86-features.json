@@ -1,0 +1,80 @@
+﻿{
+  "schema": 1,
+  "categories": [
+    {
+      "id": "install-features",
+      "name": "Windows features",
+      "section": "add",
+      "order": 152,
+      "items": [
+        {
+          "id": "feat-dotnet35",
+          "name": ".NET Framework 3.5",
+          "desc": "The runtime a lot of older desktop software still asks for, including .NET 2.0 and 3.0 programs. Windows ships it disabled and fetches it on demand.",
+          "riskNote": "The payload is not on the disk - Windows downloads it from Windows Update, so this needs a working internet connection and can take a few minutes. On a machine where update policy blocks the optional-content source it fails with error 0x800f0954 and changes nothing.",
+          "risk": 1, "tier": 0, "default": false, "order": 150,
+          "installSize": 300,
+          "actions": [
+            { "type": "feature", "mode": "enable", "names": ["NetFx3"] }
+          ]
+        },
+        {
+          "id": "feat-sandbox",
+          "name": "Windows Sandbox",
+          "desc": "A throwaway Windows desktop in a window. Everything inside it disappears when you close it, which makes it the right place to run an installer you do not trust.",
+          "riskNote": "Needs hardware virtualisation enabled in firmware. If it is off the feature installs and then refuses to start, and turning it on is a BIOS setting this toolkit cannot reach. Restart required.",
+          "risk": 1, "tier": 0, "default": false, "order": 150,
+          "installSize": 800,
+          "guards": ["!edition:home"],
+          "actions": [
+            { "type": "feature", "mode": "enable", "names": ["Containers-DisposableClientVM"] }
+          ]
+        },
+        {
+          "id": "feat-hyperv",
+          "name": "Hyper-V",
+          "desc": "Microsoft's virtual machine platform, with the management console.",
+          "riskNote": "Turning Hyper-V on puts Windows itself on top of a hypervisor. VirtualBox and VMware still run but slower, and a handful of anti-cheat systems refuse to start with a hypervisor present. Needs hardware virtualisation enabled in firmware, and a restart.",
+          "risk": 2, "tier": 0, "default": false, "order": 150,
+          "installSize": 2000,
+          "guards": ["!edition:home"],
+          "actions": [
+            { "type": "feature", "mode": "enable", "names": ["Microsoft-Hyper-V-All"] }
+          ]
+        },
+        {
+          "id": "feat-wsl",
+          "name": "Windows Subsystem for Linux",
+          "desc": "Turns on the two features WSL needs. The distribution itself comes afterwards, from the Store or by running wsl --install -d Ubuntu.",
+          "riskNote": "The Virtual Machine Platform half of this is the same hypervisor Hyper-V uses, with the same consequences for other virtual machine software and for anti-cheat. Restart required.",
+          "risk": 1, "tier": 0, "default": false, "order": 150,
+          "installSize": 500,
+          "actions": [
+            { "type": "feature", "mode": "enable", "names": ["Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform"] }
+          ]
+        },
+        {
+          "id": "feat-telnet",
+          "name": "Telnet client",
+          "desc": "The command-line telnet client, useful mostly for checking whether a port answers.",
+          "risk": 0, "tier": 0, "default": false, "order": 151,
+          "installSize": 2,
+          "actions": [
+            { "type": "feature", "mode": "enable", "names": ["TelnetClient"] }
+          ]
+        },
+        {
+          "id": "feat-openssh-server",
+          "name": "OpenSSH server",
+          "desc": "Installs sshd so this machine can accept SSH connections. Installing it does not start it.",
+          "riskNote": "Nothing listens until you start the sshd service and let it through the firewall, both of which are deliberately left to you. Once you do, this machine accepts remote sign-ins with your Windows credentials - only worth doing if you actually want that, and worth pairing with key-only authentication if you do.",
+          "risk": 1, "tier": 0, "default": false, "order": 151,
+          "installSize": 15,
+          "actions": [
+            { "type": "capability", "mode": "install", "names": ["OpenSSH.Server*"] }
+          ]
+        }
+      ]
+    }
+  ]
+}

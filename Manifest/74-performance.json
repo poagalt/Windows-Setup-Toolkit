@@ -1,0 +1,390 @@
+{
+  "schema": 1,
+  "categories": [
+    {
+      "id": "performance",
+      "name": "Performance and system",
+      "section": "add",
+      "order": 92,
+      "items": [
+        {
+          "id": "startup-delay",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["startup apps all at once", "desktop slow at sign in", "login slow"],
+          "name": "Remove the startup app delay",
+          "desc": "Windows holds startup apps back for about ten seconds after sign-in so the desktop appears first. This lets them start straight away.",
+          "riskNote": "The desktop and taskbar may feel busier for the first few seconds after sign-in, because everything that starts with Windows now starts at once instead of after the shell has settled.",
+          "risk": 1, "tier": 2, "default": false, "order": 93,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Serialize", "name": "StartupDelayInMSec", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "hags",
+          "settingsPath": "Settings > System > Display > Graphics > Default graphics settings, and turn hardware-accelerated GPU scheduling back on.",
+          "symptoms": ["game performance worse", "frame rate dropped", "stutter in games", "latency worse", "gpu scheduling"],
+          "name": "Hardware-accelerated GPU scheduling",
+          "desc": "Lets the graphics card manage its own memory and scheduling instead of the driver doing it on the CPU. Takes effect after a restart.",
+          "riskNote": "Needs a GPU and driver that support it, and a small number of driver and capture-software combinations are unstable with it on. If anything misbehaves after the restart, turn it back off in Settings, System, Display, Graphics.",
+          "risk": 1, "tier": 0, "default": false, "order": 93,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\GraphicsDrivers", "name": "HwSchMode", "kind": "DWord", "value": 2 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "fullscreen-opt",
+          "name": "Turn off fullscreen optimizations",
+          "desc": "Fullscreen games run truly exclusive instead of through the borderless-window path the compositor prefers.",
+          "riskNote": "Exclusive fullscreen costs you the fast alt-tab and the overlays that draw over borderless windows - Game Bar, Discord, and some capture software. On many modern games it also makes no measurable difference, so treat it as something to test rather than assume.",
+          "risk": 1, "tier": 0, "default": false, "order": 93,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "System\\GameConfigStore", "name": "GameDVR_DXGIHonorFSEWindowsCompatible", "kind": "DWord", "value": 1 },
+                { "path": "System\\GameConfigStore", "name": "GameDVR_FSEBehaviorMode", "kind": "DWord", "value": 2 },
+                { "path": "System\\GameConfigStore", "name": "GameDVR_HonorUserFSEBehaviorMode", "kind": "DWord", "value": 1 },
+                { "path": "System\\GameConfigStore", "name": "GameDVR_EFSEFeatureFlags", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "power-throttling",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["battery draining faster", "battery life worse", "laptop hot", "fan loud"],
+          "name": "Turn off power throttling",
+          "desc": "Stops Windows slowing background processes to save power.",
+          "riskNote": "On a laptop this costs battery life, and that is the whole point of the feature - it is why background tabs and idle apps are cheap. Worth it on a desktop, questionable on anything with a battery.",
+          "risk": 1, "tier": 0, "default": false, "order": 93,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Power\\PowerThrottling", "name": "PowerThrottlingOff", "kind": "DWord", "value": 1 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "core-isolation",
+          "settingsPath": "Windows Security > Device security > Core isolation, and turn Memory integrity back on. A restart is needed.",
+          "symptoms": ["memory integrity off", "core isolation off", "security warning", "device security warning", "not secure warning"],
+          "name": "Turn off Core Isolation",
+          "desc": "Switches off virtualisation-based security and memory integrity. This is the single largest performance setting on the list, and the single largest security one.",
+          "riskNote": "Memory integrity is what stops a malicious or vulnerable driver from injecting code into the kernel, and virtualisation-based security is what isolates credentials from the rest of the system. Turning both off measurably raises frame rates and lowers latency, and measurably lowers how hard this machine is to compromise. Only worth it if you know why you want it. Takes effect after a restart, and Windows Security will report your device as not meeting the standard for hardware security.",
+          "risk": 2, "tier": 0, "default": false, "order": 93,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\DeviceGuard\\Scenarios\\HypervisorEnforcedCodeIntegrity", "name": "Enabled", "kind": "DWord", "value": 0 },
+                { "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\DeviceGuard", "name": "EnableVirtualizationBasedSecurity", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "mpo-off",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["video stutter", "video tearing", "playback stutters", "screen flicker", "video choppy", "youtube stutter"],
+          "name": "Turn off multi-plane overlay",
+          "desc": "The standard fix for screen flicker, black flashes, and stuttering video on multi-monitor setups, particularly with mixed refresh rates.",
+          "riskNote": "Multi-plane overlay exists to let the display hardware compose video without waking the GPU, so turning it off costs a little power during video playback. Only worth doing if you are actually seeing flicker.",
+          "risk": 1, "tier": 0, "default": false, "order": 93,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows\\Dwm", "name": "OverlayTestMode", "kind": "DWord", "value": 5 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "svchost-split",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["services grouped", "one crash killed several services", "svchost using more memory"],
+          "name": "Group services into fewer processes",
+          "desc": "Windows gives most services their own svchost process on machines with more than 3.5 GB of memory. This raises that threshold past any real machine, so services share processes again.",
+          "riskNote": "Saves a few hundred megabytes of per-process overhead and costs you the isolation that came with it: one service crashing can now take its neighbors down, and Task Manager can no longer tell you which service is using the CPU. Takes effect after a restart.",
+          "risk": 1, "tier": 0, "default": false, "order": 93,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Control", "name": "SvcHostSplitThresholdInKB", "kind": "DWord", "value": 67108864 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "net-throttle",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["audio stutter while downloading", "sound crackles on network"],
+          "name": "Turn off network throttling",
+          "desc": "Windows caps non-multimedia network traffic while audio or video is playing, to protect playback. This removes the cap.",
+          "riskNote": "A marginal tweak, honestly - it only ever bites on a large transfer running at the same time as media playback, and on a slow machine it can make that playback stutter. Included because it is standard in every other tool of this kind.",
+          "risk": 1, "tier": 0, "default": false, "order": 93,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile", "name": "NetworkThrottlingIndex", "kind": "DWord", "value": -1 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ntfs-lastaccess",
+          "settingsPath": "Run fsutil behavior set disablelastaccess 0 from an administrator prompt.",
+          "symptoms": ["last accessed date wrong", "backup tool wrong dates", "file dates wrong"],
+          "name": "Stop updating last-access timestamps",
+          "desc": "NTFS writes to the disk every time a file is read, purely to record when it was read. This turns that off.",
+          "riskNote": "Backup and audit tools that key off last-access time can no longer tell a file has been read. Almost nothing does; Windows itself has shipped with this off by default at various points.",
+          "risk": 1, "tier": 0, "default": false, "order": 94,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\FileSystem", "name": "NtfsDisableLastAccessUpdate", "kind": "DWord", "value": 1 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ntfs-8dot3",
+          "settingsPath": "Run fsutil 8dot3name set 0 from an administrator prompt. Existing short names are not restored.",
+          "symptoms": ["old program cannot find file", "8.3 name missing", "legacy installer fails", "path with spaces fails"],
+          "name": "Stop creating 8.3 short file names",
+          "desc": "NTFS keeps a DOS-era PROGRA~1 name alongside every long file name. This stops creating new ones. Existing ones stay.",
+          "riskNote": "A few very old installers and 16-bit tools resolve paths through the short name and will fail without it. Nothing written this century does.",
+          "risk": 1, "tier": 0, "default": false, "order": 94,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\FileSystem", "name": "NtfsDisable8dot3NameCreation", "kind": "DWord", "value": 1 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "long-paths",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["long path support", "path length"],
+          "name": "Allow file paths longer than 260 characters",
+          "desc": "Lifts the MAX_PATH limit for programs that opt in - which includes Git, Node, Python, and most modern toolchains. File Explorer is not one of them.",
+          "risk": 0, "tier": 0, "default": false, "order": 94,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\FileSystem", "name": "LongPathsEnabled", "kind": "DWord", "value": 1 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "auto-maintenance",
+          "settingsPath": "Control Panel > Security and Maintenance > Automatic Maintenance, and change the settings back.",
+          "symptoms": ["defrag not running", "maintenance not running", "disk not optimizing", "scheduled maintenance off"],
+          "name": "Turn off Automatic Maintenance",
+          "desc": "The nightly window in which Windows defragments, scans, and runs its own scheduled work, and wakes the machine to do it.",
+          "riskNote": "Defender's scheduled scan, disk optimization, and system diagnostics all run inside this window. Turning it off does not stop real-time protection, but it does stop the scheduled scan, and drive optimization stops happening on its own. Better addressed by changing the maintenance time in Security and Maintenance than by switching it off.",
+          "risk": 1, "tier": 0, "default": false, "order": 94,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\Maintenance", "name": "MaintenanceDisabled", "kind": "DWord", "value": 1 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "storage-sense",
+          "settingsPath": "Settings > System > Storage > Storage Sense, and turn it off.",
+          "symptoms": ["files deleting themselves", "temp files removed automatically", "storage sense on"],
+          "name": "Turn Storage Sense on",
+          "desc": "Windows clears temporary files monthly and empties anything that has sat in the Recycle Bin for 30 days. Downloads are left alone. The one item here that keeps freeing space after the run finishes.",
+          "risk": 0, "tier": 0, "default": false, "order": 94,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\StorageSense\\Parameters\\StoragePolicy", "name": "01", "kind": "DWord", "value": 1 },
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\StorageSense\\Parameters\\StoragePolicy", "name": "04", "kind": "DWord", "value": 1 },
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\StorageSense\\Parameters\\StoragePolicy", "name": "08", "kind": "DWord", "value": 1 },
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\StorageSense\\Parameters\\StoragePolicy", "name": "32", "kind": "DWord", "value": 30 },
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\StorageSense\\Parameters\\StoragePolicy", "name": "2048", "kind": "DWord", "value": 30 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "uac-level",
+          "settingsPath": "Control Panel > User Accounts > Change User Account Control settings, and move the slider back up.",
+          "symptoms": ["no uac prompt", "programs installing without asking", "uac not prompting", "admin prompt missing", "no permission prompt"],
+          "name": "Stop UAC asking for confirmation",
+          "desc": "Administrators are elevated without a prompt and without the screen dimming. User Account Control itself stays on, so Store apps and app containers keep working.",
+          "riskNote": "Every prompt you would have seen becomes a silent yes. Anything already running as your account can then elevate itself without you knowing, which is precisely what the prompt exists to prevent. The secure desktop - the dimming - is also what stops another program from clicking the prompt for you. This is a real reduction in security, not a cosmetic one.",
+          "risk": 2, "tier": 0, "default": false, "order": 95,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System", "name": "ConsentPromptBehaviorAdmin", "kind": "DWord", "value": 0 },
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System", "name": "PromptOnSecureDesktop", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "smartscreen",
+          "settingsPath": "Windows Security > App and browser control > Reputation-based protection, and turn the switches back on.",
+          "symptoms": ["smartscreen off", "no warning on download", "downloads not blocked", "no protection warning", "malware not blocked", "unsafe file ran"],
+          "name": "Turn off SmartScreen",
+          "desc": "Stops Windows, the Store, and Edge checking downloads and sites against Microsoft's reputation service.",
+          "riskNote": "SmartScreen is the warning that appears before an unrecognized installer runs, and it is the layer that catches a great deal of commodity malware before Defender ever sees the file. It also sends a hash of what you download to Microsoft, which is why the option exists. Turning it off means unknown installers run with no warning at all.",
+          "risk": 2, "tier": 0, "default": false, "order": 95,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\System", "name": "EnableSmartScreen", "kind": "DWord", "value": 0 },
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer", "name": "SmartScreenEnabled", "kind": "String", "value": "Off" },
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge", "name": "SmartScreenEnabled", "kind": "DWord", "value": 0 }
+              ]
+            },
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppHost", "name": "EnableWebContentEvaluation", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "bitlocker-auto",
+          "settingsPath": "Settings > Privacy and security > Device encryption, and turn it on.",
+          "symptoms": ["drive not encrypted", "bitlocker off", "device encryption missing", "no encryption"],
+          "name": "Prevent automatic device encryption",
+          "desc": "Stops Windows silently encrypting the system drive the first time you sign in with a Microsoft account, and escrowing the key there.",
+          "riskNote": "Only does anything on a drive that is not encrypted yet - it prevents, it does not undo. If this machine is already encrypted, nothing changes. Leaving the drive unencrypted means anyone who takes the disk out can read it.",
+          "risk": 1, "tier": 0, "default": false, "order": 95,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\BitLocker", "name": "PreventDeviceEncryption", "kind": "DWord", "value": 1 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "utc-clock",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["clock wrong", "time wrong after dual boot", "time zone wrong", "clock hours out"],
+          "name": "Keep the hardware clock in UTC",
+          "desc": "For dual booting with Linux. Stops Windows and Linux disagreeing about the time by the size of your time zone offset every time you switch.",
+          "riskNote": "Only correct if the other operating system also treats the hardware clock as UTC, which is the Linux default. On a Windows-only machine this does nothing useful and can confuse firmware clock settings.",
+          "risk": 1, "tier": 0, "default": false, "order": 95,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\TimeZoneInformation", "name": "RealTimeIsUniversal", "kind": "DWord", "value": 1 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "verbose-bsod",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["blue screen different", "more detail on crash screen"],
+          "name": "Detailed blue screen",
+          "desc": "Replaces the sad face and QR code with the stop code, the failing driver, and the register dump.",
+          "risk": 0, "tier": 3, "default": false, "order": 95,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\CrashControl", "name": "DisplayParameters", "kind": "DWord", "value": 1 },
+                { "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\CrashControl", "name": "DisableEmoticon", "kind": "DWord", "value": 1 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "power-standby-network",
+          "settingsPath": "Run: powercfg /setacvalueindex SCHEME_CURRENT SUB_NONE f15576e8-98b7-4186-b944-eafa664402d9 1 - and the same with /setdcvalueindex - then powercfg /setactive SCHEME_CURRENT. Undoing the run does the same. There is no page for it: Windows hides this setting from Power Options.",
+          "symptoms": ["no mail while asleep", "teams not updating overnight", "find my device out of date", "wake on lan not working", "no notifications while asleep", "downloads stop when screen off", "laptop not syncing in sleep"],
+          "bloat": 5,
+          "name": "Drop the network while asleep",
+          "desc": "Stops the wireless card staying associated through Modern Standby, so the machine can reach its deepest idle state instead of waking to service background traffic.",
+          "riskNote": "Nothing arrives while the lid is shut: no mail, no Teams or Slack messages, no Find My Device location updates, and Wake-on-LAN stops working. Everything catches up within seconds of waking. The saving is real but very machine-dependent - a few hundred milliwatts, which is roughly the difference between losing 1.5% and 0.7% of a laptop battery per hour, and close to nothing on a machine that already reaches its deep idle state.",
+          "risk": 1, "tier": 0, "default": false, "order": 96,
+          "actions": [
+            { "type": "script", "handler": "SetPowerScheme", "sub": "SUB_NONE", "setting": "f15576e8-98b7-4186-b944-eafa664402d9", "value": 0 }
+          ]
+        },
+        {
+          "id": "power-wake-timers",
+          "settingsPath": "Settings > System > Power, or Control Panel > Power Options > Change plan settings > Change advanced power settings > Sleep > Allow wake timers, and set it back to Enable.",
+          "symptoms": ["laptop wakes in bag", "computer wakes by itself", "pc wakes up at night", "machine hot in bag", "wakes from sleep on its own", "scheduled task not running", "backup did not run overnight", "update did not install overnight"],
+          "bloat": 5,
+          "name": "Stop scheduled tasks waking the machine",
+          "desc": "Clears wake timers on the active power plan. This is the usual reason a laptop wakes up in a bag and comes out warm with a flat battery.",
+          "riskNote": "Anything that relied on waking the machine to run stops happening while it is asleep - overnight backups, scheduled maintenance, and Windows Update installing on its own. Those all run at the next opportunity while the machine is awake instead, so nothing is lost, but nothing happens on a schedule either. An alarm set in an app will not wake the machine.",
+          "risk": 1, "tier": 0, "default": false, "order": 96,
+          "actions": [
+            { "type": "script", "handler": "SetPowerScheme", "sub": "SUB_SLEEP", "setting": "RTCWAKE", "value": 0 }
+          ]
+        },
+        {
+          "id": "power-usb-pcie",
+          "settingsPath": "Control Panel > Power Options > Change advanced power settings, then set USB settings > USB selective suspend to Disabled and PCI Express > Link State Power Management to Off.",
+          "symptoms": ["usb device disconnects", "usb audio crackling", "audio interface dropping out", "dock stops working", "usb keeps reconnecting", "webcam disconnects", "external drive spins down", "nvme slow to wake"],
+          "bloat": 5,
+          "name": "Let idle USB and PCIe devices power down",
+          "desc": "Turns on USB selective suspend and sets PCI Express link power management to maximum savings, so idle peripherals and buses drop to a low-power state instead of being held awake.",
+          "riskNote": "This is the pair most likely to be worth undoing. USB audio interfaces, some docks, and a few external drives handle being suspended badly and come back with dropouts, disconnects, or a device that needs replugging - and the symptom appears minutes later, nowhere near this setting. The saving is small and steady rather than large. If anything on USB misbehaves after a run, this is the first item to put back.",
+          "risk": 1, "tier": 0, "default": false, "order": 96,
+          "actions": [
+            { "type": "script", "handler": "SetPowerScheme", "sub": "2a737441-1930-4402-8d77-b2bebba308a3", "setting": "48e6b7a6-50f5-4782-a5d4-53bb8f07e226", "value": 1 },
+            { "type": "script", "handler": "SetPowerScheme", "sub": "SUB_PCIEXPRESS", "setting": "ASPM", "value": 2 }
+          ]
+        },
+        {
+          "id": "power-no-modern-standby",
+          "settingsPath": "Delete PlatformAoAcOverride from HKLM\\SYSTEM\\CurrentControlSet\\Control\\Power and restart. Undoing the run does the same. If the machine will not wake after this, hold the power button to force it off, start it again, and undo the run.",
+          "symptoms": ["computer will not wake", "black screen after sleep", "machine will not resume", "sleep broken", "fans run in sleep", "battery flat after sleep", "lid close does nothing", "no sleep option"],
+          "bloat": 5,
+          "name": "Use real sleep instead of Modern Standby",
+          "desc": "Turns off Modern Standby so the machine uses S3 suspend-to-RAM: the CPU is genuinely off rather than idling, which is by far the largest sleep saving available. Needs a restart.",
+          "riskNote": "The biggest saving here and the one most likely to go wrong. Modern Standby machines are shipped and tested by their manufacturer with S3 disabled in firmware, and on hardware whose firmware does not properly implement S3 the result is a machine that sleeps and will not wake - recoverable only by forcing it off and undoing the run. Instant-on goes away and resume takes a second or two. Try it on a machine you can afford to have to hard-reset, and undo it if sleep stops working.",
+          "risk": 2, "tier": 0, "default": false, "order": 96,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Power", "name": "PlatformAoAcOverride", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

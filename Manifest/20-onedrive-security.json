@@ -1,0 +1,211 @@
+{
+    "schema":  1,
+    "categories":  [
+                       {
+                           "id":  "onedrive",
+                           "name":  "OneDrive",
+                           "order":  40,
+                           "items":  [
+                                         {
+                                             "id":  "od-uninstall",
+                                             "settingsPath": "Reinstall OneDrive from onedrive.com and sign in. Your files were never deleted - they are still in your OneDrive folder and still online.",
+                                             "symptoms": ["onedrive missing", "onedrive gone", "onedrive not syncing", "files not syncing", "no cloud icon", "onedrive uninstalled", "backup not working", "documents not backing up", "pictures not backing up", "desktop not syncing", "cannot find onedrive", "onedrive will not open", "sync broken", "cloud backup missing"],
+                                             "bloat": 3,
+                                             "name":  "Uninstall OneDrive",
+                                             "desc":  "Runs every OneDriveSetup uninstaller present, per-user and per-machine, clears its startup entry and scheduled tasks, deletes the program folders the uninstaller leaves behind, then sets the machine policy that stops Windows putting it back or letting it redirect Desktop, Documents and Pictures.",
+                                             "risk":  1,
+                                             "default":  true,
+                                             "order":  40,
+                                             "riskNote":  "The folders deleted afterwards are OneDrive's own program and cache directories - the versioned binaries under AppData, the setup store under ProgramData, and the OneDriveTemp staging folder. Your synced OneDrive folder in your user profile is not one of them and is not touched. Anything the sync client had queued but not yet uploaded goes with the cache, so check the OneDrive icon is not mid-sync before running this.",
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "script",
+                                                                 "handler":  "RemoveOneDrive"
+                                                             },
+                                                             {
+                                                                 "type":  "file",
+                                                                 "paths":  [
+                                                                               "%LOCALAPPDATA%\\Microsoft\\OneDrive",
+                                                                               "%PROGRAMDATA%\\Microsoft OneDrive",
+                                                                               "%SYSTEMDRIVE%\\OneDriveTemp"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\OneDrive",
+                                                                                    "name":  "DisableFileSyncNGSC",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\OneDrive",
+                                                                                    "name":  "DisableFileSync",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\OneDrive",
+                                                                                    "name":  "KFMBlockOptIn",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\OneDrive",
+                                                                                    "name":  "PreventNetworkTrafficPreUserSignIn",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1,
+                                             "covers":  [
+                                                            "Microsoft OneDrive*",
+                                                            "OneDrive*"
+                                                        ]
+                                         },
+                                         {
+                                             "id":  "od-appx",
+                                             "settingsPath": "Reinstall OneDrive from onedrive.com.",
+                                             "symptoms": ["onedrive app missing", "onedrive not in apps list"],
+                                             "bloat": 3,
+                                             "name":  "OneDriveSync appx package",
+                                             "desc":  "The Store-delivered sync component.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  41,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.OneDriveSync",
+                                                                               "Microsoft.OneDrive*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "od-explorer",
+                                             "settingsPath": "Undo the run to put OneDrive back in the File Explorer sidebar.",
+                                             "symptoms": ["onedrive missing from explorer", "no onedrive in sidebar", "onedrive not in file explorer", "sidebar missing onedrive"],
+                                             "bloat": 3,
+                                             "name":  "Remove from File Explorer sidebar",
+                                             "desc":  "Deletes the namespace entry from the navigation pane in both bitnesses.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  42,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "Registry::HKEY_CLASSES_ROOT\\CLSID\\{018D5C66-4533-4307-9B53-224DE2ED1FE6}",
+                                                                                    "name":  "System.IsPinnedToNameSpaceTree",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "Registry::HKEY_CLASSES_ROOT\\Wow6432Node\\CLSID\\{018D5C66-4533-4307-9B53-224DE2ED1FE6}",
+                                                                                    "name":  "System.IsPinnedToNameSpaceTree",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         }
+                                     ]
+                       },
+                       {
+                           "id":  "security",
+                           "name":  "Antivirus and security trialware",
+                           "order":  30,
+                           "items":  [
+                                         {
+                                             "id":  "mcafee",
+                                             "settingsPath": "Reinstall from mcafee.com if you have a subscription. Windows Security protects the machine either way.",
+                                             "symptoms": ["mcafee missing", "antivirus gone", "mcafee subscription", "no antivirus", "security software missing"],
+                                             "bloat": 3,
+                                             "name":  "McAfee, all products",
+                                             "desc":  "LiveSafe, WebAdvisor, Security Scan Plus, and Personal Security. Offers McAfee\u0027s own MCPR scrubber for the drivers and services the uninstaller leaves behind.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  45,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "script",
+                                                                 "handler":  "McAfeeScrub"
+                                                             }
+                                                         ],
+                                             "tier":  1,
+                                             "covers":  [
+                                                            "McAfee*",
+                                                            "*McAfee*"
+                                                        ]
+                                         },
+                                         {
+                                             "id":  "norton",
+                                             "settingsPath": "Reinstall from norton.com if you have a subscription. Windows Security protects the machine either way.",
+                                             "symptoms": ["norton missing", "antivirus gone", "norton subscription", "no antivirus"],
+                                             "bloat": 3,
+                                             "name":  "Norton and Norton 360",
+                                             "desc":  "Uninstalls what it can and points at Norton\u0027s official Remove and Reinstall tool for the rest.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  45,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "script",
+                                                                 "handler":  "NortonScrub"
+                                                             }
+                                                         ],
+                                             "tier":  1,
+                                             "covers":  [
+                                                            "Norton*",
+                                                            "Symantec*"
+                                                        ]
+                                         },
+                                         {
+                                             "id":  "av-others",
+                                             "settingsPath": "Reinstall from the vendor if you have a subscription. Windows Security protects the machine either way.",
+                                             "symptoms": ["antivirus missing", "avast gone", "avg missing", "bitdefender gone", "kaspersky missing", "security suite gone"],
+                                             "bloat": 3,
+                                             "name":  "Other antivirus trials",
+                                             "desc":  "Avast, AVG, Bitdefender, Trend Micro, Webroot, Kaspersky, and ESET trials.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  46,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "uninstall",
+                                                                 "timeoutSeconds":  900,
+                                                                 "match":  [
+                                                                               "Avast*",
+                                                                               "AVG *",
+                                                                               "AVG Antivirus*",
+                                                                               "Bitdefender*",
+                                                                               "Trend Micro*",
+                                                                               "Webroot*",
+                                                                               "Kaspersky*",
+                                                                               "ESET*",
+                                                                               "Total AV*",
+                                                                               "Segurazo*"
+                                                                           ],
+                                                                 "exclude":  [
+                                                                                 "*Business*",
+                                                                                 "*Endpoint*"
+                                                                             ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         }
+                                     ]
+                       }
+                   ]
+}

@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "categories": [
+    {
+      "id": "update",
+      "name": "Windows Update behavior",
+      "order": 110,
+      "items": [
+        {
+          "id": "store-auto-update",
+          "settingsPath": "Microsoft Store > Settings, and turn App updates back on.",
+          "symptoms": ["store apps not updating", "app not updating", "no app updates", "apps out of date", "store update off"],
+          "name": "Stop Store apps updating themselves",
+          "desc": "The Microsoft Store stops downloading app updates in the background. You can still update anything by hand from the Store's Library page.",
+          "riskNote": "App updates carry security fixes too, and nothing will remind you they are waiting. This is about a background download nobody asked for, not about staying on old versions forever - check the Library occasionally.",
+          "risk": 1, "tier": 0, "default": false, "order": 86,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\WindowsStore", "name": "AutoDownload", "kind": "DWord", "value": 2 }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

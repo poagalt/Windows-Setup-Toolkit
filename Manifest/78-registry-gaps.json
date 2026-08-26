@@ -1,0 +1,238 @@
+{
+  "schema": 1,
+  "categories": [
+    {
+      "id": "ads",
+      "name": "Suggestions and advertising",
+      "order": 70,
+      "items": [
+        {
+          "id": "ads-settings-suggestions",
+          "settingsPath": "Settings > Privacy and security > General.",
+          "symptoms": ["no suggestions in settings"],
+          "bloat": 2,
+          "name": "Suggested content in Settings",
+          "desc": "The fourth suggestion surface, on Settings pages themselves. The other three are already covered.",
+          "risk": 0, "tier": 1, "default": false, "order": 51,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager", "name": "SubscribedContent-353698Enabled", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ads-account-notifications",
+          "settingsPath": "Settings > Privacy and security > General.",
+          "symptoms": ["no account prompts in settings"],
+          "bloat": 2,
+          "name": "Microsoft 365 and OneDrive upsell in Settings",
+          "desc": "The Settings banner offering you Microsoft 365, extra OneDrive storage, and account services.",
+          "risk": 0, "tier": 1, "default": false, "order": 51,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\SystemSettings\\AccountNotifications", "name": "EnableAccountNotifications", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ads-suggested-toasts",
+          "settingsPath": "Settings > System > Notifications.",
+          "symptoms": ["no suggestion popups", "no backup reminders"],
+          "bloat": 2,
+          "name": "Suggestion and backup-reminder pop-ups",
+          "desc": "Two notification channels Windows uses to advertise its own services: the Suggested channel, and the recurring reminder to back up with OneDrive.",
+          "riskNote": "Only these two channels are silenced. Every other notification, including update and security alerts, is untouched.",
+          "risk": 0, "tier": 1, "default": false, "order": 51,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings\\Windows.SystemToast.Suggested", "name": "Enabled", "kind": "DWord", "value": 0 },
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings\\Windows.SystemToast.BackupReminder", "name": "Enabled", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ads-phone-suggestions",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["phone link suggestions gone"],
+          "bloat": 2,
+          "name": "Phone Link suggestions",
+          "desc": "Stops Windows suggesting you link a mobile device, and removes the mobile panel from the Start menu.",
+          "risk": 0, "tier": 1, "default": false, "order": 51,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Mobility", "name": "OptedIn", "kind": "DWord", "value": 0 },
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Start\\Companions\\Microsoft.YourPhone_8wekyb3d8bbwe", "name": "IsEnabled", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ads-online-tips",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["settings tips missing"],
+          "bloat": 2,
+          "name": "Settings fetching tips from the web",
+          "desc": "Settings pulls tip content from Microsoft as you browse them. This stops the request.",
+          "risk": 0, "tier": 2, "default": false, "order": 51,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer", "name": "AllowOnlineTips", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "nag-unsupported-hardware",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["watermark gone", "no unsupported hardware message"],
+          "bloat": 2,
+          "name": "Unsupported-hardware watermark and nag",
+          "desc": "Removes the desktop watermark and the recurring Settings notice on machines that do not meet the Windows 11 requirements. Changes nothing about how the machine runs.",
+          "risk": 0, "tier": 1, "default": false, "order": 96,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System", "name": "HideUnsupportedHardwareNotifications", "kind": "DWord", "value": 1 }
+              ]
+            },
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "Control Panel\\UnsupportedHardwareNotificationCache", "name": "SV2", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "explorer-store-openwith",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["open with missing store", "no store search in open with"],
+          "bloat": 2,
+          "name": "Look for an app in the Store",
+          "desc": "Opening a file type nothing is registered for sends you to the Microsoft Store. This drops that entry, leaving the ordinary Open with list.",
+          "risk": 0, "tier": 1, "default": false, "order": 96,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer", "name": "NoUseStoreOpenWith", "kind": "DWord", "value": 1 },
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer", "name": "NoInternetOpenWith", "kind": "DWord", "value": 1 }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "privacy",
+      "name": "Telemetry and privacy",
+      "order": 10,
+      "items": [
+        {
+          "id": "input-harvest-contacts",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["contact suggestions missing", "typing not learning names"],
+          "bloat": 1,
+          "name": "Contact harvesting for typing personalization",
+          "desc": "Windows reads your contacts and calendar into the typing-personalization store to improve suggestions. This stops it. The most widely agreed privacy value that was missing here.",
+          "riskNote": "Autocorrect and text prediction get slightly worse at proper nouns. Typing is otherwise unaffected.",
+          "risk": 0, "tier": 1, "default": false, "order": 57,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\InputPersonalization\\TrainedDataStore", "name": "HarvestContacts", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "input-typing-insights",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["typing insights missing", "keyboard stats gone"],
+          "bloat": 1,
+          "name": "Typing insights",
+          "desc": "The running count of what autocorrect and prediction did for you, kept per account.",
+          "risk": 0, "tier": 1, "default": false, "order": 57,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\Input\\Settings", "name": "InsightsEnabled", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "onedrive",
+      "name": "OneDrive",
+      "order": 40,
+      "items": [
+        {
+          "id": "od-nags",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["onedrive prompts gone", "no onedrive reminders"],
+          "bloat": 2,
+          "name": "OneDrive sign-in nags and surveys",
+          "desc": "The sign-in prompt, the setup animation, the feedback prompt, and the survey campaigns. Does not disable syncing or remove OneDrive; this is the pestering only.",
+          "risk": 0, "tier": 1, "default": false, "order": 61,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\OneDrive", "name": "DisableNewAccountDetection", "kind": "DWord", "value": 1 },
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\OneDrive", "name": "EnableSurveyCampaigns", "kind": "DWord", "value": 0 },
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\OneDrive", "name": "EnableSendFeedback", "kind": "DWord", "value": 0 }
+              ]
+            },
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Policies\\Microsoft\\OneDrive", "name": "DisableFREAnimation", "kind": "DWord", "value": 1 }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "update",
+      "name": "Windows Update",
+      "order": 110,
+      "items": [
+        {
+          "id": "update-temp-feature-control",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["new features not appearing", "feature missing after update"],
+          "name": "Features that ship switched off, staying off",
+          "desc": "Monthly updates carry new features in a disabled state and turn them on later. This keeps them off until the next real feature update.",
+          "risk": 0, "tier": 1, "default": false, "order": 71,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate", "name": "AllowTemporaryEnterpriseFeatureControl", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

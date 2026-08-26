@@ -1,0 +1,322 @@
+{
+  "schema": 1,
+  "categories": [
+    {
+      "id": "personalize",
+      "name": "Look and feel",
+      "section": "add",
+      "order": 91,
+      "items": [
+        {
+          "id": "shortcut-arrow",
+          "settingsPath": "There is no Settings page for this. Undo the run, or open Registry Editor at HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Icons, delete the value named 29, and sign out and back in.",
+          "symptoms": ["shortcut arrow", "no shortcut arrow", "arrow missing from icons", "cannot tell shortcuts apart", "desktop icons changed", "shortcut overlay missing", "icons look wrong", "arrow gone from shortcuts"],
+          "name": "Remove the arrow from shortcut icons",
+          "desc": "Takes the small overlay arrow off desktop and Start shortcuts. The shortcuts themselves are untouched.",
+          "risk": 0, "tier": 0, "default": false, "order": 90,
+          "actions": [
+            { "type": "script", "handler": "SetShortcutArrow" }
+          ]
+        },
+        {
+          "id": "theme-dark",
+          "settingsPath": "Settings > Personalization > Colors, and choose Light.",
+          "symptoms": ["everything is dark", "dark mode on", "theme changed"],
+          "name": "Dark mode",
+          "desc": "Switches Windows and apps to the dark theme. Your wallpaper and accent color are left as they are.",
+          "risk": 0, "tier": 0, "default": false, "order": 90,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", "name": "AppsUseLightTheme", "kind": "DWord", "value": 0 },
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", "name": "SystemUsesLightTheme", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "transparency-off",
+          "settingsPath": "Settings > Personalization > Colors, and turn Transparency effects back on.",
+          "symptoms": ["no transparency", "taskbar solid", "frosted glass gone"],
+          "name": "Turn off transparency effects",
+          "desc": "The taskbar, Start, and Settings become solid instead of frosted. Costs the GPU nothing to draw, which shows on laptops and integrated graphics.",
+          "risk": 0, "tier": 0, "default": false, "order": 90,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", "name": "EnableTransparency", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "animations-off",
+          "settingsPath": "Settings > Accessibility > Visual effects, and turn Animation effects back on.",
+          "symptoms": ["no animations", "windows not animating", "menus instant"],
+          "name": "Turn off window animations and the menu delay",
+          "desc": "Windows stop sliding when minimized and menus open the moment you point at them instead of 400 ms later. Nothing about the layout changes; it only stops waiting.",
+          "risk": 0, "tier": 0, "default": false, "order": 90,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "Control Panel\\Desktop\\WindowMetrics", "name": "MinAnimate", "kind": "String", "value": "0" },
+                { "path": "Control Panel\\Desktop", "name": "MenuShowDelay", "kind": "String", "value": "0" },
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", "name": "TaskbarAnimations", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "taskbar-left",
+          "settingsPath": "Settings > Personalization > Taskbar > Taskbar behaviors, and set alignment to Center.",
+          "symptoms": ["taskbar on the left", "start button moved"],
+          "name": "Left-align the taskbar",
+          "desc": "Puts Start and the taskbar icons back in the corner, as on Windows 10.",
+          "risk": 0, "tier": 0, "default": false, "order": 91,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", "name": "TaskbarAl", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "taskbar-seconds",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["seconds on clock", "clock showing seconds"],
+          "name": "Seconds on the taskbar clock",
+          "desc": "Shows the seconds beside the time.",
+          "risk": 0, "tier": 0, "default": false, "order": 91,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", "name": "ShowSecondsInSystemClock", "kind": "DWord", "value": 1 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "taskbar-tray-all",
+          "settingsPath": "Settings > Personalization > Taskbar > Other system tray icons.",
+          "symptoms": ["too many tray icons", "system tray full"],
+          "name": "Show every tray icon",
+          "desc": "Stops Windows hiding tray icons behind the chevron, so everything running is visible at a glance.",
+          "risk": 0, "tier": 0, "default": false, "order": 91,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer", "name": "EnableAutoTray", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "taskbar-combine",
+          "settingsPath": "Settings > Personalization > Taskbar > Taskbar behaviors, and combine taskbar buttons again.",
+          "symptoms": ["taskbar buttons not grouped", "too many taskbar buttons"],
+          "name": "Never combine taskbar buttons",
+          "desc": "Every window gets its own labeled button instead of stacking under one icon. Needs Windows 11 23H2 or later; on older builds it does nothing.",
+          "risk": 0, "tier": 0, "default": false, "order": 91,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", "name": "TaskbarGlomLevel", "kind": "DWord", "value": 2 },
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", "name": "MMTaskbarGlomLevel", "kind": "DWord", "value": 2 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "start-more-pins",
+          "name": "More pins in Start",
+          "desc": "Gives the pinned apps three rows instead of two by shrinking the Recommended strip.",
+          "risk": 0, "tier": 0, "default": false, "order": 91,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", "name": "Start_Layout", "kind": "DWord", "value": 1 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "explorer-nav",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["home missing from sidebar", "gallery missing", "explorer sidebar changed"],
+          "name": "Remove Home and Gallery from the Explorer sidebar",
+          "desc": "Takes the two cloud-backed entries out of the navigation pane, leaving This PC and your drives.",
+          "risk": 0, "tier": 2, "default": false, "order": 92,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Classes\\CLSID\\{f874310e-b6b7-47dc-bc84-b9e6b38f5903}", "name": "System.IsPinnedToNameSpaceTree", "kind": "DWord", "value": 0 },
+                { "path": "SOFTWARE\\Classes\\CLSID\\{e88865ea-0e1c-4e20-9aa6-edcd0212c87c}", "name": "System.IsPinnedToNameSpaceTree", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "quick-access-tracking",
+          "settingsPath": "File Explorer > View > Options > Privacy, and turn the two recent-items boxes back on.",
+          "symptoms": ["quick access empty", "no recent folders", "recent files not showing", "explorer not remembering"],
+          "name": "Stop Quick Access tracking what you open",
+          "desc": "Explorer stops listing recently used files and frequently used folders, and stops surfacing files from Office.com.",
+          "risk": 0, "tier": 2, "default": false, "order": 92,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer", "name": "ShowRecent", "kind": "DWord", "value": 0 },
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer", "name": "ShowFrequent", "kind": "DWord", "value": 0 },
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer", "name": "ShowCloudFilesInQuickAccess", "kind": "DWord", "value": 0 },
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", "name": "Start_TrackDocs", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "this-pc-folders",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["folders missing from this pc", "documents missing from this pc"],
+          "name": "Remove the media folders from This PC",
+          "desc": "Takes Desktop, Documents, Downloads, Music, Pictures, Videos, and 3D Objects out of This PC, leaving the drives. The folders themselves are untouched and still in the sidebar.",
+          "risk": 0, "tier": 0, "default": false, "order": 92,
+          "actions": [
+            {
+              "type": "registryKey",
+              "paths": [
+                "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}",
+                "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\{d3162b92-9365-467a-956b-92703aca08af}",
+                "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\{088e3905-0323-4b02-9826-5d99428e115f}",
+                "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\{3dfdf296-dbec-4fb4-81d1-6a3438bcf4de}",
+                "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\{24ad3ad4-a569-4530-98e1-ab02f9417aa8}",
+                "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\{f86fa3ab-70d2-4fc7-9c99-fcbf05467f3a}",
+                "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\{0DB7E03F-FC29-4DC6-9020-FF41B59E513A}",
+                "HKLM:\\SOFTWARE\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}",
+                "HKLM:\\SOFTWARE\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\{d3162b92-9365-467a-956b-92703aca08af}",
+                "HKLM:\\SOFTWARE\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\{088e3905-0323-4b02-9826-5d99428e115f}",
+                "HKLM:\\SOFTWARE\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\{3dfdf296-dbec-4fb4-81d1-6a3438bcf4de}",
+                "HKLM:\\SOFTWARE\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\{24ad3ad4-a569-4530-98e1-ab02f9417aa8}",
+                "HKLM:\\SOFTWARE\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\{f86fa3ab-70d2-4fc7-9c99-fcbf05467f3a}",
+                "HKLM:\\SOFTWARE\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\{0DB7E03F-FC29-4DC6-9020-FF41B59E513A}"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "desktop-thispc",
+          "settingsPath": "Settings > Personalization > Themes > Desktop icon settings.",
+          "symptoms": ["this pc icon missing", "my computer icon gone"],
+          "name": "Show This PC on the desktop",
+          "desc": "Puts the This PC icon back on the desktop.",
+          "risk": 0, "tier": 0, "default": false, "order": 92,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\HideDesktopIcons\\NewStartPanel", "name": "{20D04FE0-3AEA-1069-A2D8-08002B30309D}", "kind": "DWord", "value": 0 },
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\HideDesktopIcons\\ClassicStartMenu", "name": "{20D04FE0-3AEA-1069-A2D8-08002B30309D}", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "autoplay-off",
+          "settingsPath": "Settings > Bluetooth and devices > AutoPlay, and turn it back on.",
+          "symptoms": ["usb does not open", "autoplay not working", "sd card not opening", "nothing happens when i plug in usb", "autorun off"],
+          "name": "Turn off AutoPlay and AutoRun",
+          "desc": "Nothing runs or prompts when you plug in a drive, a phone, or a disc. You open it yourself in Explorer.",
+          "risk": 0, "tier": 2, "default": false, "order": 92,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\AutoplayHandlers", "name": "DisableAutoplay", "kind": "DWord", "value": 1 }
+              ]
+            },
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer", "name": "NoAutorun", "kind": "DWord", "value": 1 },
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer", "name": "NoDriveTypeAutoRun", "kind": "DWord", "value": 255 },
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer", "name": "NoDriveTypeAutoRun", "kind": "DWord", "value": 255 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "scrollbars-always",
+          "settingsPath": "Settings > Accessibility > Visual effects, and turn Always show scrollbars off.",
+          "symptoms": ["scrollbars always showing", "scrollbar too wide"],
+          "name": "Always show scrollbars",
+          "desc": "Stops scrollbars shrinking to a hairline when the pointer moves away, in Settings and Store apps.",
+          "risk": 0, "tier": 0, "default": false, "order": 92,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "Control Panel\\Accessibility", "name": "DynamicScrollbars", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "photo-viewer",
+          "settingsPath": "Right-click a picture, Open with, Choose another app, and pick what you want.",
+          "symptoms": ["photo viewer not default", "pictures open in wrong app", "windows photo viewer missing"],
+          "name": "Bring back Windows Photo Viewer",
+          "desc": "Windows still ships the old viewer but no longer registers it. This registers it again, so it appears under Open with and can be set as the default for images.",
+          "riskNote": "This only re-registers the viewer; it does not change your file associations. Windows 11 will not let a script set a default app, so you pick it once per file type under Open with, Choose another app.",
+          "risk": 1, "tier": 0, "default": false, "order": 93,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Classes\\Applications\\photoviewer.dll\\shell\\open", "name": "MuiVerb", "kind": "String", "value": "@photoviewer.dll,-3043" },
+                { "path": "HKLM:\\SOFTWARE\\Classes\\Applications\\photoviewer.dll\\shell\\open\\command", "name": "(default)", "kind": "ExpandString", "value": "%SystemRoot%\\System32\\rundll32.exe \"%ProgramFiles%\\Windows Photo Viewer\\PhotoViewer.dll\", ImageView_Fullscreen %1" },
+                { "path": "HKLM:\\SOFTWARE\\Classes\\Applications\\photoviewer.dll\\shell\\open\\DropTarget", "name": "Clsid", "kind": "String", "value": "{FFE2A43C-56B9-4bf5-9A79-CC6D4285608A}" },
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities", "name": "ApplicationName", "kind": "String", "value": "@%ProgramFiles%\\Windows Photo Viewer\\photoviewer.dll,-3043" },
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities", "name": "ApplicationDescription", "kind": "String", "value": "@%ProgramFiles%\\Windows Photo Viewer\\photoviewer.dll,-3069" },
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities\\FileAssociations", "name": ".jpg", "kind": "String", "value": "PhotoViewer.FileAssoc.Tiff" },
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities\\FileAssociations", "name": ".jpeg", "kind": "String", "value": "PhotoViewer.FileAssoc.Tiff" },
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities\\FileAssociations", "name": ".jpe", "kind": "String", "value": "PhotoViewer.FileAssoc.Tiff" },
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities\\FileAssociations", "name": ".jfif", "kind": "String", "value": "PhotoViewer.FileAssoc.Tiff" },
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities\\FileAssociations", "name": ".png", "kind": "String", "value": "PhotoViewer.FileAssoc.Tiff" },
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities\\FileAssociations", "name": ".gif", "kind": "String", "value": "PhotoViewer.FileAssoc.Tiff" },
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities\\FileAssociations", "name": ".bmp", "kind": "String", "value": "PhotoViewer.FileAssoc.Tiff" },
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities\\FileAssociations", "name": ".tif", "kind": "String", "value": "PhotoViewer.FileAssoc.Tiff" },
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities\\FileAssociations", "name": ".tiff", "kind": "String", "value": "PhotoViewer.FileAssoc.Tiff" },
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities\\FileAssociations", "name": ".wdp", "kind": "String", "value": "PhotoViewer.FileAssoc.Wdp" },
+                { "path": "HKLM:\\SOFTWARE\\RegisteredApplications", "name": "Windows Photo Viewer", "kind": "String", "value": "SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities" }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "startup-sound",
+          "name": "Turn off the Windows startup sound",
+          "desc": "The chime at the sign-in screen. Every other system sound is left alone.",
+          "risk": 0, "tier": 0, "default": false, "order": 93,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\LogonUI\\BootAnimation", "name": "DisableStartupSound", "kind": "DWord", "value": 1 }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,945 @@
+{
+    "schema":  1,
+    "categories":  [
+                       {
+                           "id":  "services",
+                           "name":  "Services, features, and scheduled tasks",
+                           "order":  120,
+                           "items":  [
+                                         {
+                                             "id":  "svc-junk",
+                                             "settingsPath": "services.msc, and set the service you need back to Manual.",
+                                             "symptoms": ["fax not working", "nfc not working", "tap to pay not working", "remote registry off", "parental controls not working"],
+                                             "bloat": 4,
+                                             "name":  "Remote Registry, Fax, RetailDemo, Parental Controls, and NFC payments",
+                                             "desc":  "Disabled outright.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  88,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "service",
+                                                                 "startupType":  "Disabled",
+                                                                 "names":  [
+                                                                               "RemoteRegistry",
+                                                                               "Fax",
+                                                                               "RetailDemo",
+                                                                               "WpcMonSvc",
+                                                                               "SEMgrSvc",
+                                                                               "PhoneSvc",
+                                                                               "MessagingService*",
+                                                                               "WalletService",
+                                                                               "PimIndexMaintenanceSvc*"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "task",
+                                                                 "tasks":  [
+                                                                               "\\Microsoft\\Windows\\Retail Demo\\*",
+                                                                               "\\Microsoft\\Windows\\Shell\\FamilySafety*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "svc-sysmain",
+                                             "settingsPath": "services.msc, find SysMain, and set it back to Automatic.",
+                                             "symptoms": ["programs slow to start", "pc feels slower", "superfetch off", "prefetch not working"],
+                                             "bloat": 4,
+                                             "name":  "SysMain (Superfetch)",
+                                             "desc":  "The SysMain prefetching service, formerly Superfetch.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  88,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "service",
+                                                                 "startupType":  "Disabled",
+                                                                 "names":  [
+                                                                               "SysMain"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  3,
+                                             "riskNote":  "Superfetch. Helps on mechanical hard drives, roughly neutral on SSDs, and disabling it can slow first-launch times."
+                                         },
+                                         {
+                                             "id":  "svc-wsearch",
+                                             "settingsPath": "services.msc, find Windows Search, set Startup type to Automatic (Delayed Start), and press Start. It takes a while to rebuild the index.",
+                                             "symptoms": ["search not working", "start menu search not working", "cannot find files", "search finds nothing", "file explorer search broken", "outlook search not working", "search results empty", "indexing not working", "cannot search", "typing in start does nothing", "search slow"],
+                                             "bloat": 6,
+                                             "name":  "Windows Search indexing",
+                                             "desc":  "The Windows Search indexing service.",
+                                             "risk":  2,
+                                             "default":  false,
+                                             "order":  88,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "service",
+                                                                 "startupType":  "Disabled",
+                                                                 "names":  [
+                                                                               "WSearch"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  4,
+                                             "riskNote":  "Disabling the search index makes Start menu search and Outlook search dramatically worse. Rarely worth it."
+                                         },
+                                         {
+                                             "id":  "svc-print",
+                                             "settingsPath": "services.msc, find Print Spooler, set Startup type to Automatic, and press Start. Then re-add your printer from Settings > Bluetooth and devices > Printers and scanners.",
+                                             "symptoms": ["cannot print", "printing not working", "printer missing", "printer gone", "no printers", "print spooler error", "printer offline", "cannot add printer", "print to pdf missing", "print queue stuck", "printer not found", "nothing prints", "print job stuck", "scanner not working"],
+                                             "bloat": 6,
+                                             "name":  "Print Spooler",
+                                             "desc":  "The print spooler service.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  88,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "service",
+                                                                 "startupType":  "Disabled",
+                                                                 "names":  [
+                                                                               "Spooler"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  0,
+                                             "riskNote":  "The machine will not be able to print at all until this is re-enabled."
+                                         },
+                                         {
+                                             "id":  "svc-bio",
+                                             "settingsPath": "services.msc, find Windows Biometric Service, set it back to Automatic, then re-enroll in Settings > Accounts > Sign-in options.",
+                                             "symptoms": ["windows hello not working", "fingerprint not working", "face unlock not working", "cannot sign in with face", "fingerprint reader missing", "hello face missing", "biometric error"],
+                                             "bloat": 5,
+                                             "name":  "Biometrics service",
+                                             "desc":  "The Windows biometric service behind Hello sign-in.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  88,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "service",
+                                                                 "startupType":  "Disabled",
+                                                                 "names":  [
+                                                                               "WbioSrvc"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  4,
+                                             "riskNote":  "Windows Hello fingerprint and face sign-in stop working."
+                                         },
+                                         {
+                                             "id":  "svc-touch",
+                                             "settingsPath": "services.msc, find Touch Keyboard and Handwriting Panel Service, and set it back to Manual.",
+                                             "symptoms": ["touch keyboard missing", "on screen keyboard not working", "no keyboard on tablet", "handwriting not working", "pen not working", "stylus not working", "touch input broken"],
+                                             "bloat": 5,
+                                             "name":  "Tablet input and touch keyboard",
+                                             "desc":  "The tablet input and touch keyboard service.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  88,
+                                             "guards":  [
+                                                            "!touch"
+                                                        ],
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "service",
+                                                                 "startupType":  "Manual",
+                                                                 "names":  [
+                                                                               "TabletInputService"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  4,
+                                             "riskNote":  "The touch keyboard and pen input stop working. Skipped automatically when a digitiser is detected."
+                                         },
+                                         {
+                                             "id":  "feat-legacy",
+                                             "settingsPath": "Turn Windows features on or off, and tick the feature you need.",
+                                             "symptoms": ["windows feature missing", "optional feature gone", "powershell 2 missing", "wmic missing"],
+                                             "bloat": 4,
+                                             "name":  "Legacy optional features",
+                                             "desc":  "Steps Recorder, Math Recognizer, Windows Fax and Scan, XPS Writer, and the legacy Media Player.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  89,
+                                             "reboot":  true,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "feature",
+                                                                 "names":  [
+                                                                               "Printing-XPSServices-Features",
+                                                                               "FaxServicesClientPackage",
+                                                                               "WindowsMediaPlayer",
+                                                                               "MicrosoftWindowsPowerShellV2Root",
+                                                                               "WorkFolders-Client"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "capability",
+                                                                 "names":  [
+                                                                               "App.StepsRecorder*",
+                                                                               "MathRecognizer*",
+                                                                               "Print.Fax.Scan*",
+                                                                               "Microsoft.Windows.WordPad*",
+                                                                               "Browser.InternetExplorer*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "task-cleanup",
+                                             "settingsPath": "Task Scheduler, or undo the run to re-enable the tasks.",
+                                             "symptoms": ["scheduled task missing", "task not running", "task scheduler empty", "automatic task not working"],
+                                             "bloat": 1,
+                                             "name":  "Telemetry and marketing scheduled tasks",
+                                             "desc":  "Windows Update, Defender, and disk maintenance tasks are explicitly left alone.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  89,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "task",
+                                                                 "tasks":  [
+                                                                               "\\Microsoft\\Windows\\CloudExperienceHost\\CreateObjectTask",
+                                                                               "\\Microsoft\\Windows\\Feedback\\Siuf\\*",
+                                                                               "\\Microsoft\\Windows\\Application Experience\\*",
+                                                                               "\\Microsoft\\Windows\\Customer Experience Improvement Program\\*",
+                                                                               "\\Microsoft\\Windows\\PushToInstall\\*",
+                                                                               "\\Microsoft\\Windows\\Subscription\\*",
+                                                                               "\\Microsoft\\Windows\\Speech\\SpeechModelDownloadTask"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         }
+                                     ]
+                       },
+                       {
+                           "id":  "qol",
+                           "name":  "Quality-of-life fixes",
+                           "section":  "add",
+                           "order":  90,
+                           "items":  [
+                                         {
+                                             "id":  "set-default-browser",
+                                             "settingsPath": "Settings > Apps > Default apps, choose your browser, and press Set default. This option only opened that page, so there is nothing to undo.",
+                                             "symptoms": ["links open in edge", "wrong browser opens", "default browser wrong", "cannot change default browser", "pdf opens in edge", "browser default not sticking"],
+                                             "name":  "Change default browser",
+                                             "desc":  "Hands every association the current browser holds to one you already have instead of Edge - not just http and https, but the file types that open in a browser too: .htm, .html, .pdf, .svg and whatever else it has claimed. Removing Edge does this on its own, first - this is for handing them over without removing anything.",
+                                             "riskNote": "Windows 11 will not let any third-party tool set this silently: the keys are guarded by a kernel driver and a signature Microsoft does not publish. So this reads which browser you have, opens Default apps at it, and tells you the one button left to press. It reports Blocked rather than claiming a success it cannot deliver.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  98,
+                                             "actions":  [ { "type": "script", "handler": "SetDefaultBrowser" } ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "context-menu",
+                                             "settingsPath": "Undo the run to go back to the short Windows 11 menu.",
+                                             "symptoms": ["right click menu different", "long right click menu", "show more options missing", "context menu changed", "old right click menu"],
+                                             "name":  "Restore the full right-click menu",
+                                             "desc":  "Brings back the Windows 10 context menu instead of Show more options.",
+                                             "risk":  0,
+                                             "default":  false,
+                                             "order":  90,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Classes\\CLSID\\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\\InprocServer32",
+                                                                                    "name":  "(default)",
+                                                                                    "kind":  "String",
+                                                                                    "value":  ""
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  2
+                                         },
+                                         {
+                                             "id":  "taskbar",
+                                             "settingsPath": "Settings > Personalization > Taskbar, and turn the buttons back on.",
+                                             "symptoms": ["search box missing", "task view missing", "taskbar buttons gone", "widgets button missing", "taskbar changed", "search missing from taskbar"],
+                                             "name":  "Taskbar cleanup",
+                                             "desc":  "Hides Task View, Widgets, Chat, and the search box entirely. Alignment is left as you have it, and Start still searches when you type.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  91,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                                                                                    "name":  "ShowTaskViewButton",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                                                                                    "name":  "TaskbarDa",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                                                                                    "name":  "TaskbarMn",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Search",
+                                                                                    "name":  "SearchboxTaskbarMode",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  2
+                                         },
+                                         {
+                                             "id":  "logon-verbose",
+                                             "settingsPath": "Undo the run.",
+                                             "symptoms": ["extra messages at sign in", "status messages at login"],
+                                             "name":  "Verbose sign-in and shutdown messages",
+                                             "desc":  "Replaces the spinner with what Windows is actually doing at sign-in, sign-out, and shutdown.",
+                                             "risk":  0,
+                                             "default":  false,
+                                             "order":  91,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
+                                                                                    "name":  "VerboseStatus",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  3
+                                         },
+                                         {
+                                             "id":  "numlock-startup",
+                                             "settingsPath": "Undo the run.",
+                                             "symptoms": ["num lock on at boot", "number pad on at startup"],
+                                             "name":  "Num Lock on at startup",
+                                             "desc":  "Turns Num Lock on at the sign-in screen and for every account.",
+                                             "risk":  0,
+                                             "default":  false,
+                                             "order":  91,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "Control Panel\\Keyboard",
+                                                                                    "name":  "InitialKeyboardIndicators",
+                                                                                    "kind":  "String",
+                                                                                    "value":  "2"
+                                                                                }
+                                                                            ]
+                                                             },
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "Registry::HKEY_USERS\\.DEFAULT\\Control Panel\\Keyboard",
+                                                                                    "name":  "InitialKeyboardIndicators",
+                                                                                    "kind":  "String",
+                                                                                    "value":  "2"
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  0
+                                         },
+                                         {
+                                             "id":  "settings-home",
+                                             "settingsPath": "Settings > Privacy and security, or undo the run.",
+                                             "symptoms": ["settings home page missing", "settings opens differently"],
+                                             "name":  "Settings home page",
+                                             "desc":  "Hides the recommendation-filled Home page so Settings opens on System instead.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  91,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer",
+                                                                                    "name":  "SettingsPageVisibility",
+                                                                                    "kind":  "String",
+                                                                                    "value":  "hide:home"
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  2
+                                         },
+                                         {
+                                             "id":  "start-recommended",
+                                             "settingsPath": "Settings > Personalization > Start, and turn the recommendations back on.",
+                                             "symptoms": ["start menu recommended empty", "recommended gone", "no recently added apps"],
+                                             "name":  "Start menu Recommended section",
+                                             "desc":  "Hides the recently-added, recently-opened, and suggested entries under the pinned apps.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  91,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Microsoft\\PolicyManager\\current\\device\\Start",
+                                                                                    "name":  "HideRecommendedSection",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer",
+                                                                                    "name":  "HideRecommendedSection",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer",
+                                                                                    "name":  "HideRecommendedPersonalizedSites",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  2,
+                                             "riskNote":  "The Recommended block is hidden rather than emptied, so Start becomes pinned apps only. On Home editions Windows sometimes ignores the policy and puts it back at the next feature update."
+                                         },
+                                         {
+                                             "id":  "sticky-keys",
+                                             "settingsPath": "Settings > Accessibility > Keyboard, and turn the Sticky keys shortcut back on.",
+                                             "symptoms": ["sticky keys not prompting", "shift five times does nothing"],
+                                             "name":  "Sticky Keys shortcut",
+                                             "desc":  "Stops five taps on Shift opening the Sticky Keys prompt. The feature stays available in Accessibility settings.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  91,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "Control Panel\\Accessibility\\StickyKeys",
+                                                                                    "name":  "Flags",
+                                                                                    "kind":  "String",
+                                                                                    "value":  "506"
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  2
+                                         },
+                                         {
+                                             "id":  "battery-percent",
+                                             "name":  "Battery percentage in the system tray",
+                                             "desc":  "Shows the number next to the battery icon instead of only the fill level.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  91,
+                                             "guards":  [
+                                                            "battery"
+                                                        ],
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                                                                                    "name":  "IsBatteryPercentageEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "skip-lock-screen",
+                                             "settingsPath": "Undo the run.",
+                                             "symptoms": ["no lock screen", "lock screen skipped", "goes straight to password"],
+                                             "name":  "Skip the lock screen",
+                                             "desc":  "Goes straight to the sign-in prompt instead of the picture you have to dismiss first.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  91,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Personalization",
+                                                                                    "name":  "NoLockScreen",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  3
+                                         },
+                                         {
+                                             "id":  "no-snap",
+                                             "settingsPath": "Settings > System > Multitasking, and turn Snap windows back on.",
+                                             "symptoms": ["snap not working", "windows not snapping", "snap layouts missing", "cannot drag window to side", "aero snap gone", "split screen not working"],
+                                             "name":  "Window snapping",
+                                             "desc":  "Turns off snapping a window by dragging it to an edge, along with Snap Assist and the snap layout flyout.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  91,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "Control Panel\\Desktop",
+                                                                                    "name":  "WindowArrangementActive",
+                                                                                    "kind":  "String",
+                                                                                    "value":  "0"
+                                                                                },
+                                                                                {
+                                                                                    "path":  "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                                                                                    "name":  "SnapAssist",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                                                                                    "name":  "EnableSnapBar",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                                                                                    "name":  "EnableSnapAssistFlyout",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  4,
+                                             "riskNote":  "Win+arrow and dragging to an edge stop tiling windows. This is muscle memory for a lot of people - it is at Extreme rather than lower for that reason, and it is one to untick if you use it."
+                                         },
+                                         {
+                                             "id":  "taskbar-autohide",
+                                             "settingsPath": "Settings > Personalization > Taskbar > Taskbar behaviors, and untick Automatically hide the taskbar.",
+                                             "symptoms": ["taskbar hiding", "taskbar disappears", "taskbar not showing"],
+                                             "name":  "Auto-hide the taskbar",
+                                             "desc":  "The taskbar slides out of the way and comes back when you move the pointer to that edge.",
+                                             "risk":  0,
+                                             "default":  false,
+                                             "order":  91,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "script",
+                                                                 "handler":  "SetTaskbarAutoHide"
+                                                             }
+                                                         ],
+                                             "tier":  0
+                                         },
+                                         {
+                                             "id":  "file-ext",
+                                             "settingsPath": "File Explorer > View > Show, and untick File name extensions.",
+                                             "symptoms": ["file extensions showing", ".txt showing on files", "extensions visible"],
+                                             "name":  "Show file extensions",
+                                             "desc":  "",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  91,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                                                                                    "name":  "HideFileExt",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  2
+                                         },
+                                         {
+                                             "id":  "explorer-home",
+                                             "settingsPath": "File Explorer > View > Options, and set Open File Explorer to Home.",
+                                             "symptoms": ["explorer opens to this pc", "home missing in explorer"],
+                                             "name":  "Explorer opens to This PC",
+                                             "desc":  "Instead of Home with its recommended files.",
+                                             "risk":  0,
+                                             "default":  false,
+                                             "order":  91,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                                                                                    "name":  "LaunchTo",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  3
+                                         },
+                                         {
+                                             "id":  "hidden-files",
+                                             "settingsPath": "File Explorer > View > Show, and untick Hidden items.",
+                                             "symptoms": ["hidden files showing", "extra folders visible", "appdata showing"],
+                                             "name":  "Show hidden files",
+                                             "desc":  "Shows hidden and system files in File Explorer.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  91,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                                                                                    "name":  "Hidden",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  0,
+                                             "riskNote":  "Shows hidden and system files everywhere. Harmless, but it clutters File Explorer."
+                                         },
+                                         {
+                                             "id":  "mouse-accel",
+                                             "settingsPath": "Settings > Bluetooth and devices > Mouse > Additional mouse settings > Pointer Options, and tick Enhance pointer precision.",
+                                             "symptoms": ["mouse feels different", "pointer slower", "mouse acceleration off", "aim feels off"],
+                                             "name":  "Turn off mouse acceleration",
+                                             "desc":  "Clears Enhance pointer precision, so the same physical movement always moves the pointer the same distance. Takes effect at the next sign-in.",
+                                             "risk":  0,
+                                             "default":  false,
+                                             "order":  91,
+                                             "reboot":  true,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "Control Panel\\Mouse",
+                                                                                    "name":  "MouseSpeed",
+                                                                                    "kind":  "String",
+                                                                                    "value":  "0"
+                                                                                },
+                                                                                {
+                                                                                    "path":  "Control Panel\\Mouse",
+                                                                                    "name":  "MouseThreshold1",
+                                                                                    "kind":  "String",
+                                                                                    "value":  "0"
+                                                                                },
+                                                                                {
+                                                                                    "path":  "Control Panel\\Mouse",
+                                                                                    "name":  "MouseThreshold2",
+                                                                                    "kind":  "String",
+                                                                                    "value":  "0"
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  0
+                                         },
+                                         {
+                                             "id":  "end-task",
+                                             "settingsPath": "Settings > System > For developers, and turn End Task off.",
+                                             "symptoms": ["end task in taskbar menu"],
+                                             "name":  "End task in taskbar right-click",
+                                             "desc":  "",
+                                             "risk":  0,
+                                             "default":  false,
+                                             "order":  91,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\\TaskbarDeveloperSettings",
+                                                                                    "name":  "TaskbarEndTask",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  3
+                                         },
+                                         {
+                                             "id":  "edge-nags",
+                                             "settingsPath": "Undo the run.",
+                                             "symptoms": ["edge not prompting", "no edge suggestions"],
+                                             "name":  "Edge nag suppression",
+                                             "desc":  "Stops desktop shortcut recreation, default-browser prompts, and the first-run experience.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  92,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\EdgeUpdate",
+                                                                                    "name":  "CreateDesktopShortcutDefault",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge",
+                                                                                    "name":  "HideFirstRunExperience",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge",
+                                                                                    "name":  "DefaultBrowserSettingEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge",
+                                                                                    "name":  "PromotionalTabsEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "power-plan",
+                                             "settingsPath": "Control Panel > Power Options, and choose the plan you want.",
+                                             "symptoms": ["power plan changed", "battery life different", "performance mode changed"],
+                                             "name":  "Set an appropriate power plan",
+                                             "desc":  "High Performance on desktops, Balanced on laptops.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  93,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "script",
+                                                                 "handler":  "SetPowerPlan"
+                                                             }
+                                                         ],
+                                             "tier":  0,
+                                             "riskNote":  "Changes the active power plan. On a laptop this is left on Balanced deliberately, because High Performance pins clocks, and destroys battery life."
+                                         },
+                                         {
+                                             "id":  "fast-startup",
+                                             "settingsPath": "Control Panel > Power Options > Choose what the power buttons do > Change settings that are currently unavailable, and tick Turn on fast startup.",
+                                             "symptoms": ["boot slow", "pc slow to start", "startup slower", "fast startup off", "takes longer to boot"],
+                                             "name":  "Disable Fast Startup",
+                                             "desc":  "Makes shutdown a real shutdown instead of a partial hibernate.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  93,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power",
+                                                                                    "name":  "HiberbootEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  4,
+                                             "riskNote":  "Boots slower, because Windows can no longer resume the kernel from disk. Worth it on dual-boot machines, where fast startup leaves the Windows filesystem in a state Linux can corrupt, and for clearing stale driver state between restarts."
+                                         },
+                                         {
+                                             "id":  "hibernate",
+                                             "settingsPath": "Run powercfg /hibernate on from an administrator command prompt.",
+                                             "symptoms": ["hibernate missing", "no hibernate option", "laptop will not hibernate", "hiberfil missing", "sleep not working", "hibernate gone from power menu"],
+                                             "name":  "Disable hibernation",
+                                             "desc":  "Turns off hibernation and deletes hiberfil.sys.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  93,
+                                             "guards":  [
+                                                            "!battery"
+                                                        ],
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "script",
+                                                                 "handler":  "DisableHibernation"
+                                                             }
+                                                         ],
+                                             "tier":  0,
+                                             "riskNote":  "Reclaims disk equal to your RAM, but removes sleep-to-disk, and hybrid sleep. Skipped automatically on battery-powered hardware."
+                                         },
+                                         {
+                                             "id":  "reserved-storage",
+                                             "settingsPath": "Run DISM /Online /Set-ReservedStorageState /State:Enabled from an administrator prompt.",
+                                             "symptoms": ["update fails no space", "not enough disk space for update", "feature update failing", "reserved storage off"],
+                                             "name":  "Disable Reserved Storage",
+                                             "desc":  "Releases the disk space Windows reserves for updates.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  93,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "script",
+                                                                 "handler":  "DisableReservedStorage"
+                                                             }
+                                                         ],
+                                             "tier":  0,
+                                             "riskNote":  "Frees roughly 7 GB, but Windows then has to find that space itself at the next feature update, which can fail on a full disk."
+                                         },
+                                         {
+                                             "id":  "startup-clean",
+                                             "settingsPath": "Settings > Apps > Startup, or Task Manager > Startup apps, and turn the entry back on.",
+                                             "symptoms": ["program not starting with windows", "startup app missing", "app not launching at boot", "autostart not working"],
+                                             "name":  "Disable startup entries",
+                                             "desc":  "Disables every app set to run at login except system dependencies.",
+                                             "risk":  1,
+                                             "default":  true,
+                                             "order":  94,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "script",
+                                                                 "handler":  "DisableStartupEntries"
+                                                             }
+                                                         ],
+                                             "tier":  3,
+                                             "riskNote":  "Disables every login item that is not a system dependency. Audio, input, security, and vendor hardware tools are kept."
+                                         },
+                                         {
+                                             "id":  "desktop-shortcuts",
+                                             "settingsPath": "Nothing to restore automatically - re-create the shortcuts you want. The programs themselves were not removed.",
+                                             "symptoms": ["desktop shortcuts gone", "icons missing from desktop", "shortcut deleted", "desktop empty"],
+                                             "name":  "Remove desktop shortcuts",
+                                             "desc":  "Clears every shortcut off the desktop, yours included. Apps stay installed and in Start.",
+                                             "risk":  1,
+                                             "default":  true,
+                                             "order":  95,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "shortcut",
+                                                                 "locations":  [
+                                                                                   "desktop"
+                                                                               ],
+                                                                 "recurse":  false,
+                                                                 "recycle":  true,
+                                                                 "names":  [
+                                                                               "*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  4,
+                                             "riskNote":  "Every .lnk and .url on your desktop and the shared public desktop goes, shortcuts you made yourself included. Files and folders on the desktop are untouched, folders of shortcuts are left alone, and nothing is uninstalled - every app is still in Start. The links go to the Recycle Bin, so putting one back is a drag out of the bin."
+                                         }
+                                     ]
+                       },
+                       {
+                           "id":  "finish",
+                           "name":  "Double-checks",
+                           "order":  130,
+                           "items":  [
+                                         {
+                                             "id":  "uninstall-leftovers",
+                                             "settingsPath": "Anything it removed went to the Recycle Bin. Restore it from there, or undo the run.",
+                                             "symptoms": ["program folder gone", "leftover files removed", "settings folder missing"],
+                                             "bloat": 4,
+                                             "name":  "Clear folders the uninstallers left behind",
+                                             "desc":  "After the vendor uninstallers have run, sends any install folder they left behind to the Recycle Bin.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  97,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "script",
+                                                                 "handler":  "RemoveUninstallLeftovers"
+                                                             }
+                                                         ],
+                                             "tier":  2,
+                                             "riskNote":  "Only touches the folder a program itself declared as its install location, and only when the uninstaller left it there. It goes to the Recycle Bin rather than being deleted, so it can be put back - but settings, license files, and saved data stored inside a program's own folder go with it."
+                                         },
+                                         {
+                                             "id":  "component-cleanup",
+                                             "settingsPath": "Nothing can be restored. Updates installed after the run can still be uninstalled.",
+                                             "symptoms": ["cannot uninstall update", "update uninstall missing", "cannot remove a patch"],
+                                             "bloat": 4,
+                                             "name":  "Reclaim space from superseded Windows updates",
+                                             "desc":  "Compacts the component store and clears the temp folders. Usually the largest single space win on the list - typically 3-8 GB.",
+                                             "risk":  2,
+                                             "default":  false,
+                                             "order":  96,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "script",
+                                                                 "handler":  "CleanComponentStore"
+                                                             }
+                                                         ],
+                                             "tier":  0,
+                                             "riskNote":  "Opt-in because it is not reversible in the way the rest of this list is: it throws away the backups Windows keeps for uninstalling updates, so afterwards no installed update can be rolled back. If a Windows update breaks something for you, that route is gone. It also takes several minutes and cannot be interrupted safely."
+                                         },
+                                         {
+                                             "id":  "uninstall-residue",
+                                             "settingsPath": "Anything it removed went to the Recycle Bin. Restore it from there, or undo the run.",
+                                             "symptoms": ["folder missing", "program settings gone", "app data deleted", "saved games missing", "profile folder gone", "config lost"],
+                                             "bloat": 4,
+                                             "name":  "Hunt for wider leftovers and remove them",
+                                             "desc":  "Searches AppData, ProgramData, Program Files, and the registry for anything named after a program this run uninstalled, and clears what it finds. Folders go to the Recycle Bin and registry keys are backed up first, so the rollback script puts every one of them back.",
+                                             "risk":  2,
+                                             "default":  false,
+                                             "order":  98,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "script",
+                                                                 "handler":  "RemoveUninstallResidue"
+                                                             }
+                                                         ],
+                                             "tier":  3,
+                                             "riskNote":  "A name match is a guess, not proof of ownership, so this can take something belonging to software you are keeping. It only ever matches names of programs this same run uninstalled, it never touches a folder that still holds a running executable, and every path it takes is listed in the log and reversed by the rollback script. If that is not a trade you want, leave it unticked and the narrower sweep above still clears the folders the uninstallers declared."
+                                         }
+                                     ]
+                       }
+                   ]
+}

@@ -1,0 +1,199 @@
+{
+  "schema": 1,
+  "categories": [
+    {
+      "id": "install-dev",
+      "name": "Developer tools",
+      "section": "add",
+      "order": 150,
+      "items": [
+        {
+          "id": "add-vscode", "installSize": 350,
+          "detect": ["Microsoft Visual Studio Code*"],
+          "name": "Visual Studio Code",
+          "desc": "Microsoft's editor.",
+          "risk": 0, "tier": 0, "default": false, "order": 90,
+          "guards": ["winget"],
+          "actions": [ { "type": "winget", "mode": "install", "ids": ["Microsoft.VisualStudioCode"] } ]
+        },
+        {
+          "id": "add-python", "installSize": 120,
+          "detect": ["Python 3.13*"],
+          "name": "Python 3.13",
+          "desc": "The python.org build, with pip and the py launcher.",
+          "risk": 0, "tier": 0, "default": false, "order": 90,
+          "guards": ["winget"],
+          "actions": [ { "type": "winget", "mode": "install", "ids": ["Python.Python.3.13", "Python.Launcher"] } ]
+        },
+        {
+          "id": "add-java", "installSize": 300,
+          "detect": ["Eclipse Temurin JDK*", "OpenJDK*", "Java(TM) SE Development Kit*"],
+          "name": "Java (Temurin JDK 21)",
+          "desc": "Eclipse Temurin, the mainstream free OpenJDK build. LTS release.",
+          "risk": 0, "tier": 0, "default": false, "order": 90,
+          "guards": ["winget"],
+          "actions": [ { "type": "winget", "mode": "install", "ids": ["EclipseAdoptium.Temurin.21.JDK"] } ]
+        },
+        {
+          "id": "add-cpp", "installSize": 5000,
+          "detect": ["Visual Studio Build Tools*"],
+          "name": "C++ build tools (MSVC)",
+          "desc": "Visual Studio 2022 Build Tools with the C++ workload - the Microsoft compiler, linker and Windows SDK, without the Visual Studio IDE.",
+          "riskNote": "The largest thing here by a wide margin: 3-7 GB depending on what the recommended components pull in, and it can take well over half an hour on a slow connection. The run waits for it.",
+          "risk": 1, "tier": 0, "default": false, "order": 91,
+          "guards": ["winget"],
+          "actions": [
+            {
+              "type": "winget", "mode": "install",
+              "ids": ["Microsoft.VisualStudio.2022.BuildTools"],
+              "override": "--quiet --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended",
+              "timeoutSeconds": 3600
+            }
+          ]
+        },
+        {
+          "id": "add-git", "installSize": 400,
+          "detect": ["Git", "Git version*"],
+          "name": "Git",
+          "desc": "Git for Windows, with Git Bash and the credential manager.",
+          "risk": 0, "tier": 0, "default": false, "order": 90,
+          "guards": ["winget"],
+          "actions": [ { "type": "winget", "mode": "install", "ids": ["Git.Git"] } ]
+        },
+        {
+          "id": "add-notepadpp", "installSize": 25,
+          "detect": ["Notepad++*"],
+          "name": "Notepad++",
+          "desc": "Text and code editor.",
+          "risk": 0, "tier": 0, "default": false, "order": 90,
+          "guards": ["winget"],
+          "actions": [ { "type": "winget", "mode": "install", "ids": ["Notepad++.Notepad++"] } ]
+        },
+        {
+          "id": "add-eclipse", "installSize": 500,
+          "detect": ["Eclipse IDE*"],
+          "name": "Eclipse IDE for Java",
+          "desc": "The Eclipse Java IDE. Needs a JDK - tick Java above if you do not already have one.",
+          "risk": 0, "tier": 0, "default": false, "order": 92,
+          "guards": ["winget"],
+          "actions": [ { "type": "winget", "mode": "install", "ids": ["EclipseFoundation.Eclipse.Java"] } ]
+        },
+        {
+          "id": "add-netbeans", "installSize": 900,
+          "detect": ["Apache NetBeans*"],
+          "name": "Apache NetBeans",
+          "desc": "The Apache Java IDE. Needs a JDK - tick Java above if you do not already have one.",
+          "risk": 0, "tier": 0, "default": false, "order": 92,
+          "guards": ["winget"],
+          "actions": [ { "type": "winget", "mode": "install", "ids": ["Apache.NetBeans"] } ]
+        }
+      ]
+    },
+    {
+      "id": "install-apps",
+      "name": "Applications and utilities",
+      "section": "add",
+      "order": 151,
+      "items": [
+        {
+          "id": "install-no-shortcuts",
+          "settingsPath": "Re-create the shortcut yourself, or reinstall the program.",
+          "symptoms": ["no desktop shortcut after install", "shortcut missing after install"],
+          "name": "Install without desktop shortcuts",
+          "desc": "Clears the desktop shortcuts the apps above create as they install. Only shortcuts that appeared during this run are touched; anything already on your desktop stays.",
+          "riskNote": "Removes any .lnk or .url that appears on your desktop or the shared desktop while the run is going. In practice that is the installers, but a shortcut you happen to create yourself mid-run would go too. They go to the Recycle Bin.",
+          "risk": 0, "tier": 0, "default": false, "order": 94,
+          "actions": [
+            { "type": "script", "handler": "RemoveInstallShortcuts" }
+          ]
+        },
+        {
+          "id": "add-7zip", "installSize": 5,
+          "detect": ["7-Zip*"],
+          "name": "7-Zip",
+          "desc": "Archive tool that opens everything Explorer will not.",
+          "risk": 0, "tier": 0, "default": false, "order": 90,
+          "guards": ["winget"],
+          "actions": [ { "type": "winget", "mode": "install", "ids": ["7zip.7zip"] } ]
+        },
+        {
+          "id": "add-makemkv", "installSize": 100,
+          "detect": ["MakeMKV*"],
+          "name": "MakeMKV",
+          "desc": "Reads Blu-ray and DVD discs into MKV files.",
+          "riskNote": "Free while in beta, and the beta key it ships with expires periodically - the vendor publishes a new one. Ripping discs you do not own, or breaking copy protection, may be unlawful where you live.",
+          "risk": 1, "tier": 0, "default": false, "order": 90,
+          "guards": ["winget"],
+          "actions": [ { "type": "winget", "mode": "install", "ids": ["GuinpinSoft.MakeMKV"] } ]
+        },
+        {
+          "id": "add-photoshop", "installSize": 1500,
+          "detect": ["Adobe Creative Cloud*", "Adobe Photoshop*"],
+          "name": "Adobe Photoshop (via Creative Cloud)",
+          "desc": "Installs the Adobe Creative Cloud desktop app, which is how Photoshop is installed and licensed.",
+          "riskNote": "Photoshop itself is not distributed as a standalone package this can fetch - Adobe ships it through Creative Cloud only. This puts Creative Cloud on the machine; Photoshop is then installed from inside it, and needs a paid Adobe subscription. Creative Cloud also adds background services and a startup entry of its own.",
+          "risk": 2, "tier": 0, "default": false, "order": 93,
+          "guards": ["winget"],
+          "actions": [ { "type": "winget", "mode": "install", "ids": ["Adobe.CreativeCloud"] } ]
+        },
+        {
+          "id": "add-powertoys", "installSize": 700,
+          "detect": ["PowerToys*"],
+          "name": "Microsoft PowerToys",
+          "desc": "Microsoft's utility suite: the Alt+Space launcher, window snapping layouts, a color picker, and a few dozen more.",
+          "risk": 0, "tier": 0, "default": false, "order": 88,
+          "guards": ["winget"],
+          "actions": [ { "type": "winget", "mode": "install", "ids": ["Microsoft.PowerToys"] } ]
+        },
+        {
+          "id": "pt-run", "requires": "add-powertoys",
+          "name": "PowerToys Run on Alt+Space",
+          "desc": "The launcher: start typing to find an app, a file, a calculation, or a setting. Set up here rather than in PowerToys' own settings.",
+          "riskNote": "Configures PowerToys, so it only does something if PowerToys is installed - tick Microsoft PowerToys above if it is not. The setting is written either way and is read the first time PowerToys starts.",
+          "risk": 0, "tier": 0, "default": false, "order": 89,
+          "actions": [
+            {
+              "type": "script", "handler": "SetPowerToysModule",
+              "module": "PowerToys Run", "enable": true, "label": "PowerToys Run",
+              "hotkey": { "file": "PowerToys Run", "property": "open_powerlauncher", "alt": true, "code": 32, "label": "Alt+Space" }
+            }
+          ]
+        },
+        {
+          "id": "pt-fancyzones", "requires": "add-powertoys",
+          "name": "PowerToys FancyZones",
+          "desc": "Snap windows into layouts you define, rather than the halves and quarters Windows offers.",
+          "riskNote": "Configures PowerToys, so it only does something if PowerToys is installed.",
+          "risk": 0, "tier": 0, "default": false, "order": 89,
+          "actions": [ { "type": "script", "handler": "SetPowerToysModule", "module": "FancyZones", "enable": true, "label": "FancyZones" } ]
+        },
+        {
+          "id": "pt-alwaystop", "requires": "add-powertoys",
+          "name": "PowerToys Always on Top",
+          "desc": "Win+Ctrl+T pins the focused window above every other one.",
+          "riskNote": "Configures PowerToys, so it only does something if PowerToys is installed.",
+          "risk": 0, "tier": 0, "default": false, "order": 89,
+          "actions": [ { "type": "script", "handler": "SetPowerToysModule", "module": "AlwaysOnTop", "enable": true, "label": "Always on Top" } ]
+        },
+        {
+          "id": "pt-colorpicker", "requires": "add-powertoys",
+          "name": "PowerToys Color Picker",
+          "desc": "Win+Shift+C reads the color under the cursor and copies it.",
+          "riskNote": "Configures PowerToys, so it only does something if PowerToys is installed.",
+          "risk": 0, "tier": 0, "default": false, "order": 89,
+          "actions": [ { "type": "script", "handler": "SetPowerToysModule", "module": "ColorPicker", "enable": true, "label": "Color Picker" } ]
+        },
+        {
+          "id": "pt-peek", "requires": "add-powertoys",
+          "name": "PowerToys Peek",
+          "desc": "Ctrl+Space previews the selected file in Explorer without opening its application.",
+          "riskNote": "Configures PowerToys, so it only does something if PowerToys is installed.",
+          "risk": 0, "tier": 0, "default": false, "order": 89,
+          "actions": [ { "type": "script", "handler": "SetPowerToysModule", "module": "Peek", "enable": true, "label": "Peek" } ]
+        }
+      ]
+    }
+  ]
+}
+
+

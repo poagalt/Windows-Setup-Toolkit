@@ -1,0 +1,204 @@
+{
+  "schema": 1,
+  "categories": [
+    {
+      "id": "privacy",
+      "name": "Telemetry and privacy",
+      "order": 10,
+      "items": [
+        {
+          "id": "search-history",
+          "settingsPath": "Settings > Privacy and security > Search permissions, and turn search history back on.",
+          "symptoms": ["search history missing", "start menu not remembering searches", "no recent searches"],
+          "bloat": 1,
+          "name": "Search history on this device",
+          "desc": "Stops Windows keeping a history of what you have searched for, and stops search asking for your location. Sets the machine-wide policy as well, so a feature update cannot bring the per-user setting back. Web and Bing results are a separate item.",
+          "risk": 0, "tier": 3, "default": false, "order": 56,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\SearchSettings", "name": "IsDeviceSearchHistoryEnabled", "kind": "DWord", "value": 0 },
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\SearchSettings", "name": "IsAADCloudSearchEnabled", "kind": "DWord", "value": 0 },
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Search", "name": "AllowSearchToUseLocation", "kind": "DWord", "value": 0 }
+              ]
+            },
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer", "name": "DisableSearchHistory", "kind": "DWord", "value": 1 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "privacy-cleanup",
+          "settingsPath": "Nothing to restore - the lists were cleared and are not backed up. They refill as you work.",
+          "symptoms": ["recent files gone", "jump list empty", "quick access empty", "run box history gone", "recent documents missing", "no recent items"],
+          "bloat": 1,
+          "name": "Clear the record of what you have opened and run",
+          "desc": "One sweep of the lists Windows keeps about you on this machine: recent documents, the Run box history, the File Explorer address bar, Quick Access, the jump lists behind every taskbar icon, the Search box history, mapped-drive history, and the last key you had open in Registry Editor. All of it or none of it.",
+          "riskNote": "This is a deletion, not a setting, and there is no undoing the parts that are files. Afterwards: Quick Access is empty and rebuilds as you work; every taskbar icon's right-click list of recent files is empty; the Run box no longer completes what you type; the Recent folder is empty. Nothing you have actually saved is touched - these are lists of pointers, not the things they point at. The registry halves are backed up first and the rollback script restores them; the jump-list files are not, because they are per-application binary caches Windows rebuilds by itself.",
+          "risk": 2, "tier": 4, "default": false, "order": 96,
+          "actions": [
+            { "type": "script", "handler": "ClearActivityTraces" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "personalize",
+      "name": "Look and feel",
+      "section": "add",
+      "order": 91,
+      "items": [
+        {
+          "id": "alt-tab-windows",
+          "name": "Alt-Tab shows windows only",
+          "desc": "Stops Edge tabs appearing in the Alt-Tab list alongside your open windows.",
+          "risk": 0, "tier": 2, "default": true, "order": 91,
+          "actions": [
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", "name": "MultiTaskingAltTabFilter", "kind": "DWord", "value": 3 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "start-clean",
+          "settingsPath": "Nothing to restore automatically - pin what you want back. No app was uninstalled.",
+          "symptoms": ["start menu empty", "pinned apps gone", "start menu blank", "lost my pins", "apps missing from start"],
+          "name": "Empty the Start menu",
+          "desc": "Removes every pinned app, the Recommended strip, the most-used and recently-added lists, and the app promotions. What is left is the search box, All apps, and your account.",
+          "riskNote": "Every pin goes, including ones you put there yourself, and pinning them back is one at a time. Two things Windows does not allow anyone to remove and which will still be there: the All apps button and the power button. Reversing this puts the policy back but not your pins - Windows does not record what they were, so make a note first if they matter.",
+          "risk": 2, "tier": 3, "default": false, "order": 91,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer", "name": "ConfigureStartPins", "kind": "String", "value": "{\"pinnedList\":[]}" },
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer", "name": "HideRecommendedSection", "kind": "DWord", "value": 1 },
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer", "name": "ShowOrHideMostUsedApps", "kind": "DWord", "value": 2 },
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer", "name": "NoStartMenuMFUprogramsList", "kind": "DWord", "value": 1 }
+              ]
+            },
+            {
+              "type": "registry", "scope": "allusers",
+              "values": [
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", "name": "Start_TrackProgs", "kind": "DWord", "value": 0 },
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", "name": "Start_TrackDocs", "kind": "DWord", "value": 0 },
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", "name": "ShowRecentList", "kind": "DWord", "value": 0 },
+                { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", "name": "ShowFrequentList", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "no-sounds",
+          "settingsPath": "Control Panel > Sound > Sounds, and choose Windows Default as the sound scheme.",
+          "symptoms": ["no sound", "system sounds gone", "no error beep", "notification sound missing", "windows makes no sound", "no startup sound", "alert sounds missing"],
+          "name": "Turn off every system sound",
+          "desc": "Sets the sound scheme to No Sounds - no error ding, no notification chime, no device-connected noise. Media, games, and calls are unaffected; this is only the sounds Windows itself makes.",
+          "riskNote": "Silences the error sound too, which is the only feedback some dialogs give when they refuse a keystroke. The whole AppEvents branch is exported before anything is written and the rollback script imports it back, so this reverses exactly - including any custom sounds you had set.",
+          "risk": 1, "tier": 0, "default": false, "order": 93,
+          "actions": [
+            { "type": "script", "handler": "SetNoSoundScheme" }
+          ]
+        },
+        {
+          "id": "ctx-take-ownership",
+          "settingsPath": "Undo the run to take the entry back out of the right-click menu.",
+          "symptoms": ["take ownership in menu", "extra right click option", "unwanted context menu entry"],
+          "name": "Add 'Take ownership' to the right-click menu",
+          "desc": "Adds an entry to files and folders that seizes ownership and grants Administrators full control, so you can delete or edit something Windows says you have no permission to.",
+          "riskNote": "This adds the menu entry. Using it is the part that matters, and what it does is permanent in a way removing the entry does not undo: it rewrites the owner and the access list on whatever you point it at, recursively for a folder. Pointed at a Windows system folder it will break Windows servicing, because the component store expects TrustedInstaller to own those files and updates fail when it does not. Use it on your own files that have gone wrong, not on C:\\Windows. It is registered on the shell's 'runas' verb, which is what makes it elevate without a wrapper script - a wrapper is where this tweak usually breaks - and the cost is that it claims that verb for files and folders until reverted. It appears under 'Show more options' unless you have also restored the full right-click menu.",
+          "risk": 2, "tier": 0, "default": false, "order": 92,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Classes\\*\\shell\\runas", "name": "(default)", "kind": "String", "value": "Take ownership" },
+                { "path": "HKLM:\\SOFTWARE\\Classes\\*\\shell\\runas", "name": "HasLUAShield", "kind": "String", "value": "" },
+                { "path": "HKLM:\\SOFTWARE\\Classes\\*\\shell\\runas", "name": "NoWorkingDirectory", "kind": "String", "value": "" },
+                { "path": "HKLM:\\SOFTWARE\\Classes\\*\\shell\\runas\\command", "name": "(default)", "kind": "String", "value": "cmd.exe /c takeown /f \"%1\" && icacls \"%1\" /grant *S-1-5-32-544:F /c /l" },
+                { "path": "HKLM:\\SOFTWARE\\Classes\\*\\shell\\runas\\command", "name": "IsolatedCommand", "kind": "String", "value": "cmd.exe /c takeown /f \"%1\" && icacls \"%1\" /grant *S-1-5-32-544:F /c /l" },
+                { "path": "HKLM:\\SOFTWARE\\Classes\\Directory\\shell\\runas", "name": "(default)", "kind": "String", "value": "Take ownership" },
+                { "path": "HKLM:\\SOFTWARE\\Classes\\Directory\\shell\\runas", "name": "HasLUAShield", "kind": "String", "value": "" },
+                { "path": "HKLM:\\SOFTWARE\\Classes\\Directory\\shell\\runas", "name": "NoWorkingDirectory", "kind": "String", "value": "" },
+                { "path": "HKLM:\\SOFTWARE\\Classes\\Directory\\shell\\runas\\command", "name": "(default)", "kind": "String", "value": "cmd.exe /c takeown /f \"%1\" /r /d y && icacls \"%1\" /grant *S-1-5-32-544:F /t /c /l /q" },
+                { "path": "HKLM:\\SOFTWARE\\Classes\\Directory\\shell\\runas\\command", "name": "IsolatedCommand", "kind": "String", "value": "cmd.exe /c takeown /f \"%1\" /r /d y && icacls \"%1\" /grant *S-1-5-32-544:F /t /c /l /q" }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ctx-terminal-admin",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["terminal as admin in menu", "extra right click option"],
+          "name": "Add 'Terminal here as administrator' to the right-click menu",
+          "desc": "Right-clicking the empty space inside a folder offers an elevated Windows Terminal already pointed at that folder. Windows has the unelevated version; this is the one that saves you opening Terminal and typing the path.",
+          "riskNote": "It raises a UAC prompt every time, which is the point - the entry itself grants nothing. It uses the shell's own 'runas' verb rather than a wrapper script, which is what makes the elevation reliable; the cost is that it takes over the elevated verb for folder backgrounds, so anything else that had claimed it is replaced until this is reverted. On a machine with no Windows Terminal it will simply fail to start.",
+          "risk": 1, "tier": 3, "default": false, "order": 92,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Classes\\Directory\\Background\\shell\\runas", "name": "(default)", "kind": "String", "value": "Terminal here as administrator" },
+                { "path": "HKLM:\\SOFTWARE\\Classes\\Directory\\Background\\shell\\runas", "name": "HasLUAShield", "kind": "String", "value": "" },
+                { "path": "HKLM:\\SOFTWARE\\Classes\\Directory\\Background\\shell\\runas", "name": "Icon", "kind": "String", "value": "wt.exe" },
+                { "path": "HKLM:\\SOFTWARE\\Classes\\Directory\\Background\\shell\\runas\\command", "name": "(default)", "kind": "String", "value": "wt.exe -d \"%V\"" }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ctx-restart-explorer",
+          "settingsPath": "Undo the run.",
+          "symptoms": ["restart explorer in menu", "extra right click option"],
+          "name": "Add 'Restart Explorer' to the right-click menu",
+          "desc": "Right-clicking the desktop or the empty space in a folder offers to restart the shell. That is the fix for a taskbar that has stopped responding, an icon tray that has gone blank, or a settings change that has not appeared yet - and it takes about two seconds instead of a sign-out.",
+          "riskNote": "Everything Explorer is drawing goes away and comes back: open File Explorer windows close, and anything that lives in the notification area is restarted by the shell. Unsaved work in other applications is not affected - they are separate processes.",
+          "risk": 1, "tier": 3, "default": false, "order": 92,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SOFTWARE\\Classes\\Directory\\Background\\shell\\WDRestartExplorer", "name": "(default)", "kind": "String", "value": "Restart Explorer" },
+                { "path": "HKLM:\\SOFTWARE\\Classes\\Directory\\Background\\shell\\WDRestartExplorer", "name": "NoWorkingDirectory", "kind": "String", "value": "" },
+                { "path": "HKLM:\\SOFTWARE\\Classes\\Directory\\Background\\shell\\WDRestartExplorer", "name": "Position", "kind": "String", "value": "bottom" },
+                { "path": "HKLM:\\SOFTWARE\\Classes\\Directory\\Background\\shell\\WDRestartExplorer\\command", "name": "(default)", "kind": "String", "value": "cmd.exe /c taskkill /f /im explorer.exe & start explorer.exe" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "performance",
+      "name": "Performance and system",
+      "section": "add",
+      "order": 92,
+      "items": [
+        {
+          "id": "smart-app-control",
+          "settingsPath": "This one cannot be turned back on without reinstalling Windows - that is Microsoft's design, not this toolkit's.",
+          "symptoms": ["smart app control off", "cannot turn on smart app control", "security feature off"],
+          "name": "Turn off Smart App Control",
+          "desc": "Microsoft's allow-list layer that blocks unrecognized and unsigned applications outright, above and beyond SmartScreen.",
+          "riskNote": "READ THIS ONE. Smart App Control cannot be turned back on. Microsoft's own documentation says the only way back is to reinstall Windows - so unlike everything else in this toolkit, undoing this run will put the registry value back and Windows will ignore it. It is also already off on most machines: it only ever switches itself on after a clean install of Windows 11, and it turns itself off permanently the first time it is disabled or the machine is upgraded in place. Turning it off means unsigned and unrecognized programs run with no check at all.",
+          "risk": 2, "tier": 0, "default": false, "order": 95,
+          "actions": [
+            {
+              "type": "registry", "scope": "machine",
+              "values": [
+                { "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\CI\\Policy", "name": "VerifiedAndReputablePolicyState", "kind": "DWord", "value": 0 }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

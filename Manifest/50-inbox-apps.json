@@ -1,0 +1,696 @@
+{
+    "schema":  1,
+    "categories":  [
+                       {
+                           "id":  "inbox",
+                           "name":  "In-box Microsoft apps",
+                           "order":  75,
+                           "items":  [
+                                         {
+                                             "id":  "mail-cal",
+                                             "settingsPath": "Install Outlook from the Microsoft Store. Mail and Calendar have been discontinued by Microsoft.",
+                                             "symptoms": ["mail app missing", "calendar app missing", "no email app", "cannot check email", "mail gone", "calendar gone"],
+                                             "bloat": 3,
+                                             "name":  "Mail and Calendar",
+                                             "desc":  "Discontinued by Microsoft; kept only for legacy accounts.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  70,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "microsoft.windowscommunicationsapps",
+                                                                               "*windowscommunicationsapps*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  2
+                                         },
+                                         {
+                                             "id":  "new-outlook",
+                                             "settingsPath": "Install Outlook from the Microsoft Store, and undo the run to unblock the updater channel.",
+                                             "symptoms": ["outlook missing", "new outlook gone", "outlook will not install", "no outlook app", "outlook keeps coming back"],
+                                             "bloat": 3,
+                                             "name":  "New Outlook for Windows",
+                                             "desc":  "The web-wrapper mail client Microsoft pushes hard. Also blocks the separate Windows Update channel that reinstalls it.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  70,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.OutlookForWindows"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Microsoft\\WindowsUpdate\\Orchestrator\\UScheduler_OOBE\\OutlookUpdate",
+                                                                                    "name":  "BlockedOOBEUpdaters",
+                                                                                    "kind":  "MultiString",
+                                                                                    "value":  ["ms:outlookupdate"]
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "teams",
+                                             "settingsPath": "Install Microsoft Teams from teams.microsoft.com or the Store.",
+                                             "symptoms": ["teams missing", "teams gone", "chat missing from taskbar", "cannot find teams"],
+                                             "bloat": 3,
+                                             "name":  "Microsoft Teams (personal)",
+                                             "desc":  "The free consumer client. Work Teams deployed by an organization is left alone.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  70,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "MicrosoftTeams",
+                                                                               "MSTeams"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "uninstall",
+                                                                 "match":  [
+                                                                               "Teams Machine-Wide Installer"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                                                                                    "name":  "TaskbarMn",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                }
+                                                                            ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "officehub",
+                                             "settingsPath": "Reinstall the Microsoft 365 app from the Store.",
+                                             "symptoms": ["office hub missing", "microsoft 365 tile gone", "office app missing"],
+                                             "bloat": 2,
+                                             "name":  "Microsoft 365 hub tile",
+                                             "desc":  "The Office upsell shortcut, not Office itself.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  70,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.MicrosoftOfficeHub",
+                                                                               "Microsoft.Office.Todo.List",
+                                                                               "Microsoft.OfficePushNotificationUtility"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "media-player",
+                                             "settingsPath": "Reinstall Media Player from the Microsoft Store.",
+                                             "symptoms": ["cannot play video", "cannot play music", "no media player", "mp4 will not open", "mp3 will not play", "video will not open", "media player missing"],
+                                             "bloat": 5,
+                                             "name":  "Media Player",
+                                             "desc":  "The built-in music and audio player.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  71,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.ZuneMusic",
+                                                                               "Microsoft.WindowsMediaPlayer"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  0,
+                                             "riskNote":  "It is the default audio player. Removing it means audio files have no handler until you set another."
+                                         },
+                                         {
+                                             "id":  "movies-tv",
+                                             "settingsPath": "Reinstall Movies and TV from the Microsoft Store.",
+                                             "symptoms": ["movies app missing", "cannot play purchased film", "films and tv gone", "bought movie will not play"],
+                                             "bloat": 3,
+                                             "name":  "Movies and TV",
+                                             "desc":  "Store video playback.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  71,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.ZuneVideo"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  2
+                                         },
+                                         {
+                                             "id":  "phone-link",
+                                             "settingsPath": "Reinstall Phone Link from the Microsoft Store.",
+                                             "symptoms": ["phone link missing", "phone not connecting", "cannot link phone", "your phone app gone", "phone messages not showing"],
+                                             "bloat": 3,
+                                             "name":  "Phone Link and Cross Device",
+                                             "desc":  "Also removes the Mobile Devices integration.",
+                                             "risk":  1,
+                                             "default":  true,
+                                             "order":  71,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.YourPhone",
+                                                                               "MicrosoftWindows.CrossDevice"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  2,
+                                             "riskNote":  "Removes phone integration and the Mobile Devices panel in Settings."
+                                         },
+                                         {
+                                             "id":  "people",
+                                             "settingsPath": "Reinstall the People app from the Microsoft Store.",
+                                             "symptoms": ["people app missing", "contacts app gone"],
+                                             "bloat": 3,
+                                             "name":  "People app",
+                                             "desc":  "The People contacts app. The shell component behind it is an in-box part of Windows and stays.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  71,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.People"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "get-help",
+                                             "settingsPath": "Reinstall Get Help from the Microsoft Store.",
+                                             "symptoms": ["get help missing", "no help app", "support app gone"],
+                                             "bloat": 5,
+                                             "name":  "Get Help",
+                                             "desc":  "",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  72,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.GetHelp"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "get-started",
+                                             "settingsPath": "Reinstall Tips from the Microsoft Store.",
+                                             "symptoms": ["tips app missing", "get started gone"],
+                                             "bloat": 2,
+                                             "name":  "Tips and Get Started",
+                                             "desc":  "",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  72,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.Getstarted",
+                                                                               "Microsoft.WindowsGetStarted",
+                                                                               "Microsoft.Tips"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "sticky-notes",
+                                             "settingsPath": "Reinstall Sticky Notes from the Microsoft Store. Notes synced to your account come back with it.",
+                                             "symptoms": ["sticky notes missing", "notes gone", "lost my notes", "sticky notes will not open"],
+                                             "bloat": 5,
+                                             "name":  "Sticky Notes",
+                                             "desc":  "The desktop notes app.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  72,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.MicrosoftStickyNotes"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  3,
+                                             "riskNote":  "People genuinely use this and notes are stored locally. Check nothing is in it first."
+                                         },
+                                         {
+                                             "id":  "maps",
+                                             "settingsPath": "Reinstall Windows Maps from the Microsoft Store.",
+                                             "symptoms": ["maps missing", "no maps app", "offline maps gone"],
+                                             "bloat": 5,
+                                             "name":  "Windows Maps",
+                                             "desc":  "Plus the MapsBroker service and its update tasks.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  72,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.WindowsMaps"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "service",
+                                                                 "startupType":  "Disabled",
+                                                                 "names":  [
+                                                                               "MapsBroker"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "task",
+                                                                 "tasks":  [
+                                                                               "\\Microsoft\\Windows\\Maps\\*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "clock",
+                                             "settingsPath": "Reinstall Clock from the Microsoft Store.",
+                                             "symptoms": ["alarms missing", "timer missing", "clock app gone", "no alarm app", "stopwatch missing"],
+                                             "bloat": 5,
+                                             "name":  "Clock and Alarms",
+                                             "desc":  "Alarms, timers, world clock, and focus sessions.",
+                                             "risk":  1,
+                                             "default":  true,
+                                             "order":  72,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.WindowsAlarms"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  3,
+                                             "riskNote":  "Includes alarms, timers, and focus sessions, not just a clock."
+                                         },
+                                         {
+                                             "id":  "sound-rec",
+                                             "settingsPath": "Reinstall Sound Recorder from the Microsoft Store.",
+                                             "symptoms": ["voice recorder missing", "sound recorder gone", "cannot record audio"],
+                                             "bloat": 5,
+                                             "name":  "Sound Recorder",
+                                             "desc":  "The built-in voice recorder.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  72,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.WindowsSoundRecorder"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  4,
+                                             "riskNote":  "The default voice recorder. Nothing else in Windows replaces it."
+                                         },
+                                         {
+                                             "id":  "feedback-hub",
+                                             "settingsPath": "Reinstall Feedback Hub from the Microsoft Store.",
+                                             "symptoms": ["feedback hub missing", "cannot send feedback"],
+                                             "bloat": 3,
+                                             "name":  "Feedback Hub",
+                                             "desc":  "",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  72,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.WindowsFeedbackHub"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "mixed-reality",
+                                             "settingsPath": "Reinstall from the Microsoft Store.",
+                                             "symptoms": ["3d builder missing", "print 3d gone", "mixed reality portal missing"],
+                                             "bloat": 3,
+                                             "name":  "3D Builder, Print 3D, and MR Portal",
+                                             "desc":  "All discontinued by Microsoft.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  73,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.3DBuilder",
+                                                                               "Microsoft.Print3D",
+                                                                               "Microsoft.MixedReality.Portal",
+                                                                               "Microsoft.Microsoft3DViewer"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "dev-home",
+                                             "settingsPath": "Reinstall Dev Home from the Microsoft Store.",
+                                             "symptoms": ["dev home missing"],
+                                             "bloat": 3,
+                                             "name":  "Dev Home",
+                                             "desc":  "Deprecated by Microsoft.",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  73,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.Windows.DevHome"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "journal",
+                                             "settingsPath": "Reinstall Microsoft Journal from the Microsoft Store.",
+                                             "symptoms": ["journal missing", "handwriting app gone"],
+                                             "bloat": 3,
+                                             "name":  "Microsoft Journal",
+                                             "desc":  "",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  73,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.MicrosoftJournal"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "todo",
+                                             "settingsPath": "Reinstall Microsoft To Do from the Store. Your tasks are stored online and come back with it.",
+                                             "symptoms": ["to do missing", "tasks missing", "todo app gone", "cannot find my tasks"],
+                                             "bloat": 3,
+                                             "name":  "Microsoft To Do",
+                                             "desc":  "Microsoft\u0027s task list app.",
+                                             "risk":  1,
+                                             "default":  true,
+                                             "order":  73,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.Todos"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  2,
+                                             "riskNote":  "Syncs with Outlook tasks. Removing the app does not delete the tasks."
+                                         },
+                                         {
+                                             "id":  "power-automate",
+                                             "settingsPath": "Reinstall Power Automate from the Microsoft Store.",
+                                             "symptoms": ["power automate missing", "flows not running", "automation gone"],
+                                             "bloat": 3,
+                                             "name":  "Power Automate Desktop",
+                                             "desc":  "",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  73,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.PowerAutomateDesktop",
+                                                                               "*PowerAutomate*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "whiteboard",
+                                             "settingsPath": "Reinstall Whiteboard from the Microsoft Store.",
+                                             "symptoms": ["whiteboard missing", "collaboration board gone"],
+                                             "bloat": 3,
+                                             "name":  "Whiteboard",
+                                             "desc":  "",
+                                             "risk":  0,
+                                             "default":  true,
+                                             "order":  73,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.Whiteboard"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "quick-assist",
+                                             "settingsPath": "Reinstall Quick Assist from the Microsoft Store.",
+                                             "symptoms": ["quick assist missing", "cannot get remote help", "remote help gone", "nobody can remote in"],
+                                             "bloat": 5,
+                                             "name":  "Quick Assist",
+                                             "desc":  "Microsoft\u0027s built-in remote assistance tool.",
+                                             "risk":  1,
+                                             "default":  true,
+                                             "order":  74,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "MicrosoftCorporationII.QuickAssist"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "capability",
+                                                                 "names":  [
+                                                                               "App.Support.QuickAssist*"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  2,
+                                             "riskNote":  "Removes Microsoft remote assistance. Worth removing on machines used by people who might be talked through a scam, but you lose an easy support route."
+                                         },
+                                         {
+                                             "id":  "camera",
+                                             "settingsPath": "Reinstall Camera from the Microsoft Store.",
+                                             "symptoms": ["camera app missing", "no camera app", "cannot take photo", "camera app gone", "camera will not open"],
+                                             "bloat": 5,
+                                             "name":  "Camera app",
+                                             "desc":  "The built-in camera app.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  74,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.WindowsCamera"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  0,
+                                             "riskNote":  "Some webcam setups and third-party apps hand off to the Camera app for capture."
+                                         },
+                                         {
+                                             "id":  "photos",
+                                             "settingsPath": "Reinstall Photos from the Microsoft Store, or right-click a picture, Open with, Choose another app.",
+                                             "symptoms": ["photos not opening", "cannot open pictures", "no app to open image", "photo viewer missing", "pictures will not open", "image opens in wrong app", "photos app gone", "jpg will not open", "png will not open"],
+                                             "bloat": 5,
+                                             "name":  "Photos app",
+                                             "desc":  "The built-in photo viewer and editor.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  74,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.Windows.Photos"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  0,
+                                             "riskNote":  "The default image viewer. Image files will have no handler until you set another."
+                                         },
+                                         {
+                                             "id":  "app-paint",
+                                             "settingsPath": "Reinstall Paint from the Microsoft Store.",
+                                             "symptoms": ["paint missing", "paint will not open", "no image editor", "cannot open bmp", "bmp will not open", "edit with paint missing", "cannot crop a screenshot"],
+                                             "bloat": 5,
+                                             "name":  "Paint",
+                                             "desc":  "The in-box image editor.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  74,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.Paint"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  0,
+                                             "riskNote":  "Nothing else opens .bmp files by default, and Edit with Paint leaves the image right-click menu. Reinstallable from the Store at any time."
+                                         },
+                                         {
+                                             "id":  "app-notepad",
+                                             "settingsPath": "Reinstall Notepad from the Microsoft Store.",
+                                             "symptoms": ["notepad missing", "notepad will not open", "no text editor", "cannot open txt file", "txt will not open", "cannot open log file", "cannot open ini file"],
+                                             "bloat": 5,
+                                             "name":  "Notepad",
+                                             "desc":  "The in-box plain text editor.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  74,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.WindowsNotepad"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  0,
+                                             "riskNote":  "Nothing opens .txt, .log, or .ini files until you set a replacement, and a good deal of software still opens its readme by handing the path to Notepad."
+                                         },
+                                         {
+                                             "id":  "app-calculator",
+                                             "settingsPath": "Reinstall Calculator from the Microsoft Store.",
+                                             "symptoms": ["calculator missing", "calculator will not open", "no calculator", "calculator key not working", "cannot find calculator"],
+                                             "bloat": 5,
+                                             "name":  "Calculator",
+                                             "desc":  "The in-box calculator.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  74,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.WindowsCalculator"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  0,
+                                             "riskNote":  "The calculator key on keyboards that have one stops doing anything, and so does typing a sum into Start."
+                                         },
+                                         {
+                                             "id":  "app-snipping",
+                                             "settingsPath": "Reinstall Snipping Tool from the Microsoft Store.",
+                                             "symptoms": ["snipping tool missing", "win+shift+s not working", "print screen not working", "cannot take screenshot", "screenshot tool gone", "snip and sketch missing", "no way to screenshot", "screen recording missing"],
+                                             "bloat": 5,
+                                             "name":  "Snipping Tool",
+                                             "desc":  "The in-box screenshot and screen recording tool.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  74,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.ScreenSketch"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  0,
+                                             "riskNote":  "Win+Shift+S and the Print Screen key both stop capturing - they are handled by this app rather than by the shell - and nothing else on a clean install saves a screenshot to a file."
+                                         },
+                                         {
+                                             "id":  "store",
+                                             "settingsPath": "Undo the run. If that does not bring it back, run: wsreset -i from an administrator prompt, or reinstall it with Add-AppxPackage from an elevated PowerShell.",
+                                             "symptoms": ["store missing", "microsoft store gone", "cannot install apps", "store will not open", "cannot update apps", "app store missing", "store error", "cannot download apps", "store not working", "game pass will not install", "cannot reinstall app"],
+                                             "bloat": 6,
+                                             "name":  "Microsoft Store",
+                                             "desc":  "The Microsoft Store client.",
+                                             "risk":  2,
+                                             "default":  false,
+                                             "order":  75,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "Microsoft.WindowsStore",
+                                                                               "Microsoft.StorePurchaseApp"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  0,
+                                             "riskNote":  "Without the Store you cannot install or update Store apps, and reinstalling the Store itself is difficult."
+                                         },
+                                         {
+                                             "id":  "remove-edge",
+                                             "settingsPath": "Reinstall Microsoft Edge from microsoft.com/edge.",
+                                             "symptoms": ["edge missing", "no browser", "cannot open links", "you will need an app to open this", "links not opening", "pdf will not open", "html will not open", "edge gone", "browser missing", "app shows blank page", "webview not working", "email links broken"],
+                                             "bloat": 3,
+                                             "name":  "Uninstall Microsoft Edge",
+                                             "desc":  "Uninstalls the Edge browser and blocks its updater from bringing it back. Outside the EEA, Windows refuses to uninstall Edge at all, so this sets the home region to Ireland for the length of the uninstall and puts it straight back. WebView2 Runtime is kept.",
+                                             "risk":  1,
+                                             "default":  true,
+                                             "order":  92,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "script",
+                                                                 "handler":  "RemoveEdge"
+                                                             }
+                                                         ],
+                                             "tier":  3,
+                                             "reboot":  true,
+                                             "riskNote":  "Windows decides whether Edge may be uninstalled at all, from a regional policy file in System32 that Microsoft added for the Digital Markets Act: outside about thirty-five EEA regions the answer is no, and the uninstaller simply refuses - which is why this used to run and change nothing. This run therefore sets your home region to Ireland just long enough to run the uninstaller and sets it back immediately; the change is also written to the rollback script in case the run is interrupted between the two. Your language, keyboard, and formats are untouched - only the Home location field. If Windows still refuses, the item reports that plainly instead of claiming success. WebView2 is kept, so apps that embed a browser still work, but a few Windows surfaces expect Edge and may fall back awkwardly.",
+                                             "covers":  [
+                                                            "Microsoft Edge",
+                                                            "Microsoft Edge Update*",
+                                                            "Microsoft.MicrosoftEdge.Stable",
+                                                            "edgeupdate",
+                                                            "edgeupdatem",
+                                                            "MicrosoftEdgeElevationService"
+                                                        ]
+                                         }
+                                     ]
+                       }
+                   ]
+}

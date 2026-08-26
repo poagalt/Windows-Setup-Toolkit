@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "categories": [
+    {
+      "id": "extras",
+      "name": "Recurring",
+      "section": "remove",
+      "note": "These keep costing something after the run finishes. Remove them later from Revert past changes.",
+      "order": 140,
+      "items": [
+        {
+          "id": "persistence-guard",
+          "settingsPath": "Open the toolkit, choose Revert past changes, and remove the logon task.",
+          "symptoms": ["something runs at every login", "scheduled task running", "settings keep reverting", "changes keep coming back", "task at sign in"],
+          "name": "Re-apply this selection at every logon",
+          "desc": "Registers a SYSTEM logon task that re-runs the removals in your selection. It never re-installs anything and never re-applies a quality of life change.",
+          "riskNote": "Adds a task that runs at every sign-in. The resource estimate below is what it costs.",
+          "overhead": "Runs at each sign-in. Roughly 20-60 seconds of background work on a full selection, up to ~120 MB RAM while running, and nothing at idle. It runs detached, so it adds no measurable delay to signing in. Remove it any time from Revert past changes on the main screen.",
+          "risk": 1, "tier": 0, "default": false, "order": 101,
+          "actions": [ { "type": "script", "handler": "InstallPersistenceGuard" } ]
+        },
+        {
+          "id": "install-browser",
+          "name": "Install a replacement browser",
+          "section": "add",
+          "desc": "Chosen under Add, and offered again beside Edge removal. Nothing is installed unless you pick one.",
+          "riskNote": "This is the only thing the toolkit installs rather than removes. It is fetched with winget from that vendor's own package, and it is uninstalled again if you revert this run.",
+          "overhead": "Whatever the browser costs: roughly 200-400 MB on disk, plus its own updater. Declining leaves you with no browser at all until you install one yourself.",
+          "risk": 1, "tier": 0, "default": false, "order": 99,
+          "actions": [ { "type": "script", "handler": "InstallChosenBrowser" } ]
+        },
+        {
+          "id": "update-guard",
+          "settingsPath": "Open the toolkit, choose Revert past changes, and remove the update guard.",
+          "symptoms": ["settings reset after update", "changes undone after upgrade", "apps removed again", "something runs after windows update"],
+          "name": "Re-apply this selection after a Windows feature update",
+          "desc": "Checks the build at every boot and re-runs the removals in your selection, only when Windows has upgraded itself. It never re-installs anything and never re-applies a quality of life change.",
+          "riskNote": "A feature update can bring back apps and settings you removed, and this puts them back the way you left them without asking. If you later decide you want something Windows restored, remove this first or it will be taken away again after the next upgrade.",
+          "overhead": "Nothing on a normal boot - it reads one registry value and exits in well under a second. Only after Windows changes build does it do real work, roughly 20-60 seconds in the background five minutes after that boot. Remove it any time from Revert past changes on the main screen.",
+          "risk": 1, "tier": 4, "default": false, "order": 100,
+          "actions": [ { "type": "script", "handler": "InstallUpdateGuard" } ]
+        }
+      ]
+    }
+  ]
+}

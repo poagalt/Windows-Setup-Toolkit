@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "categories": [
+    {
+      "id": "storage",
+      "name": "Free up space",
+      "section": "extras",
+      "order": 205,
+      "items": [
+        {
+          "id": "disk-temp",
+          "settingsPath": "Nothing to restore.",
+          "symptoms": ["temp files gone", "lost unsaved work"],
+          "name": "Temporary files",
+          "desc": "Windows and per-user temp folders.",
+          "risk": 0, "tier": 0, "default": false, "order": 95,
+          "actions": [ { "type": "script", "handler": "ClearTempFiles" } ]
+        },
+        {
+          "id": "disk-update-cache",
+          "settingsPath": "Nothing to restore - Windows downloads what it needs again.",
+          "symptoms": ["update downloading again", "update slow"],
+          "name": "Windows Update download cache",
+          "desc": "Installers Windows Update keeps after installing them.",
+          "riskNote": "Anything half-downloaded starts again, and an update installed from this cache can no longer be repaired from it. Windows re-downloads whatever it still needs.",
+          "risk": 1, "tier": 0, "default": false, "order": 95,
+          "actions": [ { "type": "script", "handler": "ClearUpdateCache" } ]
+        },
+        {
+          "id": "disk-delivery-opt",
+          "settingsPath": "Nothing to restore.",
+          "symptoms": ["update cache cleared"],
+          "name": "Delivery Optimization cache",
+          "desc": "Update files kept to share with other machines on the network.",
+          "risk": 0, "tier": 0, "default": false, "order": 95,
+          "actions": [ { "type": "script", "handler": "ClearDeliveryOptimization" } ]
+        },
+        {
+          "id": "disk-thumbnails",
+          "settingsPath": "Nothing to restore - Explorer rebuilds the cache as you browse.",
+          "symptoms": ["thumbnails slow", "folder slow to open", "picture previews missing", "thumbnails not showing"],
+          "name": "Thumbnail and icon cache",
+          "desc": "Explorer's picture and icon caches, which grow and never shrink. Explorer rebuilds them as you browse.",
+          "riskNote": "Folders full of photos redraw their thumbnails the first time you open them after this, which is slow once and then normal again. Explorer holds some of these files open while it is running, so expect part of the cache to survive until the next sign-in.",
+          "risk": 1, "tier": 0, "default": false, "order": 95,
+          "actions": [ { "type": "script", "handler": "ClearThumbnailCache" } ]
+        },
+        {
+          "id": "disk-recycle-bin",
+          "settingsPath": "Nothing can be restored - the bin was emptied. Files deleted after the run go to it normally again.",
+          "symptoms": ["recycle bin empty", "deleted files gone", "cannot restore deleted file", "lost a file"],
+          "name": "Empty the Recycle Bin",
+          "desc": "Every account's bin, on every drive.",
+          "riskNote": "Deleted for good, including anything an earlier run of this toolkit put there - which is what its rollback restores from. This one is not confined to the system drive, so the space it frees can exceed what the bar above shows.",
+          "risk": 1, "tier": 0, "default": false, "order": 96,
+          "actions": [ { "type": "script", "handler": "EmptyRecycleBin" } ]
+        },
+        {
+          "id": "disk-windows-old",
+          "settingsPath": "Nothing can be restored. The ten-day go-back option is gone with the folder.",
+          "symptoms": ["cannot go back to previous windows", "go back option missing", "windows.old missing", "cannot roll back windows"],
+          "name": "Previous Windows installation",
+          "desc": "The Windows.old folder left by an upgrade. Usually the largest single thing here.",
+          "riskNote": "This is what 'Go back to the previous version of Windows' restores from. Deleting it ends that option permanently. Windows removes it by itself ten days after an upgrade.",
+          "risk": 2, "tier": 0, "default": false, "order": 97,
+          "actions": [ { "type": "script", "handler": "RemoveWindowsOld" } ]
+        },
+        {
+          "id": "disk-component-store",
+          "name": "Superseded Windows components",
+          "desc": "Old versions of updated components in the component store. Only DISM can size this, and only by running the analysis, so it has no figure until it does.",
+          "riskNote": "Updates installed before this runs can no longer be uninstalled. The cleanup itself is a supported DISM operation and can take several minutes.",
+          "risk": 1, "tier": 0, "default": false, "order": 98,
+          "actions": [ { "type": "script", "handler": "CleanComponentStore" } ]
+        }
+      ]
+    }
+  ]
+}
