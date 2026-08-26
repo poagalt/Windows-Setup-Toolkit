@@ -76,8 +76,16 @@ $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvaria
 
 $expected = ''
 try {
-    $sums = (Invoke-WebRequest -Uri "$base/SHA256SUMS.txt" -UseBasicParsing -TimeoutSec 60).Content
-    foreach ($line in ([string]$sums -split "`r?`n")) {
+    $raw = (Invoke-WebRequest -Uri "$base/SHA256SUMS.txt" -UseBasicParsing -TimeoutSec 60).Content
+    # .Content IS A BYTE ARRAY WHENEVER THE SERVER SAYS octet-stream, and GitHub
+    # serves every release asset that way whatever its extension. [string] on a
+    # byte[] gives the decimal bytes space-separated - "98 50 53 100 ..." - so
+    # every line failed the regex below and this reported "no SHA256SUMS.txt"
+    # for a release that published one. The one safety check this script exists
+    # to perform, silently never happening, on a path where the warning it
+    # printed instead looked like an honest answer.
+    $sums = if ($raw -is [byte[]]) { [Text.Encoding]::UTF8.GetString($raw) } else { [string]$raw }
+    foreach ($line in ($sums -split "`r?`n")) {
         if ($line -match '^\s*([0-9a-fA-F]{64})\s+\*?(.+?)\s*$' -and $Matches[2] -eq $zipName) {
             $expected = $Matches[1].ToLowerInvariant()
         }
