@@ -38,12 +38,11 @@
     Skip the runtime software scan and use only the curated manifest.
 
 .PARAMETER TakeOwnership
-    When Windows refuses a service, scheduled task or registry write because the
-    object is owned by TrustedInstaller, seize the key and retry. On by default
-    at -Preset Aggressive and Extreme, off below them; -TakeOwnership:$false
-    holds it back at any preset. It is a real change to system ACLs. Has no
-    effect on Appx packages Windows marks non-removable, which are refused by
-    the deployment stack, not an ACL.
+    When Windows refuses a registry write because TrustedInstaller owns the key,
+    seize it and retry. A real change to system ACLs. On by default at
+    Aggressive and Extreme; -TakeOwnership:$false holds it back at any preset.
+    No effect on non-removable Appx packages - those are refused by the
+    deployment stack, not by an ACL.
 
 .PARAMETER SelfTest
     Verify the toolkit works here. Changes nothing, needs no elevation.
@@ -52,12 +51,12 @@
     Print every item that applies to this machine, with its preset tier.
 
 .PARAMETER ExportUnattend
-    Write a complete, self-contained autounattend.xml for the selected items,
-    then exit. Registry values and app removals are inlined, so there is no
-    payload to copy onto the medium. The file answers Setup with a local account
-    (which is what skips the Microsoft account requirement), no network
-    requirement, the TPM/Secure Boot/RAM checks bypassed and data collection off.
-    Disks are never touched: Setup still asks where to install.
+    Write a self-contained autounattend.xml for the selected items, then exit.
+    Registry values and app removals are inlined, so there is no payload to copy
+    onto the medium. Creates a local account (which is what skips the Microsoft
+    account requirement), skips the network requirement, bypasses the
+    TPM/Secure Boot/RAM checks, and turns data collection off. Disks are never
+    touched: Setup still asks where to install.
 
 .PARAMETER UnattendAccount
     The local account the answer file creates. Defaults to "User".
@@ -69,11 +68,10 @@
     Language and locale for the answer file, e.g. en-GB. Defaults to en-US.
 
 .PARAMETER SetupRun
-    This run was started by SetupComplete.cmd, as Local System, before anybody
-    signed in. There is no desktop in session 0, so the run leaves its report on
-    the public desktop instead of a user's, writes a text file carrying
-    everything the interface would have shown, and asks Windows to prompt the
-    first person who signs in. Only meaningful with -Console -Apply.
+    Started by SetupComplete.cmd, as Local System, before anybody signed in.
+    Session 0 has no desktop, so the report goes to the PUBLIC desktop, a text
+    version of everything the interface would have shown is written beside it,
+    and Windows is asked to prompt whoever signs in first. Needs -Console -Apply.
 
 .PARAMETER SetupResult
     Show the prompt for a finished setup run, given its run folder. Started by
@@ -172,32 +170,17 @@ $isGui = -not ($ListItems -or $SelfTest -or $ExportUnattend -or $Console -or $Se
 
 # ------------------------------------------------------------- elevation ---
 #
-# Nothing is hidden here, and that is a reversal of a previous revision worth
-# recording so it does not get "fixed" again. Hiding the console before the UAC
-# check does work - the prompt then appears over an empty screen - and that is
-# the problem with it: a prompt with nothing behind it gives no clue what asked
-# for it. Run-WinSetupToolkit.cmd prints "Requesting administrator rights..." and
-# keeps its console for as long as the prompt is up, on purpose.
-#
-# The console the GUI must not keep is the one it runs in AFTERWARDS, and that
-# is hidden below, once the modules are in.
+# Do NOT hide the console here. A UAC prompt over an empty screen gives no clue
+# what raised it; the launcher keeps its console until the prompt is answered.
+# The console to hide is the one the GUI runs in afterwards - see below.
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $isAdmin  = (New-Object Security.Principal.WindowsPrincipal $identity).IsInRole(
                [Security.Principal.WindowsBuiltInRole]::Administrator)
 
-# -SelfTest, -ListItems and -ExportUnattend change nothing on this machine, so
-# they run without a UAC prompt. The answer file describes a machine that does
-# not exist yet; writing it is not an administrative act, and demanding
-# elevation for it would be theatre.
-#
-# -SetupResult is on that list for a stronger reason than "it changes nothing".
-# It is started by a RunOnce entry at somebody's first sign-in, in whatever
-# context Windows gives it, and it reads a folder and shows a window. A UAC
-# prompt that appears unbidden the first time a person sees their new desktop,
-# raised by a program they have never heard of, is exactly the thing this whole
-# feature exists to avoid - and on a standard account it could not be answered
-# at all. If they choose to open the full interface from it, THAT relaunch
-# elevates, at a moment when they asked for it and know what asked.
+# These four change nothing, so no UAC prompt. -SetupResult especially: it is
+# started by a RunOnce entry at somebody's first sign-in, and a prompt nobody
+# asked for cannot even be answered on a standard account. If they open the full
+# interface from it, THAT relaunch elevates - when they asked for it.
 if (-not $isAdmin -and ($SelfTest -or $ListItems -or $ExportUnattend -or $SetupResult)) {
     if (-not $SetupResult) {
         Write-Host 'Running unelevated: provisioned-package and DISM detail will be incomplete.' -ForegroundColor Yellow
@@ -260,30 +243,19 @@ if ($PSVersionTable.PSVersion.Major -ge 6) {
     exit 1
 }
 
-# Here rather than before the elevation check, deliberately - see the comment
-# on that block. The launcher already starts the GUI hidden; this covers the
-# other ways in, which is a hand-run from an existing prompt, a shortcut, and
-# the scheduled-task guards. Hiding a window that is already hidden costs one
-# call and is not an error.
-#
-# Before the block below rather than after it, so a hand-run does not sit there
-# showing a console for the third of a second WD.UI takes to load.
+# After the elevation check (see above), and before the WD.UI import so a
+# hand-run does not show a console for the third of a second that takes.
 if ($isGui) { Hide-WDConsoleWindow }
 
 # --------------------------------------------------------- one at a time ---
 #
-# Before the scan, so a copy that is not going to run does not spend four
-# seconds enumerating packages first, and before the window, so the refusal is
-# the only thing that appears.
+# Two copies applying at once makes both journals wrong: each reads the other's
+# changes as its own "previous value". Checked before the scan and the window so
+# the refusal is all that appears.
 #
-# EXEMPT: -SetupResult and -SelfTest. The first is the RunOnce window at somebody's
-# first sign-in - it reads a folder and shows a report, changes nothing, and must
-# never be the reason a new machine greets its owner with an error. The second
-# changes nothing by contract and is run while working on the toolkit, which is
-# exactly when a second copy is most likely to be open on purpose.
-#
-# Everything else is in, including -ShowRun: that opens the real run page, which
-# is the same window that can apply changes.
+# EXEMPT: -SetupResult (a RunOnce window at first sign-in, must never error) and
+# -SelfTest (changes nothing, and is run while a second copy is open on
+# purpose). -ShowRun is NOT exempt - it opens the window that can apply.
 if (-not $SetupResult -and -not $SelfTest) {
     $instance = Enter-WDSingleInstance -Mode $(if ($isGui) { 'window' } else { 'console' })
     if (-not $instance.Ok) {
@@ -318,18 +290,11 @@ if (-not $SetupResult -and -not $SelfTest) {
 
 # ------------------------------------------------------- the GUI's long pole ---
 #
-# The scan is started here, at the earliest moment it can be, and waited for at
-# the bottom of this file. It spends its first 1.4 seconds importing its own
-# modules and reading the machine profile - work nobody is waiting on yet - and
-# it used to spend them after the splash was already up, with this thread doing
-# nothing but poll it. Started now, that runs behind the WPF assembly load, the
-# icon, and the settings file instead, and the wait at the end is that much
-# shorter: measured, 2.9 seconds of waiting became 2.6, and the splash itself
-# now appears at 1.1 seconds rather than 2.6.
-#
-# WD.UI has to come in first because Start-WDStartupScan lives there. That is
-# the only reason this import moved up from the GUI section below, and it is
-# gated so that no console path pays 340 ms for a module it never uses.
+# Started as early as possible, waited for at the bottom of this file. Its first
+# 1.4s is its own module imports - work nobody is waiting on - so it runs behind
+# the WPF load, the icon, and the settings file. WD.UI is imported here only
+# because Start-WDStartupScan lives in it, and gated so no console path pays
+# 340 ms for a module it never uses.
 $scanJob = $null
 if ($isGui) {
     Import-Module (Join-Path $modulePath 'WD.UI.psm1') -Force -DisableNameChecking
@@ -339,16 +304,10 @@ if ($isGui) {
 
 # ------------------------------------------------- the first sign-in prompt ---
 #
-# Before the scan and before the header, because this mode is a window and a
-# folder read: it has no use for the manifest, and a person who has just signed
-# in for the first time should not wait forty seconds for a software inventory
-# nothing is going to look at.
-#
-# Everything here is best effort by design. It is started by a RunOnce entry
-# nobody asked for, and the correct behavior when anything at all is wrong is to
-# do nothing and get out of the way - the run itself is long over and its report
-# is already on the desktop. There is no state to lose and nothing to warn
-# about, so every failure below exits 0 in silence.
+# Before the scan: this is a folder read and a window, with no use for an
+# inventory. Best effort throughout - it was started by a RunOnce entry nobody
+# asked for, the run is long over, and its report is already on the desktop. So
+# every failure below exits 0 in silence.
 if ($SetupResult) {
     Hide-WDConsoleWindow
     try {
@@ -372,9 +331,8 @@ if (-not $isGui) {
 # The curated manifest cannot know what a given model ships with. This finds
 # the rest, classified against the protection list in WD.Discover.
 #
-# The GUI does this later, on a background runspace behind the splash, so that
-# the window appears at once instead of after the scan. Everything else wants it
-# now, synchronously, because there is nothing to draw it on.
+# Console paths scan synchronously; the GUI does it on a runspace behind the
+# splash so the window appears at once.
 $categories = $null
 $scan       = $null
 $presence   = $null
@@ -487,15 +445,9 @@ if ($SelfTest) {
     $dropped = @($allIds | Where-Object { $_ -notin @($probe.Id) })
     if ($dropped.Count -and $dropped.Count -le 12) { Write-Host "  filtered out by guards: $($dropped -join ', ')" -ForegroundColor DarkGray }
 
-    # And the third condition, which is not a guard and therefore not in the
-    # line above: an item whose every appx target is one Windows marks
-    # NonRemovable can only ever report "Blocked, in-box", so the list does not
-    # offer it. Named rather than counted, because which items those are is
-    # edition- and build-specific and worth seeing on a strange machine.
-    #
-    # Resolve-WDPlan above deliberately keeps them: a selection saved on another
-    # machine may name one, and a run that silently drops a ticked item is worse
-    # than one that reports the refusal.
+    # An item whose every appx target is NonRemovable can only ever report
+    # "Blocked, in-box", so the list does not offer it. Named rather than
+    # counted: which ones those are is edition- and build-specific.
     $inert = @()
     foreach ($c in $categories) {
         foreach ($i in @($c.items)) {
@@ -508,17 +460,10 @@ if ($SelfTest) {
         Write-Host "  not offered, in-box and unremovable here: $($inert -join ', ')" -ForegroundColor DarkGray
     }
 
-    # Bloat ratings. An unrated item is a claim that it is not a removal, so an
-    # unrated item in the Remove section is either a missing rating or a
-    # miscategorized item - and either way somebody has to look at it.
-    # Categories under Remove whose items are not removals and so cannot carry a
-    # rating. Recurring is guards that re-apply the selection - part of the
-    # removal, but not itself a thing on the machine a rating could describe.
-    # Windows Update behavior is scheduling policy: deferring a patch is not a
-    # degree of bloat, and rating it as one put nine settings in a band beside
-    # Game DVR. The one exception is authored rather than inferred - turning
-    # updates off completely is rated 6, which is the band that exists to say
-    # "we think you should not".
+    # An unrated item claims it is not a removal, so an unrated one in Remove is
+    # a missing rating or a miscategorized item. These two categories are exempt:
+    # Recurring re-applies the selection, and Windows Update is scheduling
+    # policy - neither is a degree of bloat. (wu-off is rated 6 by hand.)
     $notRemovalCats = @('extras', 'update')
     $bloatCount = @{}
     $unratedRemovals = @()
@@ -553,13 +498,10 @@ if ($SelfTest) {
             if (@($m.Symptoms).Count) { $symptom++ }
             if ($m.Settings) { $paths++ }
             foreach ($s in @($m.Symptoms)) {
-                # These are lookup phrases, not sentences, and short is the
-                # point: nobody types "a Store app cannot find my camera", they
-                # type "camera not working". So the only things worth deciding
-                # from here are that a phrase exists and that it is not the
-                # item's own prose pasted across - a sentence-length line is
-                # almost always one of those, and searches like nothing anybody
-                # would type.
+                # Lookup phrases, not sentences: nobody types "a Store app
+                # cannot find my camera", they type "camera not working". So all
+                # this can check is that a phrase exists and is not the item's
+                # own prose pasted across - which a sentence-length line is.
                 $txt = [string]$s
                 if ($txt.Length -lt 4) { $badSym += "$($i.id): '$txt' is too short to be a phrase"; continue }
                 if ($txt.Length -gt 70) { $badSym += "$($i.id): '$($txt.Substring(0,40))...' is a sentence, not a lookup phrase" }
@@ -850,17 +792,11 @@ if ($SelfTest) {
         $failures++
     }
 
-    # The theme and the modes somebody has redefined outlive the process, so the
-    # file they live in has to survive a round trip - including the map of
-    # preset -> edits, which JSON hands back as a PSCustomObject rather than the
-    # hashtable the code expects. Driven against a scratch path; the real
-    # settings file is never touched by a test.
-    #
-    # Unsaved edits do NOT outlive it, and are no longer written at all, so the
-    # file the application produces has no overrides property. The reader has to
-    # take that in its stride: this used to write one and read it back, and a
-    # missing property in PowerShell is $null rather than an error, which is
-    # exactly the kind of thing that works until somebody indexes it.
+    # The settings file has to survive a round trip, including preset -> edits,
+    # which JSON hands back as a PSCustomObject rather than a hashtable. Also
+    # asserts there is NO overrides property: unsaved edits are deliberately not
+    # persisted, and a missing property reads as $null rather than erroring.
+    # Driven against a scratch path - the real settings file is never touched.
     try {
         $uiFile = Join-Path $env:TEMP ("wd-ui-" + [guid]::NewGuid().ToString('N').Substring(0, 8) + ".json")
         $uiBad  = @()
@@ -935,12 +871,10 @@ if ($SelfTest) {
         Write-Host "  UI STATE check failed: $($_.Exception.Message)" -ForegroundColor Red
         $failures++
     }
-    # The guard that decides whether a folder is one program's own. Two things
-    # act on InstallLocation - the leftover sweep removes it, and the uninstall
-    # executor kills what is running inside it - and installers really do write
-    # bare shared roots there, so a wrong answer here takes out every program on
-    # the machine rather than one. Checked by asking, because both callers act on
-    # the answer.
+    # Two things act on InstallLocation - the leftover sweep deletes it, the
+    # uninstall executor kills what runs inside it - and installers really do
+    # write bare shared roots like C:\Program Files there. A wrong answer takes
+    # out every program on the machine rather than one.
     try {
         $sweepBad = @()
         foreach ($shared in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData,
@@ -1246,11 +1180,9 @@ if ($SelfTest) {
     }
 
     # --- [x] Edge: is Windows even willing? --------------------------------
-    # The Edge item ran, reported, and removed nothing, because Windows refuses
-    # the uninstall outside the EEA and the toolkit had no way to know. This
-    # checks the three pieces the fix stands on: the policy file can be read,
-    # the machine's region resolves to a two-letter code, and the region the
-    # workaround uses is actually in the policy's enabled list.
+    # Windows refuses the Edge uninstall outside the EEA. Three pieces the fix
+    # stands on: the policy file parses, the machine's region resolves to a
+    # two-letter code, and IE is in the policy's enabled list.
     try {
         $egBad = @()
         $pol = Get-WDEdgeUninstallPolicy
@@ -1575,17 +1507,9 @@ if ($SelfTest) {
         $failures++
     }
 
-    # An option that has already been applied has to say so, and for most of the
-    # list it could not. The probe answered registry and service actions and
-    # nothing else, so an item made of a package plus some policy writes was
-    # permanently outstanding however many times it had been run - and an item
-    # with a guarded action nobody on this edition will ever execute was asking
-    # about writes that could never happen.
-    #
-    # Asserted on shape rather than on verdicts: which options are done is a
-    # fact about the machine and nothing here can claim one. That every kind of
-    # action can be ASKED, and that a guarded-out action is not asked, are facts
-    # about the code.
+    # Asserted on SHAPE, never on verdicts: which options are already done is a
+    # fact about the machine. That every kind of action can be asked, and that a
+    # guarded-out action is not asked, are facts about the code.
     try {
         $satBad = @()
         $satInv = [pscustomobject]@{
@@ -1714,18 +1638,12 @@ if ($SelfTest) {
         $failures++
     }
 
-    # The rollback script has to stand alone, and the thing it cannot import is
-    # the fix for HKU: not being a default PowerShell drive. Without the drive
-    # every per-account restore throws DriveNotFoundException, and they are
-    # emitted with -EA SilentlyContinue - so the script restores nothing, says
-    # nothing, and prints "Rollback complete". 152 of 409 registry lines on the
-    # run this was found on. WD_DEFAULT is worse again: it is the default profile
-    # NTUSER.DAT, mounted for the length of a run and gone by rollback time.
-    #
-    # Which machine this is, and which runs happened on it. A run folder is
-    # portable on purpose, so "a journal I can see" and "a journal about this
-    # computer" are different sets, and reverting the wrong one writes another
-    # machine's registry values over this one's.
+    # HKU: is not a default PowerShell drive, and the rollback script cannot
+    # import the helper that makes one - so without its own preamble every
+    # per-account restore throws DriveNotFoundException under
+    # -EA SilentlyContinue and the script prints "Rollback complete" having done
+    # nothing. Then: which machine this is, since a run folder is portable and
+    # reverting another machine's journal writes its values over this one's.
     try {
         $miBad = @()
         $mi = Get-WDMachineIdentity
@@ -1947,14 +1865,11 @@ if ($SelfTest) {
             if ($ugText -notmatch '(?m)^\$global:WDWantsHku\s+=\s+\$true')  { $undoGenBad += 'a run with per-account writes did not set WantsHku' }
             if ($ugText -notmatch '(?m)^\$global:WDWantsDefault\s+=\s+1')   { $undoGenBad += 'a run with one default-profile write did not count it' }
             if ($ugText -notmatch "M='rename'")                      { $undoGenBad += 'the rename step did not reach the script' }
-            # Every undo method the codebase can journal must have a case in the
-            # generator. BOTH sides are harvested from source, and that is the
-            # whole point: the previous version read the cases out of the switch
-            # and compared them against a list typed in right here, so the stale
-            # copy was the list of expectations rather than the code. It duly
-            # went stale - 'regfile', 'uninstall' and 'unregister-task' were all
-            # being journalled with nothing to undo them, which is a promise in
-            # the journal that no rollback keeps.
+            # Every journallable undo method needs a case in the generator, or
+            # the journal carries a promise no rollback keeps. BOTH sides are
+            # harvested from source: an expected-list typed in here is the copy
+            # that goes stale, and it did - regfile, uninstall, and
+            # unregister-task all had none.
             $ugWritten = @()
             foreach ($f in @(Get-ChildItem -LiteralPath $modulePath -Filter '*.psm1')) {
                 $src = Get-Content -LiteralPath $f.FullName -Raw
@@ -2040,16 +1955,10 @@ if ($SelfTest) {
                 $undoGenBad += 'the page-wide Select all does not clear the page and take it back'
             }
 
-            # THE STANDALONE WINDOW AND THE REVERT PAGE ARE THE SAME INTERFACE,
-            # and every line below is one of them having drifted from the other.
-            # All of it is driven for real through -BuildOnly: these are handlers
-            # built inside closures, and firing the event is the only thing that
-            # finds one wired to nothing.
-            #
-            # Every option arrives ticked, so a clear box is an edit - the same
-            # edit as clearing a row a preset selected, marked the same way, with
-            # a line saying what it means because on that page a tick is what a
-            # run will DO and here it is what a run will UNDO.
+            # The standalone window and the revert page are the same interface;
+            # each check below is one place they had drifted. Driven for real
+            # through -BuildOnly, because these handlers live inside closures and
+            # firing the event is the only thing that finds one wired to nothing.
             if ($ugWinText -notmatch 'unticked=WdText/Collapsed -> WdBad/Visible/Bold -> WdText/Collapsed/SemiBold') {
                 $undoGenBad += 'unticking an option does not mark it, or re-ticking does not put it back'
             }
@@ -2075,12 +1984,9 @@ if ($SelfTest) {
             if ($ugWinText -notmatch 'deadclick=False -> False') {
                 $undoGenBad += 'clicking an already-back row ticked it'
             }
-            # The one-line description, which this page had no way to show at all
-            # until the generator started emitting it: a row named an option and
-            # counted its changes and never said what it did. Non-verbose is the
-            # default here as it is in the application, so they start hidden - and
-            # the elements exist either way, or turning the option on would need
-            # the page rebuilt.
+            # Descriptions start hidden (non-verbose is the default) but the
+            # elements exist either way, or turning the option on would need the
+            # page rebuilt.
             if ($ugWinText -notmatch 'described=1 of 1 elements, visible 0 -> 1 -> 0') {
                 $undoGenBad += 'the description did not arrive, or does not turn on and off'
             }
@@ -2113,14 +2019,10 @@ if ($SelfTest) {
                 $undoGenBad += 'the Refresh button did not come back out of its own handler'
             }
 
-            # The feature read, which was twelve seconds spent under one option's
-            # name on the splash. Get-WindowsOptionalFeature -Online enumerates
-            # the lot at 12,072 ms measured; Win32_OptionalFeature is 1,043 for
-            # an answer that agreed on every one of the 135 names the two share,
-            # and it is warmed on a runspace of its own on top of that. A per
-            # NAME DISM call is 377 ms and is the fallback for what that class
-            # does not carry, so what fails here is the enumeration rather than
-            # the cmdlet.
+            # Get-WindowsOptionalFeature -Online enumerates everything: 12s.
+            # Win32_OptionalFeature is 1s for the same answer. A per-NAME DISM
+            # call (377 ms) is the fallback for names that class lacks, so what
+            # is banned here is the ENUMERATION, not the cmdlet.
             $ugDism = @([regex]::Matches($ugText, '(?m)^.*Get-WindowsOptionalFeature\s+-Online.*$') |
                         Where-Object { $_.Value -notmatch '-FeatureName' })
             if ($ugDism.Count) { $undoGenBad += 'the generated script still enumerates every Windows feature through DISM' }
@@ -2136,12 +2038,10 @@ if ($SelfTest) {
                 if ($ugText -notmatch '(?m)^\$global:WDIconDark = @\(') { $undoGenBad += 'no dark-palette icon reached the script' }
                 if ($ugText -notmatch '(?m)^\$global:WDIconLight = @\(') { $undoGenBad += 'no light-palette icon reached the script' }
 
-                # Trimmed to the frames a window is actually asked for. The 128
-                # and 256 frames are 130 KB of the 158, which becomes 173 KB of
-                # base64 in a file somebody is meant to be able to read - and
-                # nothing on this page ever draws the icon at either size.
-                # Checked the way [7] checks the real one: every offset has to
-                # land inside the file, or a reader mis-measures the frame after.
+                # Trimmed to <=64px: the 128 and 256 frames are 130 KB of 158,
+                # which is 173 KB of base64 in a file meant to be readable, and
+                # nothing here draws either size. Every offset must still land
+                # inside the file or a reader mis-measures the next frame.
                 $ugFull = Get-WDAppIconBytes -Theme 'dark'
                 $ugCut  = Get-WDIcoSubset -Bytes $ugFull -MaxSize 64
                 if ($ugCut.Length -ge $ugFull.Length) { $undoGenBad += 'trimming the icon did not make it any smaller' }
@@ -2160,13 +2060,12 @@ if ($SelfTest) {
                 }
             }
 
-            # Every function in the generated script has to be global, and every
-            # variable it shares has to be $global:. Not a style rule: a WPF
-            # callback runs a closure in whatever session state the dispatcher
-            # hands it, and a script-scoped function is not findable from there.
-            # The symptom is a page of "The term 'Get-WDStepState' is not
-            # recognized" and a window that opens anyway with every count at
-            # zero, which is worse than not opening.
+            # Every function in the generated script must be global:, and every
+            # shared variable $global:. Not style - a WPF callback runs in
+            # whatever session state the dispatcher hands it, and a
+            # script-scoped function is not findable from there. The symptom is
+            # 400 "term not recognized" errors and a window that opens anyway
+            # with every count at zero, which is worse than not opening.
             $ugFns = @([regex]::Matches($ugText, '(?m)^function\s+(global:)?([A-Za-z]+-[A-Za-z]+)'))
             foreach ($m in $ugFns) {
                 if (-not $m.Groups[1].Value) { $undoGenBad += "$($m.Groups[2].Value) in the generated script is not global" }
@@ -2278,12 +2177,9 @@ if ($SelfTest) {
                 (@{ item = 'a'; type = 'registry'; undo = @{ method = 'registry'; path = $probeKey; name = 'Restored'; kind = 'DWord'; previous = 1 } } | ConvertTo-Json -Compress -Depth 6)
                 (@{ item = 'b'; type = 'registry'; undo = @{ method = 'registry'; path = $probeKey; name = 'StillSet'; kind = 'DWord'; previous = 1 } } | ConvertTo-Json -Compress -Depth 6)
                 (@{ item = 'c'; type = 'registry'; undo = @{ method = 'registry'; path = $probeKey; name = 'NeverWas'; kind = 'DWord'; previous = '__ABSENT__' } } | ConvertTo-Json -Compress -Depth 6)
-                # A hive nothing will ever have mounted. It used to name
-                # WD_DEFAULT, which is the real one - and on a machine where a
-                # run had left that mounted, the value became readable and the
-                # entry stopped being Unknown. That is the right answer and the
-                # wrong assertion: whether a hive happens to be loaded is a fact
-                # about the machine, and this is testing the code.
+                # A hive nothing will ever have mounted. Naming the real
+                # WD_DEFAULT made this depend on whether a run had left it
+                # mounted - a fact about the machine, not about the code.
                 (@{ item = 'd'; type = 'registry'; undo = @{ method = 'registry'; path = 'HKU:\WD_SELFTEST_NEVER_MOUNTED\SOFTWARE\X'; name = 'V'; kind = 'DWord'; previous = 1 } } | ConvertTo-Json -Compress -Depth 6)
                 (@{ item = 'e'; type = 'appx';     undo = @{ method = 'reinstall'; name = 'Some.Package' } } | ConvertTo-Json -Compress -Depth 6)
                 # Written twice by two options. Only the first entry knows what
@@ -2443,13 +2339,9 @@ if ($SelfTest) {
             if ($rules.Count -ne $heads.Count) {
                 Write-Host "  NOTES  $($heads.Count) option(s) but $($rules.Count) dividing rule(s)" -ForegroundColor Red; $failures++
             }
-            # -Path promises this works without a session, and for a long time
-            # it did not: the run id and the rollback path were read off
-            # $script:Session anyway, so a caller passing -Path got a header
-            # reading "run unnumbered" over "(no rollback script was written)"
-            # with the script sitting beside it. Both are now parameters, and
-            # the rollback line is asked of the FILE rather than of the path -
-            # "Generate rollback script" is a row that can be unticked.
+            # -Path has to work with no session, so the run id and rollback path
+            # are parameters rather than reads off $script:Session. The rollback
+            # line asks the FILE, not the path - that row can be unticked.
             $stamp = [datetime]'2026-03-04T05:06:07'
             $fake  = Join-Path ([IO.Path]::GetTempPath()) "wd-undo-$([Guid]::NewGuid().ToString('N')).ps1"
             $null  = Export-WDRunNotes -Items $notePlan -PresetName 'SelfTest' -Path $notesProbe `
@@ -2562,10 +2454,9 @@ if ($SelfTest) {
         }
         # ---- the run with no interface --------------------------------------
         #
-        # A run started from SetupComplete.cmd happens in session 0, before
-        # anybody signs in, with nothing to draw on. Everything the finished run
-        # page would have said has to reach the person who eventually does sign
-        # in, through two files and a prompt, and this drives all three.
+        # SetupComplete.cmd runs in session 0 with nothing to draw on, so the run
+        # page's whole content has to reach whoever signs in later through two
+        # files and a prompt. All three are driven here.
         $fakeReport = [pscustomobject]@{
             preview = $false; reboot = $true
             started = (Get-Date).ToString('o')
@@ -2623,15 +2514,11 @@ if ($SelfTest) {
             }
             Write-Host "  setup report : $([Math]::Round((Get-Item $sumPath).Length / 1KB, 1)) KB, read back clean"
         }
-        # The prompt refuses to register itself in every state where it could
-        # not be honest. A RunOnce entry runs once, unattended, at somebody's
-        # first sign-in - so an entry pointing at something that is not there is
-        # an error message from a program they have never heard of, and that is
-        # a worse outcome than no prompt at all.
-        #
-        # 'Z:\...' covers two of the three refusals at once on this machine: it
-        # is not there, and it is on a drive that would not be attached anyway,
-        # which is the real case - the toolkit is usually run from the medium.
+        # The prompt must refuse to register whenever it could not be honest: a
+        # RunOnce entry pointing at a missing script is an error message from a
+        # program the user has never heard of. Z:\ covers two refusals at once -
+        # not there, and on a drive that will not be attached, which is the real
+        # case since the toolkit is usually run from the medium.
         if (Register-WDSetupPrompt -RunDir $issDir -ScriptPath 'Z:\WinSetupToolkit\WinSetupToolkit.ps1') {
             Write-Host '  SETUP  the first sign-in prompt was registered for a script that will not be there' -ForegroundColor Red; $failures++
         }
@@ -2655,12 +2542,10 @@ if ($SelfTest) {
         if (Export-WDRunFolder -Session $fakeSession -Desktop $deskDir) {
             Write-Host '  KEEP   a simulation left a run folder behind' -ForegroundColor Red; $failures++
         }
-        # [IO.Directory]::Delete rather than Remove-Item -Recurse. The cmdlet
-        # leaves the folder behind often enough on a tree it has just written -
-        # it enumerates and deletes in two passes, and the second can arrive
-        # before the first has settled - and -ErrorAction SilentlyContinue then
-        # hides it. A self test that litters %TEMP% with folders named after
-        # this toolkit is a self test nobody will trust about tidiness.
+        # [IO.Directory]::Delete, not Remove-Item -Recurse: the cmdlet
+        # enumerates and deletes in two passes and leaves the folder behind
+        # often enough on a tree just written, with -EA SilentlyContinue hiding
+        # it. A self test that litters %TEMP% is not trusted about tidiness.
         foreach ($d in @($deskDir, $issDir)) {
             try { [IO.Directory]::Delete($d, $true) } catch { }
             if (Test-Path -LiteralPath $d) {
@@ -2681,13 +2566,10 @@ if ($SelfTest) {
     Write-Host "  ownership    : $(if ($takeOwn) { 'will seize TrustedInstaller-owned keys on refusal' } else { 'off - blocked items stay blocked' })$(if ($takeOwn -and -not $PSBoundParameters.ContainsKey('TakeOwnership')) { " (implied by -Preset $Preset)" })"
     Write-Host "  privileges   : $(if (Enable-WDOwnershipPrivileges) { 'take-ownership available' } else { 'take-ownership NOT available' })"
 
-    # The tool sweep. Every one of these is a wrapper around something Windows
-    # provides, and when one of those refuses, the items depending on it fail
-    # one at a time with their own messages - which reads as many problems
-    # rather than one cause. Asserted on shape rather than on verdict: what the
-    # checks ANSWER is a fact about this machine and cannot be asserted, but
-    # that they all answer, quickly, without throwing, and declare what they
-    # gate, is a fact about the code.
+    # The tool sweep. Everything here wraps something Windows provides, and when
+    # one of those refuses, its dependent items fail one at a time - which reads
+    # as thirty problems rather than one cause. Asserted on shape, not verdict:
+    # that they all answer, fast, without throwing, and declare what they gate.
     $healthClock = [System.Diagnostics.Stopwatch]::StartNew()
     $health = Test-WDToolHealth -Refresh
     $healthClock.Stop()
@@ -2731,15 +2613,11 @@ if ($SelfTest) {
     if ($healthClock.ElapsedMilliseconds -gt 6000) {
         $hBad += "the sweep took $([int]$healthClock.ElapsedMilliseconds)ms, which is too slow for a path every run takes"
     }
-    # Nothing may compile C# at import time. Every Add-Type is a csc invocation
-    # - about 400 ms for the first and 150 for each one after it - and three of
-    # them sat at the top of three modules, which was most of the two and a half
-    # seconds between the launcher exiting and anything appearing on screen.
-    # They are all deferred to first use now, and this is what stops the next
-    # one arriving: a top-level Add-Type reads as ordinary module setup, costs
-    # nothing anybody would notice while writing it, and is paid by every launch
-    # forever. Matched at column zero, so the deferred ones inside functions -
-    # which are indented - are left alone.
+    # No module may Add-Type at import time. Each one is a csc run - ~400 ms for
+    # the first, ~150 after - and three of them were most of the 2.5s before
+    # anything appeared on screen. A top-level Add-Type reads as ordinary setup
+    # and is paid by every launch forever, which is why this is checked rather
+    # than remembered. Column zero only, so deferred ones inside functions pass.
     $compileBad = @()
     foreach ($f in @(Get-ChildItem -Path (Join-Path $modulePath '*.psm1'))) {
         $txt = [System.IO.File]::ReadAllText($f.FullName)
@@ -2777,12 +2655,10 @@ if ($SelfTest) {
     }
 
     # GetNewClosure copies the scope the closure is WRITTEN in and nothing above
-    # it, so a handler built inside another scriptblock that reaches one scope
-    # further captures $null. Nothing complains until the handler runs, and a
-    # throw out of a WPF event handler closes the window rather than logging
-    # anything - which is how a rail card that threw on hover shipped. It is
-    # decidable from the source, so it is decided here rather than by hovering
-    # every control on the page.
+    # it, so a handler built inside another scriptblock captures $null for
+    # anything one scope further out. Nothing complains until it fires, and a
+    # throw out of a WPF handler closes the window - which is how a rail card
+    # that threw on hover shipped. Decidable from source, so decided here.
     Write-Host "`n[6] Closure captures" -ForegroundColor Cyan
     $srcFiles = @(Get-ChildItem -Path (Join-Path $modulePath '*.psm1') | ForEach-Object { $_.FullName }) + @($PSCommandPath)
     $sbAst    = [System.Management.Automation.Language.ScriptBlockAst]
@@ -2841,12 +2717,10 @@ if ($SelfTest) {
             ForEach-Object { $_.Expression.ScriptBlock })
         $closureCount += $blocks.Count
 
-        # The other half of the same trap, and the one no amount of reading the
-        # block catches: $someBlock.GetNewClosure() binds that block to whatever
-        # scope calls it. Written at the function's own level that is exactly
-        # right; written inside another closure it re-binds a scriptblock full
-        # of references to the function's locals onto a scope that has six, and
-        # every one of them becomes null the first time the handler fires.
+        # The other half, and the one reading the block cannot catch:
+        # $someBlock.GetNewClosure() binds that block to whatever scope CALLS it.
+        # Right at function level; inside another closure it re-binds a block
+        # full of the function's locals onto a scope that has six of them.
         foreach ($b in @($bound | Where-Object { -not ($_.Expression -is [System.Management.Automation.Language.ScriptBlockExpressionAst]) })) {
             $p = $b.Parent; $inClosure = $false
             while ($p) {
@@ -2903,19 +2777,15 @@ if ($SelfTest) {
 
     # ---- an operator where a parameter should be ----------------------------
     #
-    # [Windows.MessageBox]::Show(...) -ne 'Yes' is an expression and the operator
-    # applies to the result. Show-WDMessage (...) -ne 'Yes' is a COMMAND, so -ne
-    # is parsed as a parameter name and 'Yes' as its argument - and because these
-    # are simple functions rather than cmdlets, both vanish into $args instead of
-    # erroring. The call runs, the comparison never happens, and the condition is
-    # whatever the returned string is: always true.
+    # `Show-WDMessage (...) -ne 'Yes'` is a COMMAND, so -ne parses as a parameter
+    # name and 'Yes' as its argument. Simple functions drop unmatched named
+    # parameters into $args rather than erroring, so the comparison never happens
+    # and the condition is a non-empty string: always true. Nine confirmations
+    # came through the MessageBox conversion like that and all nine stopped
+    # asking. Wrap the whole call: `if ((Show-WDMessage (...)) -ne 'Yes')`.
     #
-    # Nine sites came through the MessageBox conversion that way. Every one of
-    # them was a confirmation, so every one of them stopped asking.
-    #
-    # Where-Object and ForEach-Object are exempt, and only they: -eq there is a
-    # real parameter of a real parameter set, which is the whole reason the
-    # parser is willing to read one as a parameter name in the first place.
+    # Where-Object and ForEach-Object are exempt, and only they - -eq really is
+    # a parameter there, which is why the parser accepts one at all.
     $opNames = & $nameSet @('eq','ne','gt','ge','lt','le','like','notlike','match','notmatch',
                             'contains','notcontains','in','notin','is','isnot','replace','band','bor',
                             'bxor','shl','shr','and','or','xor','not','ceq','cne','clike','cmatch')
@@ -2942,14 +2812,11 @@ if ($SelfTest) {
 
     # ---- theme keys ---------------------------------------------------------
     #
-    # $paintTheme's key list IS the resource dictionary, and $Ref throws on a
-    # key it cannot find. So a colour added to Get-WDPalette without a matching
-    # line there does not render wrong - it takes the whole window down during
-    # the build, before anything is on screen, from a line that mentions no
-    # colour. That is exactly what shipping 'Obstruct' did.
-    #
-    # Static, because the interface pass below would catch it only by crashing,
-    # and a check that names the key is worth more than a stack trace.
+    # $paintTheme's key list IS the resource dictionary, and $Ref throws on a key
+    # it cannot find - so a colour added to Get-WDPalette without a line there
+    # takes the window down during the build, from a line that names no colour.
+    # Shipping 'Obstruct' did exactly that. Static, because the interface pass
+    # would only catch it by crashing, and a named key beats a stack trace.
     $themeBad = @()
     try {
         $uiSrc = Get-Content (Join-Path $modulePath 'WD.UI.psm1') -Raw
@@ -3079,13 +2946,10 @@ if ($SelfTest) {
         $lit = 0
         for ($p = 3; $p -lt $px.Length; $p += 4) { if ($px[$p] -gt 8) { $lit++ } }
         $cover = $lit / ($big.PixelWidth * $big.PixelHeight)
-        # The towel is drawn corner to corner and fitted to the tile, so it
-        # covers a bit under a third of it. Far below that means the band
-        # collapsed onto its own centreline, which is what the (int, int)
-        # overload of Math::Max produced and what renders as a thin squiggle.
-        # This does NOT catch every way the art can be wrong - the tilt once
-        # silently became zero and the coverage was unchanged. Only looking
-        # catches that one.
+        # Catches a collapsed geometry, which renders as a thin squiggle and
+        # passes every structural check. Does NOT catch a wrong SHAPE - the art
+        # once shipped tilted the wrong way with coverage unchanged. Only
+        # looking at it catches that.
         if ($cover -lt 0.18) { $bad += ('only {0:p0} of the largest frame is drawn' -f $cover) }
         if ($cover -gt 0.85) { $bad += ('{0:p0} of the largest frame is drawn - it is a blob' -f $cover) }
 
@@ -3093,15 +2957,12 @@ if ($SelfTest) {
         if (-not $pick)        { $bad += 'Get-WDAppIcon handed back nothing' }
         elseif (-not $pick.IsFrozen) { $bad += 'the icon is not frozen' }
 
-        # The splash's route, driven for real, because this is the one that
-        # shipped broken. A BitmapFrame keeps its decoder, a decoder has thread
-        # affinity, and Freeze() on the frame does not freeze the decoder - so
-        # handing the frame across ASSIGNS cleanly and throws inside Show(),
-        # which silently cost the splash its entire window.
-        #
-        # EnsureHandle is what makes this testable without putting anything on
-        # screen: it creates the HWND, which is when WPF resolves an icon, and
-        # a window is not shown and gets no taskbar button until Show().
+        # BYTES CROSS THREADS, DECODED FRAMES DO NOT. A BitmapFrame keeps its
+        # decoder, a decoder has thread affinity, and Freeze() on the frame does
+        # not freeze the decoder - so handing one across assigns cleanly and
+        # throws inside Show(), which silently cost the splash its whole window.
+        # EnsureHandle creates the HWND (when WPF resolves the icon) without
+        # showing anything, which is what makes this testable.
         $iconRs = [runspacefactory]::CreateRunspace()
         $iconRs.ApartmentState = 'STA'
         $iconRs.Open()
@@ -3141,21 +3002,17 @@ if ($SelfTest) {
     }
 
     try {
-        # The GUI never reaches the code above: it opens a splash and scans on a
-        # runspace behind it. That path has its own failure modes - XAML that
-        # will not parse, a storyboard that never starts, a runspace that
-        # returns nothing - and none of them show up anywhere else.
-        # -Quiet: no Topmost, no activation. A test that takes a minute and a
-        # half must not hold the foreground for it.
+        # The GUI never reaches the code above - it splashes and scans on a
+        # runspace - and that path fails in its own ways: XAML that will not
+        # parse, a storyboard that never starts, a runspace that returns
+        # nothing. -Quiet drops Topmost and activation: a 90-second test must
+        # not hold the foreground.
         $sp = New-WDSplash -Profile $profileInfo -Quiet
         & $sp.Status 'Self test' 'Checking the startup path'
-        # Read through the shared state, not off the element: the window lives
-        # on its own runspace and touching it from here throws. This also makes
-        # the check stronger than it was - the old one asked whether the
-        # animation had advanced while THIS thread was politely idle, which is
-        # the one case that always worked. Now the thread is deliberately blocked
-        # in a tight sleep loop, which is what the real startup does to it, and
-        # the sweep still has to move.
+        # Through the shared state, never off the element: the window is on
+        # another runspace and touching it from here throws. The thread is
+        # deliberately blocked in a sleep loop, which is what real startup does
+        # to it, and the sweep still has to move.
         $x0 = [double]$sp.State.Shift
         $spin = [Diagnostics.Stopwatch]::StartNew()
         while ($spin.ElapsedMilliseconds -lt 600) { Start-Sleep -Milliseconds 20 }
@@ -3189,14 +3046,10 @@ if ($SelfTest) {
                                -Theme 'dark'
         Write-Host ("  build + 3s interaction pass: {0:n1}s" -f ($buildSw.Elapsed.TotalSeconds))
 
-        # The theme switch is checked inside the harness now, where it can read
-        # the colors back off the elements. All this end has to know is that
-        # one call did the whole thing: no second build, no window handed back
-        # to be built into again, and the window closed when the pass finished.
-        # It returns nothing at all now, and that is worth asserting rather than
-        # ignoring. The one thing this caught was $win.Activate()'s Boolean
-        # escaping as the return value - invisible for as long as there was a
-        # Restart object in front of it for the caller to read .Restart off.
+        # Show-WDWindow must return NOTHING: one call, one window, one build.
+        # Worth asserting rather than ignoring - it caught $win.Activate()'s
+        # Boolean escaping as the return value, which was invisible for as long
+        # as a Restart object sat in front of it.
         if ($null -ne $again) {
             Write-Host "  THEME the window returned $(@($again).Count) object(s) instead of nothing:" -ForegroundColor Red
             foreach ($o in @($again)) {
@@ -3225,11 +3078,9 @@ if ($SelfTest) {
 
 # --------------------------------------------------------- unattend file ---
 #
-# This used to emit a five-line fragment that shelled out to this script during
-# the specialize pass, from a hardcoded C:\WinSetupToolkit that nothing put there. It
-# now writes a complete, self-contained answer file: the selected items' registry
-# values and app removals are inlined, so there is no payload to copy, nothing to
-# go stale, and the file can be read to see exactly what it will do.
+# Self-contained: the selected items' registry values and app removals are
+# inlined, so there is no payload to copy onto the medium, nothing to go stale,
+# and the file can be read to see exactly what it will do.
 if ($ExportUnattend) {
     $sel     = Resolve-Selection
     $wanted  = New-WDStringSet $sel
@@ -3361,13 +3212,10 @@ if ($Console) {
         }
     }
 
-    # Same copy the GUI makes, for the same reason: the run directory is under
-    # ProgramData and nobody finds it. Last, because it copies what the lines
-    # above wrote - including, on a setup run, the summary written just below.
-    #
-    # -Public on a setup run. There is no per-user desktop in session 0, and
-    # asking for one as SYSTEM answers with the systemprofile folder, which
-    # exists and which nobody will ever open.
+    # Same copy the GUI makes: the run directory is under ProgramData and nobody
+    # finds it. Last, because it copies what the lines above wrote. -Public on a
+    # setup run - session 0 has no per-user desktop, and asking as SYSTEM
+    # answers with the systemprofile folder, which exists and nobody opens.
     if (-not $Preview -and $SetupRun) {
         $null = Export-WDSetupResult -Session $session -Report $report -Label $Preset `
                                      -RestartCount $needRestart -RestorePoint $restorePointState
@@ -3422,13 +3270,10 @@ if (-not [string]$uiState.theme) {
     }
 }
 
-# The splash goes up before anything slow happens, so there is a window on
-# screen within a moment of the launcher exiting rather than after the scan.
-#
-# No profile: reading one is six CIM queries and about a second, and this
-# window is what that second used to be spent instead of. The scan runspace
-# reads it as its first act and publishes it, so the caption fills itself in
-# and nothing on this thread reads the machine twice.
+# Up before anything slow, so a window is on screen a moment after the launcher
+# exits rather than after the scan. No -Profile: that is six CIM queries and
+# about a second. The scan runspace reads it as its first act and publishes it,
+# so the caption fills itself in and nothing reads the machine twice.
 $splash = New-WDSplash
 
 $startup    = Wait-WDStartupScan -Job $scanJob -Splash $splash
@@ -3458,12 +3303,9 @@ $null = Initialize-WDSession -Root $LogRoot -Preview -QuickEnvironment:$isGui
 $pre = $null
 if ($ProfilePath -or $Select) { $pre = Resolve-Selection }
 
-# One call, one window, one build. This used to be a do/while: switching theme
-# ended the function and asked the caller to build the whole page again in the
-# other palette, because every color was resolved into a brush while the page
-# was built and there was nothing to restyle in place. Colors are keyed theme
-# resources now, so the switch repaints the open window and never comes back
-# here at all.
+# One call, one window, one build. Colours are keyed theme resources, so a theme
+# switch repaints the open window rather than returning here to be rebuilt. If
+# you find yourself adding -HostWindow back, fix whatever still holds a brush.
 $null = Show-WDWindow -Categories $categories -Session (Get-WDSession) -Profile $profileInfo `
                       -ModulePath $modulePath -ManifestPath $manifest -Scan $scan -Presence $presence `
                       -PreSelected $pre -ShowRun $ShowRun `

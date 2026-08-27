@@ -9,10 +9,8 @@
 
 $script:Profile = $null
 
-# GetSystemMetrics comes from [WD.Native], which WD.Core defines. It used to be
-# compiled here, at import, which put a csc invocation on the launch path for a
-# single call that answers one guard. See the native note at the top of
-# WD.Core.psm1 for why every one of those was worth moving.
+# GetSystemMetrics lives in [WD.Native], compiled once by WD.Core. Do not
+# Add-Type here: that puts a compiler run on the launch path.
 
 # Chassis types that mean "portable" per the SMBIOS spec.
 $script:PortableChassis = @(8, 9, 10, 11, 12, 14, 18, 21, 30, 31, 32)
@@ -53,9 +51,7 @@ function Get-WDSystemProfile {
     try { $bat = Get-CimInstance Win32_Battery          -ErrorAction Stop } catch { }
     try { $gpu = @(Get-CimInstance Win32_VideoController -ErrorAction Stop) } catch { }
 
-    # How full the system drive is. Cheap, and it decides whether the storage
-    # section is worth showing at all - an item that frees 8 GB is noise on a
-    # drive with 400 GB spare and the point of the page on one with 20.
+    # How full the system drive is - drives the diskfull guard.
     $sysDrive = [string]$env:SystemDrive
     if (-not $sysDrive) { $sysDrive = 'C:' }
     $diskTotal = 0L; $diskFree = 0L; $diskUsed = 0
@@ -86,10 +82,7 @@ function Get-WDSystemProfile {
     # Virtual machines report chassis 1 but a battery is still the better tell.
     if (-not $isPortable -and $bat) { $isPortable = $true }
 
-    # SM_DIGITIZER = 94; low byte non-zero means an integrated digitiser exists.
-    # Use-WDNative is what makes sure the type is there - on the launch path it
-    # was compiled in the background while the modules were loading, so this
-    # costs nothing; anywhere else it compiles on the spot.
+    # SM_DIGITIZER = 94; low byte non-zero means an integrated digitiser.
     $touch = $false
     try {
         if (Use-WDNative) { $touch = ([WD.Native]::GetSystemMetrics(94) -band 0xFF) -ne 0 }
@@ -277,10 +270,8 @@ function Test-WDGuard {
                     }
                 } else { $true }
             }
-            # diskfull:70 - the system drive is at least 70% used. Nothing to do
-            # with risk; it decides whether the storage clean-ups are worth
-            # putting on screen. An unreadable drive reads as 0% and hides them,
-            # which is the right way round for a guess.
+            # diskfull:70 - system drive at least 70% used. An unreadable drive
+            # reads as 0% and so fails the guard, which is the safe way round.
             'diskfull' {
                 if ($val -match '^\d+$') { [int]$Profile.DiskUsedPercent -ge [int]$val } else { $true }
             }
@@ -504,9 +495,8 @@ function Mount-WDDefaultHive {
     $dat = Join-Path $env:SystemDrive 'Users\Default\NTUSER.DAT'
     if (-not (Test-Path -LiteralPath $dat)) { return $null }
 
-    # reg.exe writes its refusal straight to the console when unelevated, which
-    # looks like a crash to anyone watching. Swallow both streams and let the
-    # caller treat a null return as "default profile unavailable".
+    # Both streams are redirected: unelevated, reg.exe prints its refusal to the
+    # console and that looks like a crash. Null return means "unavailable".
     $key = 'WD_DEFAULT'
     $out = [IO.Path]::GetTempFileName()
     $err = [IO.Path]::GetTempFileName()
@@ -514,11 +504,8 @@ function Mount-WDDefaultHive {
         $p = Start-Process reg.exe -ArgumentList @('load', "HKU\$key", "`"$dat`"") `
                            -NoNewWindow -Wait -PassThru -RedirectStandardOutput $out -RedirectStandardError $err -EA SilentlyContinue
         if ($p -and $p.ExitCode -eq 0) {
-            # reg.exe loads the hive under HKEY_USERS, which says nothing about
-            # whether this process has a drive named HKU to reach it through.
-            # This is the path every allusers write goes down, so the drive has
-            # to exist before the path is handed out rather than wherever it is
-            # eventually used.
+            # Make HKU: before handing out a path that uses it. reg.exe loads
+            # under HKEY_USERS; that does not create the PS drive.
             $null = Use-WDUserHiveDrive
             return [pscustomobject]@{ Name = 'DefaultProfile'; Path = "HKU:\$key"; Mounted = $true; HiveKey = $key }
         }
