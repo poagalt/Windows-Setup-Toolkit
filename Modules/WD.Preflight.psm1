@@ -1,32 +1,27 @@
 ﻿<#
     WD.Preflight - is each tool this toolkit stands on actually working?
 
-    THE PROBLEM THIS SOLVES. Almost everything here is a wrapper around
-    something Windows provides: DISM for features, the deployment stack for
-    Store packages, winget for installs, the Task Scheduler service, the SCM,
-    VSS for restore points. When one of those is refusing - and a pending
-    restart makes DISM refuse EVERY servicing operation - the items that depend
-    on it fail one at a time, each with its own message, and the report reads
-    as thirty unrelated problems rather than one cause. Nothing in the item
-    results says "the servicing stack was never going to answer".
+    Almost everything here wraps something Windows provides: DISM, the
+    deployment stack, winget, the Task Scheduler, the SCM, VSS. When one of them
+    refuses - and a pending restart makes DISM refuse EVERY servicing operation
+    - the items depending on it fail one at a time and the report reads as thirty
+    unrelated problems rather than one cause. So the cause is found once, up
+    front, and named.
 
-    So the cause is found once, up front, named, and shown.
+    Three rules:
 
-    THREE RULES.
+      1. Never throw. This is on the path to every apply. A check that cannot
+         answer returns Unknown, which is a real state and not a failure.
+      2. Fast. The whole sweep is under two seconds. The one slow probe - opening
+         a DISM servicing session - is behind -Deep, because the cheap proxy for
+         it (a pending restart) is the actual cause in real life.
+      3. Say what to DO. Reason and Fix are separate fields, and the self test
+         fails an Unavailable carrying no Fix.
 
-    1. Never throw. This runs on the path to every apply. A check that cannot
-       answer returns Unknown, which is a real state and never a failure.
-    2. Fast. Every probe here was measured; the whole sweep is well under two
-       seconds. The one genuinely slow probe - opening a DISM servicing session
-       - is behind -Deep and off by default, because the fast proxy for it
-       (a pending restart) is the actual cause in real life.
-    3. Say what to DO. A check reports Reason and Fix. "DISM is unavailable" is
-       half an answer; "a restart is pending, restart and run this again" is
-       the whole one.
-
-    STATES. Ok, Degraded (works, but less than fully), Unavailable (will not
-    work, and anything depending on it will fail), Unknown (could not be
-    determined - usually because the probe itself needs elevation).
+    States: Ok, Degraded (works, less than fully), Unavailable (will not work),
+    Unknown (could not be determined - usually the probe needs elevation).
+    Unknown ranks BELOW Unavailable: a thing known broken outranks a thing
+    nobody could ask about.
 #>
 
 Set-StrictMode -Off
@@ -183,26 +178,18 @@ function Test-WDToolHealth {
     }
 
     & $run 'component-store' {
-        # Cheap corruption and mid-servicing markers. Not a substitute for
-        # /ScanHealth, which takes minutes and has no business on this path -
-        # but a machine with pending CBS sessions is one where feature work is
-        # likely to fail, and that is worth saying before it does.
+        # Cheap corruption and mid-servicing markers - not a substitute for
+        # /ScanHealth, which takes minutes and has no business on this path.
         #
-        # Counted, not merely tested for existence. `SessionsPending` is present
-        # and EMPTY on a settled machine, so keying on the key would report
-        # every healthy install as degraded - which is how a check earns being
-        # ignored.
+        # COUNT, NEVER TEST FOR EXISTENCE. SessionsPending is present and EMPTY
+        # on a settled machine, so keying on the key reports every healthy
+        # install as degraded.
         #
-        # And counting the subkeys is not the same question either. A session
-        # that has run its whole lifecycle is LEFT BEHIND under this key with
-        # `Complete` set to 1, so a subkey count tells somebody to restart, and
-        # goes on telling them after they have. Two of those sat here across a
-        # restart while DISM answered every query and all four feature and
-        # capability items in a real plan came back with proper verdicts. A
-        # check whose advice cannot satisfy it is worse than no check.
-        #
-        # Absent `Complete` counts as outstanding: a session that has not said
-        # it finished has not finished.
+        # And count only INCOMPLETE sessions. A finished session is left behind
+        # under this key with Complete=1, so a bare subkey count tells somebody
+        # to restart and goes on telling them after they have. A check whose
+        # advice cannot satisfy it is worse than no check. Absent Complete counts
+        # as outstanding.
         $sessions = 0
         $packages = 0
         try {

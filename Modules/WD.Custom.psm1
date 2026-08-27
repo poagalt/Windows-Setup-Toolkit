@@ -185,15 +185,14 @@ function Set-WDPowerToysRemap {
         Add-WDJournal -ItemId $Context.ItemId -Type 'copilot-key' -Target $cfg -Status 'Changed' `
                       -Undo @{ method = 'file-restore'; file = "$cfg.wdbak"; target = $cfg }
 
-        # PowerToys only reads the config at start, so bounce it if running.
+        # PowerToys reads its config only at start, so bounce it if running.
         #
-        # THE ENGINE IS A SEPARATE PROCESS, and it is the one that matters.
-        # PowerToys.KeyboardManagerEngine is what loads default.json and does
-        # the remapping; PowerToys.exe is the launcher. Stopping the launcher
-        # alone can leave the engine running with the old config still in
-        # memory, which is a remap written to disk that never takes effect -
-        # and the symptom is the Copilot key going on doing what it did before,
-        # with everything on disk looking correct.
+        # THE ENGINE IS A SEPARATE PROCESS AND IS THE ONE THAT MATTERS.
+        # KeyboardManagerEngine loads default.json and does the remapping;
+        # PowerToys.exe is only the launcher. Stopping the launcher alone leaves
+        # the engine holding the old config, so the remap is on disk and has no
+        # effect - and the symptom is the Copilot key behaving as before with
+        # everything on disk looking correct.
         $engine  = @(Get-Process -Name 'PowerToys.KeyboardManagerEngine' -ErrorAction SilentlyContinue)
         $running = @(Get-Process -Name 'PowerToys' -ErrorAction SilentlyContinue)
         $exe = ''
@@ -247,24 +246,20 @@ Register-WDHandler 'RemoveOneDrive' {
 
     # ---- Known Folder Move, and this has to happen FIRST -------------------
     #
-    # OneDrive's "back up your folders" moves Documents, Pictures and Desktop
-    # INTO the OneDrive folder by repointing the shell's User Shell Folders
-    # values at C:\Users\<me>\OneDrive\<name>. Uninstalling OneDrive does not
-    # put them back. What it does is take away the thing that was keeping those
-    # paths populated, so the redirection is left naming a folder that is not
-    # there - and GetFolderPath('MyDocuments') then returns an EMPTY STRING.
+    # OneDrive's "back up your folders" repoints Documents, Pictures, and Desktop
+    # at C:\Users\<me>\OneDrive\<name>. Uninstalling OneDrive does not put them
+    # back - it removes what kept those paths populated, so the redirection names
+    # a folder that is not there and GetFolderPath('MyDocuments') returns an
+    # EMPTY STRING. Every program that saves to Documents asks the shell for that
+    # path, and there is no longer an answer.
     #
-    # That is not a cosmetic problem. Every program that saves to Documents is
-    # asking the shell for that path, and there is no longer an answer. It is
-    # also the single most alarming way for this to go wrong, because the
-    # obvious reading of "my Documents folder is gone" is that the debloat tool
-    # deleted it. It did not: the files are in the OneDrive account, and this
-    # run never touches user data. But nothing said so.
+    # It is also the most alarming way this can go wrong: "my Documents folder is
+    # gone" reads as the debloat tool having deleted it. It did not - the files
+    # are in the OneDrive account and no run touches user data.
     #
-    # Before the uninstaller runs, then: any known folder pointing inside
-    # OneDrive is pointed back at the local profile, and the local folder is
-    # created if it is missing. Journalled, so the rollback puts the
-    # redirection back for anyone who wants OneDrive again.
+    # So, before the uninstaller: point any known folder inside OneDrive back at
+    # the local profile, creating it if missing. Journalled, so a rollback
+    # restores the redirection for anyone who wants OneDrive back.
     $kfmRoot = Join-Path $env:USERPROFILE 'OneDrive'
     $shellKey = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders'
     $kfm = @(
@@ -451,42 +446,32 @@ Register-WDHandler 'VerifyDefender' {
     }
 }
 
-# ScanVendorApps lived here and was removed deliberately. It listed every
-# uninstall entry whose publisher missed a fourteen-name regex, consulted
-# neither the manifest nor any OEM signature, and applied none of the filters
-# Get-WDDiscoveredSoftware applies - so it re-listed keep-listed vendor tools,
-# manifest-covered products and the SystemComponent sub-entries the scan exists
-# to suppress. It was the discovered-software rows again, with the safety
-# filtering taken off and written to a text file.
+# ScanVendorApps was removed deliberately: it re-listed the discovered-software
+# rows with every safety filter taken off - keep-listed vendor tools,
+# manifest-covered products, and the SystemComponent sub-entries the scan exists
+# to suppress - and wrote them to a text file.
 #
-# The one set the scan genuinely drops is uninstall entries with no
-# UninstallString and no QuietString - it cannot offer those as rows because
-# there is nothing to run. If that list is ever wanted it belongs somewhere that
-# says so, not behind a row implying it found something the scan missed.
+# The only set the scan genuinely drops is uninstall entries with neither an
+# UninstallString nor a QuietString, since there is nothing to run. If that list
+# is ever wanted it needs a row that says so.
 
 Register-WDHandler 'RemoveInstallShortcuts' {
     <#
-        "Install without a desktop shortcut", after the fact.
+        "Install without a desktop shortcut", after the fact. There is no
+        portable winget switch for it, so the only honest way to offer the
+        preference is to clear up behind the installers.
 
-        winget hands the installer its own defaults and most of them drop a
-        shortcut on the desktop; there is no portable switch to stop that, so the
-        only honest way to offer the preference is to clear up behind them.
+        NOT the same as `desktop-shortcuts`, which is tier 3 and takes every
+        shortcut including ones the person made. This removes only what appeared
+        during THIS run.
 
-        This is deliberately NOT the same thing as `desktop-shortcuts`. That one
-        is tier 3 and takes every shortcut on the desktop including ones the
-        person made themselves, which is far too blunt an instrument for
-        somebody who only meant "don't clutter my desktop with the things I just
-        asked you to install". This removes only what appeared during this run.
+        Decided on "newer than the run's start" rather than a before-and-after
+        snapshot: a snapshot needs a handler that runs twice with state in
+        between, and the timestamp answers the same question with nothing to keep
+        in sync. The cost is a shortcut made by hand mid-run, which does not
+        really arise.
 
-        Newer than the run's own start, rather than a before-and-after snapshot:
-        a snapshot needs a handler that runs twice with state in between, and the
-        timestamp answers the same question with nothing to keep in sync. The
-        cost is that a shortcut somebody creates by hand while the run is going
-        would also go, which is a situation that does not really arise - the
-        window is a few minutes and the machine is busy.
-
-        Ordered after the installs (94, against their 88-93) so the files exist
-        by the time it looks.
+        order 94, after the installs at 88-93, so the files exist by then.
     #>
     param($Action, $Context)
 
@@ -814,24 +799,20 @@ function Get-WDResidueTokens {
 
 Register-WDHandler 'RemoveUninstallResidue' {
     <#
-        The wider sweep, and the one that works the way Revo's does: search the
-        usual residue locations for anything whose name matches a program this
-        run uninstalled, rather than only the folder that program declared.
+        The wider sweep, the way Revo's works: search the usual residue locations
+        by NAME, rather than only the folder the program declared.
 
-        It used to stop there and print a list. That was the wrong shape for
-        this toolkit - "here are fourteen folders belonging to the thing you
-        just removed, go and delete them yourself" is a chore handed back to
-        the operator dressed up as caution, and the folders stayed on the disk.
+        Revo is only safe because a human reviews the list first. There is no
+        human in this loop, so the safety is bought back three other ways:
 
-        So it removes what it finds, and buys back the safety a human reviewer
-        used to provide three other ways: a token has to be five characters or
-        more and cannot be a generic word, so "Software" and "x64" match
-        nothing; a folder holding a running executable is left alone, because a
-        live process is the one unambiguous sign the match was wrong; and every
-        removal is reversible - folders go to the Recycle Bin and keys are
-        exported before they are deleted, so the rollback script restores the
-        lot. It is still the widest net this toolkit casts, which is why it is
-        tier 3 and off by default.
+          - a token must be 5+ characters and not a generic word, so "Software"
+            and "x64" match nothing
+          - a folder holding a RUNNING executable is left alone - a live process
+            is the one unambiguous sign the match was wrong
+          - every removal is reversible: folders to the Recycle Bin, keys
+            exported before deletion, so the rollback restores the lot
+
+        Still the widest net here, which is why it is tier 3 and off by default.
     #>
     param($Action, $Context)
 
@@ -980,28 +961,27 @@ Register-WDHandler 'SetPowerScheme' {
     <#
         One value in the active power scheme, set for both AC and battery.
 
-        powercfg rather than the registry, and that is not a preference. The keys
-        under Control\Power\PowerSettings hold each setting's DEFAULT and its
-        allowed range; the value in force belongs to the active scheme, under a
-        per-scheme GUID, and writing the default does not move it. powercfg is
-        also what re-applies the scheme afterwards, which is what makes the change
-        take effect without a sign-out.
+        POWERCFG, NOT THE REGISTRY, and that is not a preference: the keys under
+        Control\Power\PowerSettings hold each setting's DEFAULT and allowed range,
+        while the value in force belongs to the active scheme under a per-scheme
+        GUID - writing the default does not move it. powercfg also re-applies the
+        scheme, which is what makes the change take effect without a sign-out.
 
-        The action names the subgroup and the setting, so one handler covers every
-        power item rather than one handler each:
+        The action names the subgroup and setting, so one handler covers every
+        power item:
 
           { "type": "script", "handler": "SetPowerScheme",
             "sub": "SUB_SLEEP", "setting": "RTCWAKE", "value": 0 }
 
-        Aliases (SUB_SLEEP, SUB_USB, ...) are accepted by powercfg directly, and
-        so are raw GUIDs - which is the only route to the settings Windows hides
-        from the Power Options page, and two of the three items here are hidden
-        ones.
+        Aliases and raw GUIDs are both accepted, and WHICH ONE TO USE HAS TO BE
+        CHECKED against a real machine - there is no SUB_USB alias, and a wrong
+        pairing reports NotPresent, which is indistinguishable from hardware that
+        lacks the setting. Probe with `powercfg /query SCHEME_CURRENT` and
+        `powercfg /aliases` first.
 
-        The previous values are read back BEFORE the write so the journal can
-        restore them. Read from the scheme rather than assumed from the
-        documented default: somebody who has already tuned their power plan must
-        get their own value back, not Microsoft's.
+        Previous values are read from the SCHEME before the write, not from the
+        documented default, so somebody who has already tuned their power plan
+        gets their own numbers back.
     #>
     param($Action, $Context)
 
@@ -1260,45 +1240,32 @@ Register-WDHandler 'ClearStaleShortcuts' {
     <#
         Shortcuts left pointing at a program this run removed.
 
-        Uninstallers routinely leave their Start menu entry behind, and Edge
-        leaves one that survives every folder its own uninstaller deletes. The
-        result is worse than untidy: the entry is still in Start, still comes up
-        first when somebody searches for the program by name, and clicking it
-        produces a shell error about a missing item rather than anything that
-        explains what happened. "It is still there" is a reasonable thing to
-        conclude, and it is what this project exists not to leave behind.
+        Uninstallers routinely leave their Start entry behind, and Edge leaves
+        one that survives every folder its own uninstaller deletes. It still
+        comes up first when somebody searches the program by name, and clicking
+        it gives a shell error rather than an explanation - so "it is still
+        there" is the reasonable conclusion.
 
-        Appended to every plan that removes something, rather than ticked - it
-        is the last part of a removal, not a choice about one.
+        Appended to any plan that removes something rather than ticked: it is the
+        last part of a removal, not a choice about one.
 
         WHAT IT WILL NOT TOUCH, because a wrong deletion here takes away
         something somebody put on their own desktop:
 
-        - A shortcut whose target is empty. Store apps are activated through an
-          AppUserModelID and have no target path at all, so an emptiness test
-          that counted as stale would clear every Store app from Start.
-        - A target that is not a rooted path. Bare command names are resolved
-          through PATH by the shell, and guessing at that is how a working
-          shortcut gets deleted.
-        - .url files. They point at web addresses, and "does this exist on
-          disk" is not a question about a URL.
-        - Anything whose target still exists, obviously - including targets
-          under folders this run did not go near.
-        - ANYTHING OUTSIDE A PROGRAM DIRECTORY. This is the one that matters.
-          A missing target does not mean the program was uninstalled: it means
-          the file is not there right now. A game on an external drive, a tool
-          in a synced folder, anything under Documents - all of them go missing
-          for reasons that have nothing to do with this run and come back on
-          their own. The first cut of this swept on "target is gone" alone and
-          its first find on a real machine was somebody's emulator shortcut
-          pointing into a OneDrive folder, which is exactly the deletion this
-          project must never make.
+          - an EMPTY target. Store apps activate through an AppUserModelID and
+            have no target at all, so treating empty as stale would clear every
+            Store app out of Start.
+          - a target that is not a ROOTED path. Bare command names are resolved
+            through PATH by the shell.
+          - .url files: "does this exist on disk" is not a question about a URL.
+          - anything whose target still exists.
+          - ANYTHING OUTSIDE A PROGRAM DIRECTORY, which is the one that matters.
+            A missing target does not mean uninstalled, it means not there right
+            now: a game on an external drive, a tool in a synced folder. The
+            first cut swept on "target is gone" alone and its first real find was
+            an emulator shortcut pointing into OneDrive.
 
-          So the target has to be under a place programs are installed. Edge's
-          leftover Start entry points into Program Files and is caught; the
-          emulator points into a user's documents and is not.
-
-        Recycled and journalled, so the rollback script puts every one back.
+        Recycled and journalled, so the rollback puts every one back.
     #>
     param($Action, $Context)
 
@@ -1551,19 +1518,17 @@ Register-WDHandler 'DisableReservedStorage' {
 
 # --------------------------------------------------------- PowerToys ------
 #
-# PowerToys keeps its configuration in per-user JSON under
-# %LOCALAPPDATA%\Microsoft\PowerToys: one settings.json with an "enabled" map
-# keyed by module display name, and one settings.json per module for that
-# module's own properties. It reads them at start and writes defaults for
-# anything absent, which is what makes this work *before* it is installed -
-# the same thing the Copilot key remap already relies on for Keyboard Manager.
+# Config is per-user JSON under %LOCALAPPDATA%\Microsoft\PowerToys: one
+# settings.json with an "enabled" map keyed by module display name, plus one per
+# module for its own properties. PowerToys reads them at start and writes
+# defaults for anything absent, which is what makes writing them BEFORE it is
+# installed work at all.
 #
-# Two things this deliberately does not do. It never writes a whole settings
-# file from scratch over an existing one: a module missing from the "enabled"
-# map falls back to its own default, so naming only what was asked for leaves
-# every other module alone. And it does not pretend the schema is stable -
-# these are undocumented files that PowerToys is free to migrate, so a shape
-# it does not recognize is left alone and reported rather than overwritten.
+# Two rules. MERGE, NEVER REPLACE - a module absent from "enabled" falls back to
+# its own default, so naming only what was asked for leaves the rest alone and
+# somebody's existing config survives. And REFUSE WHAT IT CANNOT PARSE: these
+# files are undocumented and PowerToys is free to migrate them, so an unrecognized
+# shape is reported rather than overwritten.
 
 function Get-WDPowerToysRoot { Join-Path $env:LOCALAPPDATA 'Microsoft\PowerToys' }
 
@@ -1598,15 +1563,12 @@ function Set-WDPowerToysJson {
 
 # ----------------------------------------------------------- storage ------
 #
-# Offered on every machine, not only a tight one. The bar above these rows says
-# where the space has gone, and a section that only exists once the drive is
-# already full cannot be the thing that stops it filling up.
+# Offered on every machine, not only a full one: a section that only appears once
+# the drive is already full cannot be what stops it filling up.
 #
-# Every one of these reports what it would free before it frees anything, so the
-# decision is made against a number rather than a promise - and the number on
-# the row, the segment in the bar and the bytes the run deletes all come out of
-# Get-WDStorageSources. Two path lists that drift apart would have the picture
-# promising something the run does not deliver.
+# ONE PATH TABLE behind all three - the row's number, the bar's segment, and the
+# bytes the run deletes all come from Get-WDStorageSources. Two path lists that
+# drift would have the picture promising what the run does not deliver.
 
 # Compiled by Test-WDDiskNative on first use, not at import. It is a csc
 # invocation - about 400 ms - and on a normal launch the first thing to want it
@@ -2326,21 +2288,20 @@ function Test-WDPowerToysModuleSet {
     $true
 }
 
-# Handler name -> "is this already the case?". An item every one of whose actions
-# answers yes is already done, and the GUI says so rather than offering to do it
-# again. Only handlers that can answer cheaply and locally belong here - this
-# runs while the window is being built, for every action of every item.
+# Handler name -> "is this already the case?". An item whose every action answers
+# yes is already done, and the GUI says so rather than offering it again.
 #
-# What is deliberately NOT here, and cannot be: the handlers whose work is a
-# JOB rather than a STATE. Clearing a cache, emptying the Recycle Bin, sweeping
-# leftovers, writing a document, running DISM over the component store - every
-# one of those is worth doing again tomorrow, so "already done" is not a thing
-# to say about them. Neither are the two that install something and then have
-# nothing to look at (InstallChosenBrowser has its own detect pattern), nor
-# SetPowerScheme, which would need a powercfg process spawn per action.
+# NO TEST MEANS NO OPINION, which must read as not-satisfied - an empty set of
+# tests vacuously passing would quietly disable every item in the manifest.
 #
-# The rule for anything added here: it must answer from the registry, the file
-# system, or a list the scan already has, and it must answer in milliseconds.
+# Deliberately absent: handlers whose work is a JOB rather than a STATE. Clearing
+# a cache, emptying the bin, sweeping leftovers, writing a document - all worth
+# doing again tomorrow, so "already done" is not a thing to say about them. Also
+# SetPowerScheme, which would need a powercfg spawn per action.
+#
+# The rule for anything added: answer from the registry, the file system, or a
+# list the scan already has, in milliseconds. This runs for every action of every
+# item while the window is built.
 $script:StateTests = @{
     'SetPowerToysModule' = ${function:Test-WDPowerToysModuleSet}
 
@@ -2488,29 +2449,26 @@ function Test-WDActionSatisfied {
     <#
         Is there anything left for this one action to do on this machine?
 
-        $true only when this can actually answer *and* the answer is yes. No
-        test means no opinion, which must read as "not satisfied" - the
-        alternative is an item silently disabling itself because nobody wrote a
-        check for it.
+        $true only when this can answer AND the answer is yes. No test means no
+        opinion, which must read as "not satisfied" - otherwise an item silently
+        disables itself because nobody wrote a check for it.
 
-        Three kinds of answer, and for a long time only the first two existed:
+        Three kinds of answer:
 
-          by VALUE      registry and service, where the question is whether a
-                        setting already holds what the action would write.
-          by ABSENCE    appx, appxPolicy, uninstall, task, file, shortcut and
-                        registryKey, where the action removes something and
-                        there is nothing there to remove. This needs the
-                        inventory the startup scan already has; without one it
-                        answers no, which is the careful direction.
-          by HANDLER    a script action, through $script:StateTests.
+          by VALUE    registry, service - does the setting already hold what the
+                      action would write.
+          by ABSENCE  appx, appxPolicy, uninstall, task, file, shortcut,
+                      registryKey - the action removes something and there is
+                      nothing to remove. Needs the startup scan's inventory;
+                      without one it answers no, the careful direction.
+          by HANDLER  a script action, through $script:StateTests.
 
-        The absence arm is the one that was missing, and it is why "Copilot app
-        and taskbar entry", "Cortana leftovers" and every other item made of a
-        package plus some policy writes never reported themselves as done. Every
-        registry action in them answered yes; the appx action answered no
-        because nothing had been written to answer it, and one no is enough.
-        Get-WDItemPresence could not cover for that either - it has no opinion
-        the moment an item has a registry action in it, which is exactly these.
+        The absence arm is why "Copilot app and taskbar entry", "Cortana
+        leftovers", and every other package-plus-policy item never reported
+        itself done: the registry actions all answered yes, the appx action
+        answered no because nothing answered it, and one no is enough.
+        Get-WDItemPresence cannot cover for it - it has no opinion the moment an
+        item carries a registry action, which is exactly these.
     #>
     param($Action, $Inventory)
 
@@ -2896,17 +2854,15 @@ Register-WDHandler 'ClearActivityTraces' {
 
 # ================================================== the shortcut arrow ======
 #
-# Explorer draws the overlay from whatever icon `Shell Icons\29` points at, and
-# the way to remove it is to point that at a blank one. Every published version
-# of this trick names an index inside imageres.dll - 197 is the usual one - and
-# none of them is safe to copy: measured on 25H2, index 197 is *nearly* blank
-# and not blank, and the index moves between builds anyway. So the blank icon
-# is written rather than found, which is deterministic on every build and can
-# be checked by reading the file back.
+# Explorer draws the overlay from whatever `Shell Icons\29` points at, so the fix
+# is to point it at a blank one. Every published version of this names an index
+# in imageres.dll (usually 197) and none is safe to copy: measured on 25H2, 197
+# is NEARLY blank rather than blank, and the index moves between builds. So the
+# icon is WRITTEN rather than found - deterministic, and checkable by reading the
+# file back.
 #
-# The value is set through Invoke-WDRegistryAction, so it is backed up,
-# journalled, and cleared by the rollback script - deleting that one value is
-# the whole undo.
+# Set through Invoke-WDRegistryAction, so it is backed up and journalled like any
+# manifest action; deleting that one value is the whole undo.
 function New-WDBlankIcon {
     <#  A 16x16 32bpp fully transparent .ico, written byte by byte. Returns the
         path, or empty on failure.  #>
@@ -3002,17 +2958,14 @@ Register-WDHandler 'SetShortcutArrow' {
 
 # ================================================ update deferral periods ===
 #
-# The two deferral items used to be plain registry actions with 365 and 7 typed
-# into the manifest. Those are reasonable numbers and neither is anybody's
-# number: a year is the longest Windows accepts for a feature update, not a
-# choice, and a week for a quality update is a guess at how long other people
-# take to find the bad ones. The GUI collects a figure, the figure crosses on
-# run-options.json like the browser choice does, and the manifest number is the
-# default for every caller that never had a GUI.
+# The GUI collects the figure and it crosses on run-options.json, as the browser
+# choice does; the manifest number is the fallback for every caller with no GUI.
+# The shipped 365 and 7 are not anybody's choice - a year is simply the longest
+# Windows accepts, and a week is a guess at how long others take to find the bad
+# ones.
 #
-# Written through Invoke-WDRegistryAction rather than Set-ItemProperty, so it is
-# backed up, journalled, and undone by the rollback script exactly as the plain
-# registry action it replaced was.
+# Through Invoke-WDRegistryAction rather than Set-ItemProperty, so it is backed
+# up and journalled exactly as the plain registry action it replaced was.
 $script:WDDeferKinds = @{
     'feature' = @{ Flag = 'DeferFeatureUpdates'; Days = 'DeferFeatureUpdatesPeriodInDays'; Max = 365; Option = 'deferFeatureDays' }
     'quality' = @{ Flag = 'DeferQualityUpdates'; Days = 'DeferQualityUpdatesPeriodInDays'; Max = 30;  Option = 'deferQualityDays' }
@@ -3059,20 +3012,15 @@ Register-WDHandler 'SetUpdateDeferral' {
 
 # ================================================ common issues document ====
 #
-# The file somebody opens a fortnight later when something is wrong and they do
-# not yet know this run is the answer. Everything about it is shaped by that
-# moment rather than by this one:
+# The file somebody opens a fortnight later when something is wrong and does not
+# yet know this run is the answer. Shaped by that moment:
 #
-#   - The lookup phrases come first and are deliberately generic. Nobody types
-#     "a Store app cannot find my camera"; they type "camera not working". The
-#     manifest carries many phrasings per item for exactly that reason, and
-#     being comprehensive matters more than being tidy - a phrase that is never
-#     searched costs a line, and a phrase that is missing costs the whole point
-#     of the document.
-#   - Each phrase names its option and how to undo that one option, because the
+#   - lookup phrases first, deliberately generic. Nobody types "a Store app
+#     cannot find my camera"; they type "camera not working". Comprehensive beats
+#     tidy - an unsearched phrase costs a line, a missing one costs the point.
+#   - each phrase names its option AND how to undo that one option, because the
 #     next thing wanted after "this is the cause" is "make it stop".
-#   - It is not read top to bottom, so it is not written to be. There is no
-#     narrative and no summary.
+#   - searched, never read top to bottom, so no narrative and no summary.
 Register-WDHandler 'WriteCommonIssues' {
     param($Action, $Context)
 
@@ -3269,16 +3217,13 @@ Register-WDHandler 'WriteCommonIssues' {
     New-WDResult -Status Changed -Message "Lookup file written for $($rows.Count) option(s)" -Detail $path
 }
 
-# The rollback script, as a row rather than as something that simply happens.
+# The rollback script, as a ROW rather than as something that simply happens.
+# Written unconditionally it was invisible: the one artefact this application's
+# safety argument rests on had no row, no preview line, and no way to confirm it
+# was coming before Apply was pressed.
 #
-# It was written unconditionally after every run, from two places (the GUI's
-# $startRun and the command line). That made it invisible: the one artefact this
-# whole application's safety argument rests on had no row, no preview line, and
-# no way for anybody to confirm it was going to exist before they pressed Apply.
-#
-# Ordered after the common issues document, which is itself last, so the journal
-# it reads is complete. It has nothing to undo and nothing to report in preview
-# beyond its own existence.
+# order 9995, after the common issues document, so the journal it reads is
+# complete. Nothing to undo, and nothing to preview beyond its own existence.
 Register-WDHandler 'WriteRollbackScript' {
     param($Action, $Context)
 

@@ -117,12 +117,10 @@ function New-WDUnattendOptions {
         # --- privacy ------------------------------------------------------
         PrivacyOff             = $true
         ApplyToDefaultProfile  = $true
-        # Windows 11 24H2 turns device encryption on by default on machines
-        # that qualify, and does it silently. The key goes to whatever account
-        # signs in; on a local account with no Microsoft account it goes nowhere
-        # anybody can reach, which is how people lose a disk to a firmware
-        # update. Off by default here is deliberate and is the reverse of
-        # Windows' own default, so the field says why.
+        # 24H2 silently turns device encryption on where the machine qualifies,
+        # and the key goes to whatever account signs in - on a local account
+        # that is nowhere anybody can reach, which is how a firmware update
+        # costs somebody a disk. Deliberately the reverse of Windows' default.
         NoDeviceEncryption     = $true
 
         # --- the machine's own behavior ----------------------------------
@@ -142,13 +140,10 @@ function New-WDUnattendOptions {
         ExtraFirstLogon = @()
 
         # --- run the toolkit on the finished machine ----------------------
-        # RunToolkit is the on/off, and it is the only thing that decides
-        # whether any of this is emitted. RunPreset used to carry both answers,
-        # with '' meaning off - so "which mode" and "whether at all" were one
-        # control, and the list's first entry had to be "do not". A preset name
-        # runs that preset; 'profile' runs a saved selection named by
-        # RunProfileFile. See New-WDUnattendCommands for the copy step this
-        # needs and why it cannot simply run from the stick.
+        # RunToolkit is the on/off and the only thing that decides whether any of
+        # this is emitted; RunPreset is only "which one". They were one control
+        # with '' meaning off, which forced the list's first entry to be "do not".
+        # 'profile' runs the saved selection named by RunProfileFile.
         RunToolkit      = $false
         RunPreset       = 'Balanced'
         RunProfileFile  = ''
@@ -163,38 +158,27 @@ function Get-WDUnattendRunCommands {
         What makes the finished machine debloat itself: one specialize command
         and the SetupComplete.cmd it leaves behind.
 
-        This cannot be one command, and it cannot run from the installation
-        media, for two reasons that are easy to miss:
+        Two passes rather than one, for two reasons easy to miss:
 
-        - **The stick's drive letter is not knowable.** It is not always D:, it
-          moves depending on what else is attached, and it is not the same
-          letter in the specialize pass as it was in Windows PE. So the copy
-          step searches every drive for a marker file rather than assuming.
-        - **The stick may be gone by the time the run happens.** People pull it
-          out the moment Setup reboots. So the toolkit is copied onto the disk
-          during specialize, while the medium is certainly still attached, and
-          run from there afterwards.
+          - THE STICK'S DRIVE LETTER IS NOT KNOWABLE. Not always D:, and not the
+            same letter in specialize as in Windows PE. So the copy step searches
+            every drive for a marker file.
+          - THE STICK MAY BE GONE by the time the run happens - people pull it
+            the moment Setup reboots. So the toolkit is copied to disk during
+            specialize, while the medium is certainly attached, and run from
+            there. C:\Windows\Setup\Scripts survives the reboot between passes.
 
-        C:\Windows\Setup\Scripts is used because it is the folder Windows Setup
-        already reserves for exactly this, and it survives the reboot between
-        the passes.
+        SetupComplete.cmd, NOT FirstLogonCommands. Setup runs it as Local System
+        after Setup finishes and before the logon screen: no sign-in, no account
+        context, no UAC - so the run does not need the created account to be an
+        administrator, and nothing appears while somebody is using their new
+        machine. The trade is that session 0 has no desktop; see -SetupRun for
+        the report it writes instead.
 
-        **SetupComplete.cmd, not FirstLogonCommands.** Windows Setup runs
-        %WINDIR%\Setup\Scripts\SetupComplete.cmd on its own, as Local System,
-        after Setup finishes and before the logon screen appears. That is three
-        things at once: no sign-in, no account context, and no UAC - so the run
-        no longer depends on the account this file creates being an
-        administrator, and nothing appears on screen while somebody is trying to
-        use their new machine. The trade is real and is paid for elsewhere:
-        session 0 has no desktop, so there is no GUI and no progress. See
-        -SetupRun in WinSetupToolkit.ps1 for the report it writes instead and the
-        prompt it leaves for the first sign-in.
-
-        `-Console` is not optional and its absence was a bug. Without it the
-        script takes the GUI branch, and `-Apply` on that branch only opens the
-        window - so the old FirstLogonCommands entry launched the interface at
-        first sign-in and waited for somebody to press Preview. In session 0 it
-        would have waited forever behind an invisible window.
+        -Console IS NOT OPTIONAL. Without it the script takes the GUI branch,
+        where -Apply only OPENS the window - so the old FirstLogonCommands entry
+        waited for somebody to press Preview, and in session 0 would have waited
+        forever behind an invisible window.
     #>
     param($Options)
 
@@ -286,21 +270,15 @@ function New-WDUnattendPayloadShell {
 
 function Get-WDUnattendPayload {
     <#
-        Splits a set of manifest items into what an answer file can carry and
-        what it cannot, and is deliberately conservative about the difference.
+        Splits manifest items into what an answer file can carry and what it
+        cannot. All three exclusions are REPORTED, not dropped - a generator that
+        silently halves the plan is worse than one that refuses:
 
-        Three reasons an item is left out, and all three are reported rather
-        than dropped, because a generator that silently halves the plan is worse
-        than one that refuses:
-
-        - Its actions need a network or a signed-in user. winget installs and
-          vendor uninstallers are the whole of this group.
-        - It is a script handler. Those are arbitrary PowerShell against the
-          live machine and there is nothing to inline.
-        - It carries guards. A guard asks about the machine - its manufacturer,
-          its chassis, its Windows edition - and at the moment this file is
-          written that machine does not exist yet. Emitting the action anyway
-          would apply a Dell-only fix to a ThinkPad.
+          - needs a network or a signed-in user (winget, vendor uninstallers)
+          - is a script handler: arbitrary PowerShell, nothing to inline
+          - carries guards. A guard asks about the machine, and at the moment
+            this file is written that machine does not exist - emitting anyway
+            would apply a Dell-only fix to a ThinkPad.
     #>
     param([Parameter(Mandatory)]$Items)
 
@@ -466,13 +444,10 @@ function New-WDUnattendCommands {
         $cmds.Add('cmd /c netsh advfirewall firewall set rule group="remote desktop" new enable=Yes ^& exit /b 0')
     }
 
-    # Wi-Fi. This was collected by the form and then silently dropped - the
-    # options object had the fields and nothing ever read them, so somebody
-    # typed a network password into a box that did nothing with it.
-    #
-    # A profile written to disk and imported, rather than `netsh wlan connect`
-    # on its own: connect needs a profile to exist, and `add profile
-    # user=all` is what makes it the machine's rather than one account's.
+    # A profile written to disk and imported, not `netsh wlan connect` alone:
+    # connect needs a profile to exist, and `add profile user=all` is what makes
+    # it the machine's rather than one account's. Base64 because it is XML inside
+    # XML inside a command line.
     if ($Options.WifiSsid) {
         $ssid = ConvertTo-WDXmlText $Options.WifiSsid
         $hex  = (([System.Text.Encoding]::UTF8.GetBytes([string]$Options.WifiSsid) |
@@ -538,15 +513,10 @@ function New-WDUnattendCommands {
         $cmds.Add("reg unload $($script:WDDefaultHiveMount)")
     }
 
-    # Services and scheduled tasks. Both are ordinary command-line work and the
-    # answer file can carry them perfectly well; an earlier version reported
-    # them as impossible and dropped DiagTrack, the Xbox services and the CEIP
-    # tasks on that basis.
-    #
-    # Wrapped in cmd /c ... ^& exit /b 0 so a service or task that does not exist
-    # on this particular image cannot fail the pass. That matters more here than
-    # in a normal run: the answer file is written against a machine nobody has
-    # seen, so "not present" is the expected case, not an error.
+    # Wrapped in cmd /c ... ^& exit /b 0 so a service or task absent from this
+    # particular image cannot fail the pass. Matters more here than in a normal
+    # run: the file is written against a machine nobody has seen, so "not
+    # present" is the expected case rather than an error.
     foreach ($s in @($Payload.Service)) {
         $start = switch -Regex ([string]$s.StartupType) {
             'Disabled'  { 'disabled'; break }
@@ -573,13 +543,12 @@ function New-WDUnattendCommands {
         }
     }
 
-    # Optional features and capabilities. DISM against the running image rather
-    # than the offlineServicing pass: offlineServicing runs before the machine's
-    # own servicing stack is live, and a feature name that is wrong there fails
-    # the install outright instead of one line of it.
+    # DISM against the RUNNING image, not the offlineServicing pass: that runs
+    # before the machine's own servicing stack is live, where a wrong feature
+    # name fails the whole install rather than one line of it.
     #
-    # /NoRestart on every one. Without it DISM returns 3010 and Setup treats a
-    # reboot request mid-specialize as a reason to start over.
+    # /NoRestart on every one, or DISM returns 3010 and Setup treats a reboot
+    # request mid-specialize as a reason to start over.
     foreach ($f in @($Payload.Feature)) {
         $verb = $(if ($f.Enable) { '/Enable-Feature /All' } else { '/Disable-Feature' })
         $cmds.Add("cmd /c dism.exe /online $verb /FeatureName:$($f.Name) /NoRestart /Quiet ^& exit /b 0")
@@ -746,13 +715,11 @@ function New-WDUnattendXml {
         }
         $part = $(if ($gpt) { 3 } else { 2 })
         & $add "          <InstallTo><DiskID>$([int]$Options.DiskId)</DiskID><PartitionID>$part</PartitionID></InstallTo>"
-        # There was a "create a recovery partition" switch here for about an
-        # hour. It went because it did not do anything: Setup only creates a
-        # recovery partition when it is choosing the layout itself, and a
-        # DiskConfiguration block that names its partitions is the operator
-        # choosing it - WinRE then lands in C:\Recovery on the Windows volume
-        # either way. A control that cannot affect the file it writes is the
-        # exact failure the Wi-Fi fields were shipping.
+        # No "create a recovery partition" switch, deliberately: Setup only makes
+        # one when IT chooses the layout, and a DiskConfiguration block naming
+        # partitions is the operator choosing instead - WinRE lands in
+        # C:\Recovery either way. A control that cannot affect its own file is
+        # the same defect the Wi-Fi fields shipped with.
         & $add '        </OSImage>'
         & $add '      </ImageInstall>'
     } elseif ($Options.ImageName -or [int]$Options.ImageIndex -gt 0) {

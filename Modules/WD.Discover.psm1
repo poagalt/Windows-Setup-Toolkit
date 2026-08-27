@@ -99,19 +99,15 @@ $script:ProtectedVendorTools = @{
     generic   = @()
 }
 
-# Cross-vendor hardware tools that show up regardless of who built the machine.
+# Cross-vendor hardware tools, whoever built the machine.
 #
-# Intel's Extreme Tuning Utility is in here for the same reason the vendor power
-# tools are: it owns CPU voltage, turbo and thermal limits, and the profile it
-# last applied persists in firmware. Take it away and an undervolt or a raised
-# power limit stays in force with nothing left on the machine that can change
-# it. Several vendors rebadge it rather than shipping Intel's own installer -
-# this machine has Lenovo's, registered as `Install_Intel_IPF_XTU` under
-# `Program Files\Lenovo\Intel_SDK`, which matches none of the `Lenovo *` product
-# patterns above and was being offered for removal.
+# Intel XTU is here for the reason the vendor power tools are: it owns CPU
+# voltage, turbo, and thermal limits, and the profile it last applied PERSISTS IN
+# FIRMWARE - remove it and an undervolt stays in force with nothing left that can
+# change it. Vendors rebadge it, so the patterns have to cover more than Intel's
+# own installer name.
 #
-# Matched narrowly and never as a bare `*XTU*`: that also matches every product
-# with "texture" in its name.
+# Never a bare *XTU*: that matches every product with "texture" in its name.
 $script:ProtectedHardwareTools = @(
     'X-Rite*', 'Portrait Displays*', 'Logitech*', 'Logi Options*', 'LGHUB*'
     'Corsair iCUE*', 'SteelSeries*', 'Elgato*', 'Wacom*', 'Focusrite*', 'ASIO*'
@@ -148,14 +144,12 @@ function Test-WDPatternMatch {
 
 # =========================================================== presence ======
 #
-# Whether each curated item has anything to act on, worked out before the list
-# is drawn rather than discovered in the preview. An item that is not on this
-# machine is still worth showing - it says what the toolkit covers - but it is
-# not worth reading as a decision, so the row says so and steps back.
+# Whether each curated item has anything to act on, decided BEFORE the list is
+# drawn rather than in the preview. An item that is not on this machine still
+# earns a row - it says what the toolkit covers - but not as a decision.
 #
-# The whole pass is matching against inventories the startup scan has already
-# enumerated. It costs one scheduled-task walk and a handful of Test-Paths on
-# top of a scan that was happening anyway.
+# Pure matching against inventories the startup scan already enumerated, so it
+# costs one task walk and a handful of Test-Paths.
 
 function Get-WDTaskFacts {
     <#
@@ -243,30 +237,25 @@ function Get-WDMachineInventory {
 
 function Get-WDItemPresence {
     <#
-        Per item: is there anything here to act on, and roughly how much disk
-        does it hold. Returns a map of id -> @{Present; Bytes; Counted; Blind}.
+        Per item: is there anything here to act on, and roughly how much disk it
+        holds. Returns id -> @{Present; Bytes; Counted; Blind}.
 
-        Present is deliberately three-valued. $true and $false are answers;
-        $null is "no opinion", and it is what an item gets the moment any one of
-        its actions is a kind this cannot ask about. That is not a gap to close
-        later - it is the same rule the preview follows. A registry policy write
-        applies whether or not the app it disables is installed, so an item that
-        is half policy and half package is not a no-op just because the package
-        is missing, and graying it out would be a lie.
+        PRESENT IS THREE-VALUED. $true and $false are answers; $null is "no
+        opinion", which an item gets the moment any of its actions is a kind this
+        cannot ask about (registry, script, feature, capability, winget). A policy
+        write applies whether or not the app it disables is installed, so an item
+        that is half policy and half package is NOT a no-op because the package is
+        missing, and graying it would be a lie.
 
-        Bytes is what uninstalling would give back, from the size the installer
-        recorded in its uninstall key. Store packages have no readable size at
-        all - WindowsApps refuses administrators - so they are counted rather
-        than measured, which is what Blind reports.
+        Bytes comes from the size the installer recorded in its uninstall key.
+        Store packages have no readable size - WindowsApps refuses administrators
+        - so they are counted rather than measured, which is what Blind reports.
 
-        This asks "is there anything HERE", and it is deliberately not the same
-        question as "is there anything left to DO" - Test-WDActionSatisfied
-        answers that one, per action, for every kind including these. The two
-        differ on more than wording: a scheduled task a run has disabled is
-        still present and has nothing left to do to it, and a service that is
-        present may or may not already be at the start type the action wants.
-        Keeping them apart is what lets a row say "not on this machine" and
-        "already applied" as the different statements they are.
+        Asks "is there anything HERE", deliberately NOT "is there anything left to
+        DO" - Test-WDActionSatisfied answers that one. They differ: a task a run
+        has disabled is still present with nothing left to do to it. Keeping them
+        apart is what lets a row say "not on this machine" and "already applied"
+        as the different statements they are.
     #>
     param($Categories, $Inventory, $Profile)
 
@@ -278,18 +267,13 @@ function Get-WDItemPresence {
     $tasksOff = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
     foreach ($t in @($Inventory.TasksOff)) { $null = $tasksOff.Add([string]$t) }
 
-    # Plain nested loops, not pipelines, and this is the whole reason the pass
-    # is fast enough to run at startup. It was written as
-    # $appx | Where-Object { ... @(Get-Prop $a 'names') | Where-Object ... },
-    # which is a pipeline per package and a second pipeline plus a Get-Prop
-    # INSIDE it - 64 appx actions against 147 packages is nine and a half
-    # thousand scriptblock invocations for that one action type alone, and about
-    # a second of the launch. Parameter binding and pipeline setup are the cost
-    # here, never the comparison; it measures around 40 ms written this way.
-    # Same lesson as the icon geometry, which went from 817 ms to 6 ms for
-    # exactly this reason.
+    # NESTED LOOPS, NOT PIPELINES - this is why the pass can run at startup.
+    # Written as a Where-Object per package with a second pipeline inside it, 64
+    # appx actions against 147 packages was ~9,500 scriptblock invocations for
+    # one action type and about a second of the launch; this measures ~40 ms.
+    # Parameter binding and pipeline setup are the cost, never the comparison.
     #
-    # The program names are cast once, out here, rather than per item.
+    # Program names cast once, out here, rather than per item.
     $progNames = New-Object 'string[]' $progs.Count
     for ($i = 0; $i -lt $progs.Count; $i++) { $progNames[$i] = [string]$progs[$i].DisplayName }
 
@@ -583,22 +567,18 @@ function Get-WDOwningAppxPackage {
 
 function Get-WDAppxFacts {
     <#
-        Two things out of a package's own manifest, read together because they
-        cost one XML parse.
+        Two facts out of a package's manifest, read together because they cost
+        one XML parse.
 
-        Display: the name the package calls itself. Store packages are allowed
-        an opaque identity - Microsoft.4297127D64EC6 is the Minecraft Launcher -
-        and offering to remove something nobody can identify is not a choice
-        anyone can make. $null when the manifest adds nothing: an unresolved
-        ms-resource indirection, or the package name over again.
-
-        Listed: whether it puts anything in Start. A package that does not is
-        not an app somebody installed, it is a component something else
-        registered - the four PowerToys context-menu packages, VS Code's shell
-        integration, Office's actions server. Removing one on its own does not
-        uninstall anything, it breaks the app that owns it. $true when the
-        manifest cannot be read, so an unreadable package is still offered
-        rather than silently dropped.
+        Display  the name the package calls itself. Microsoft.4297127D64EC6 is
+                 the Minecraft Launcher, and nobody can decide about a row
+                 labelled with a hash. $null when the manifest adds nothing.
+        Listed   whether it puts anything in Start. One that does not is a
+                 component something else registered - the PowerToys
+                 context-menu packages, VS Code's shell integration - and
+                 removing it alone breaks the app that owns it. $true when the
+                 manifest cannot be read, so an unreadable package is still
+                 offered rather than silently dropped.
     #>
     param($Package)
     $facts = [pscustomobject]@{ Display = $null; Listed = $true }
@@ -915,13 +895,12 @@ function Get-WDDiscoveredSoftware {
 
     # ---- services belonging to installed software -------------------------
     #
-    # A service is not an independent thing: it belongs to a program, a package
-    # or to Windows, and it has to be classified as its owner is. Matching only
-    # the display name against the keep-list, and never against the manifest at
-    # all, offered Edge's three updater services as unrecognized third-party
-    # software while remove-edge was already disabling all three, and offered to
-    # disable the critical service behind a Lenovo Vantage that the same scan
-    # was busy protecting.
+    # A SERVICE IS NOT AN INDEPENDENT THING. It belongs to a program, a package,
+    # or to Windows, and must be classified as its owner is. Testing only the
+    # display name against the keep-list offered Edge's three updater services as
+    # unrecognized third-party software while remove-edge was already disabling
+    # them, and offered to disable the critical service behind a Lenovo Vantage
+    # the same scan was busy protecting.
     & $say 'Checking background services' 'Working out what each one belongs to'
     $discoveredPkgs = @(@($otherApps) + @($vendorApps) |
                         Where-Object { $_.Kind -eq 'appx' } | ForEach-Object { $_.Name })
@@ -1073,26 +1052,13 @@ function Get-WDIconPath {
 
     try {
         if ($Kind -eq 'appx') {
-            # One enumeration for every icon, not one query per icon - and the
-            # measurement here is worth recording honestly, because it does not
-            # say what the same change said in Get-WDRemovedItems.
-            #
-            # Per-name against one-enumeration-plus-lookups, three rounds each on
-            # this machine's 123 packages:
-            #
-            #     n= 3   per-name  305-343 ms    one enum  431-467 ms
-            #     n=10   per-name 1489-1916 ms   one enum  750-895 ms
-            #     n=25   per-name 2752-4578 ms   one enum  569-692 ms
-            #
-            # BREAK-EVEN IS ABOUT FOUR. This machine's scan turns up three appx
-            # icons, so here this form is roughly 130 ms SLOWER, and it is still
-            # the right one: the count is whatever the scan found and has no
-            # ceiling, the per-name form grows with it without bound, and the
+            # One enumeration, not one Get-AppxPackage -Name per icon.
+            # Break-even is about FOUR packages, and this machine's scan finds
+            # three - so here this form is ~130 ms slower and is still right: the
+            # count has no ceiling, the per-name form grows without bound, and the
             # worst this costs is one enumeration. A fixed 150 ms beats a slope.
             #
-            # Lazily, and cached for the process: a list with no Store apps in it
-            # should not enumerate them at all, which is the case that keeps the
-            # regression off machines that would only ever have paid it.
+            # Lazy and cached, so a list with no Store apps never pays it.
             if ($null -eq $script:AppxLocations) {
                 $script:AppxLocations = @{}
                 try {

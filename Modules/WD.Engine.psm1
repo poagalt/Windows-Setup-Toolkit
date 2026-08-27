@@ -157,22 +157,17 @@ $script:WDSections = @('remove', 'add', 'extras')
 
 function Get-WDItemSection {
     <#
-        'add' for anything that puts software on the machine, 'remove' for
-        everything else - which includes the settings changes, because they
-        exist to serve the removals and nobody looking for "what does this
-        install" wants to read about mouse acceleration. 'extras' is neither:
-        the standing commitments and the storage clean-ups, which are about the
-        machine rather than about the list.
+        'add' installs software, 'extras' is run behaviour and storage clean-ups,
+        'remove' is everything else - including the settings tweaks, since they
+        serve the removals.
 
-        An item can say so itself; otherwise its category answers for it. The
-        default is 'remove', so a manifest that has never heard of this field
-        keeps behaving exactly as before.
+        An item may say so itself; otherwise its category answers. Default
+        'remove', so a manifest predating the field behaves as before.
 
-        The accepted set is checked against $WDSections rather than written out
-        here, because it was written out here once - as 'add' and 'remove' - and
-        every category declaring itself 'extras' silently came back 'remove'.
-        Nothing errored: the rows appeared, in the wrong column, filed under the
-        wrong section filter.
+        Checked against $WDSections rather than a list written out here. It WAS
+        written out here, as 'add' and 'remove', and every category declaring
+        'extras' silently came back 'remove' - rows in the wrong column, filed
+        under the wrong filter, nothing errored.
     #>
     param($Item, $Category)
 
@@ -194,38 +189,28 @@ function Get-WDSectionNames {
 
 function Test-WDItemApplies {
     <#
-        Whether an item has anything at all to do on this machine.
+        Whether an item has anything at all to do on this machine. Three
+        conditions:
 
-        Two conditions, and the second is the one that used to be missing
-        everywhere but Resolve-WDPlan: the item's own guards must pass, AND at
-        least one of its actions' guards must pass. Guards sit on actions as
-        well as on items, so an item can clear its own guard and still be a
-        no-op here - "Block AI features from coming back" is two Enterprise-only
-        policy writes, and on Home it was listed, counted towards every preset,
-        and then silently dropped at run time by Resolve-WDPlan.
+          1. the item's own guards pass
+          2. at least one ACTION's guards pass. Guards sit on actions too, so an
+             item can clear its own and still be a no-op - "Block AI features
+             from coming back" is two Enterprise-only policy writes, and on Home
+             it was listed, counted into every preset, then silently dropped.
+          3. that action is not INERT. With -Inventory, an appx action whose every
+             match here is NonRemovable does not count: the package is there,
+             Windows owns it, and nothing removes it. A row that can only ever
+             report "Blocked: in-box" is worse than no row.
 
-        This is deliberately NOT the same question as "is the thing present".
-        An item whose target is already gone still belongs on the page: it tells
-        someone who set that up months ago that there is nothing left to do,
-        which is worth a row. An item that cannot do anything on this class of
-        machine tells them nothing and costs them a row.
+        Matching NOTHING is deliberately not inert - that is the "already gone"
+        case, and it keeps its row.
 
-        -Inventory adds the third condition, and it is the one a guard cannot
-        express. An `appx` action whose every match on THIS machine is flagged
-        NonRemovable is inert: the package is there, Windows owns it, and no
-        privilege, ownership change or policy removes it. "AI Fabric / Windows
-        AI Foundry runtime" is the case that forced this - on Home and Pro its
-        only removable route is an Enterprise-guarded deprovision, so the item
-        was listed, counted into two presets, ticked, and then reported
-        "Blocked: in-box component Windows refuses to remove" every single time.
-        A row that can only ever report that is worse than no row.
+        NOT the same question as "is the thing present". An item whose target is
+        already gone still belongs on the page; one that cannot act on this class
+        of machine costs a row and says nothing.
 
-        Matching nothing is NOT inert, deliberately - that is the "already gone"
-        case above, which keeps its row. Inert means matched-and-refused.
-
-        Optional because most callers have no inventory to hand and the answer
-        without one is the old two-condition answer, which is never wrong, only
-        less complete.
+        -Inventory is optional: without it the answer is the two-condition
+        answer, which is never wrong, only less complete.
     #>
     param($Item, $Profile, $Inventory)
 
@@ -428,22 +413,13 @@ function Resolve-WDPlan {
 
     # ---- the two steps nobody ticks ---------------------------------------
     #
-    # Leave no trace is the promise: what the operator marked for removal goes,
-    # and it does not come back. Both of these follow from the selection rather
-    # than sitting on top of it as extra choices, so both are appended here.
+    # Both follow from the selection rather than sitting on top of it as extra
+    # choices, which is why they are not rows: the run that most needed
+    # "close revival paths" was always the run where somebody had cleared it.
     #
-    # They were manifest rows until this release, and being rows was the defect.
-    # "Verify nothing will come back after a restart" wrote a report about
-    # reinstall paths instead of shutting them, and the run that most needed it
-    # was always the run where somebody had cleared the box. "Restart Explorer
-    # to apply shell changes" made a shell tweak that had already been written
-    # to the registry look like it had not worked, for anyone who unticked it.
-    #
-    # Appended to the plan rather than run behind it, so they are previewable,
-    # cancellable, journalled and reported exactly like every other step.
-    # Invisible work in a finally block is what this page's design exists to
-    # avoid, and a step the operator cannot see is not made better by being
-    # well intentioned.
+    # APPENDED TO THE PLAN, not run behind it in a finally, so they are
+    # previewable, cancellable, journalled, and reported like every other step.
+    # A step the operator cannot see is not made better by being well intentioned.
     if ($plan.Count) {
         # Every action type that can take software off the machine. The paths
         # closed below are all about apps coming back, so a run that only
@@ -958,18 +934,15 @@ function Save-WDSelection {
     param([string[]]$Selected, [string]$Path, $Options)
     $out = [ordered]@{ saved = (Get-Date).ToString('o'); selected = @($Selected) }
     if ($Options) {
-        # Written out whole, including any value that happens to equal the
-        # shipped default. The file is read on another machine, where "absent"
-        # already means "whatever this machine defaults to" - so omitting a
-        # deliberate choice because it currently matches a default would make the
-        # same file mean two different things on two machines.
+        # Written out whole, including values equal to the shipped default: the
+        # file is read on another machine, where "absent" means "whatever this
+        # machine defaults to", so omitting a deliberate choice makes one file
+        # mean two things.
         #
-        # Accounts stays three-valued through the file: null is EVERY account,
-        # which is what every caller predating the choice passes, an empty array
-        # is none, and a list is those. ConvertTo-Json writes null and [] as
-        # themselves, so the distinction survives a round trip - and it has to,
-        # because collapsing null into empty writes to no hive and collapsing
-        # empty into null writes to all of them.
+        # ACCOUNTS STAYS THREE-VALUED: null is EVERY account (what every caller
+        # predating the choice passes), [] is none, a list is those. Collapsing
+        # null into empty writes to no hive; collapsing empty into null writes to
+        # all of them. ConvertTo-Json round-trips both as themselves.
         $acct = $null
         if ($null -ne $Options.Accounts) { $acct = @($Options.Accounts | ForEach-Object { [string]$_ }) }
         $out['options'] = [pscustomobject][ordered]@{

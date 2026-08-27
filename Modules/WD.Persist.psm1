@@ -33,28 +33,25 @@ $script:EdgeGuids = @{
 
 # ------------------------------------------------ why Edge would not go ----
 #
-# `setup.exe --uninstall --force-uninstall` runs, exits non-zero, and leaves the
-# browser exactly where it was. Its own verbose log says why:
+# `setup.exe --uninstall --force-uninstall` exits non-zero and leaves the browser
+# where it was. Its own log says why:
 #
 #     edge_install_util.cc(274)] Stable is not uninstallable for process.
 #
-# Edge asks Windows whether it is allowed to be uninstalled at all, and Windows
-# answers from C:\Windows\System32\IntegratedServicesRegionPolicySet.json - the
-# file Microsoft added for the Digital Markets Act. The policy titled "Edge is
-# uninstallable." has `defaultState: disabled` and a list of about thirty-five
-# EEA regions where it is enabled. Outside those regions Edge is not removable
-# by anyone, which is why the Settings page has no Uninstall button there either.
+# Edge asks Windows whether it may be uninstalled at all, and Windows answers out
+# of System32\IntegratedServicesRegionPolicySet.json - Microsoft's Digital
+# Markets Act compliance data. The "Edge is uninstallable." policy has
+# defaultState: disabled plus ~35 EEA regions where it is enabled. Outside those,
+# nobody can remove Edge, which is also why Settings shows no Uninstall button.
 #
-# So the uninstall was never failing. It was being refused, and the toolkit was
-# reporting the refusal as an uninstaller that "did not fully remove the
-# browser" - true, and useless.
+# SO THE UNINSTALL WAS NEVER FAILING - it was being REFUSED, and the handler
+# reported that as an uninstaller which "did not fully remove the browser".
 #
-# Two ways round it. Editing that JSON means seizing a TrustedInstaller-owned
-# file in System32 and rewriting Microsoft's compliance data, which this toolkit
-# will not do. The other is the machine's own home region, which is an ordinary
-# per-user registry value with an ordinary undo: set it to an EEA country for
-# the length of the uninstall and put it straight back. Windows reads it when
-# setup.exe starts, so that is all the window it needs.
+# Two ways past it. Editing that JSON means seizing a TrustedInstaller-owned file
+# in System32 and rewriting Microsoft's compliance data; this toolkit will not.
+# The other is the home region, an ordinary per-user value with an ordinary undo:
+# set it to an EEA country for the length of the uninstall and put it back.
+# Windows reads it when setup.exe starts, so that is the whole window needed.
 $script:EdgeUninstallPolicyGuid = '{1bca278a-5d11-4acf-ad2f-f9ab6d7f93a6}'
 # Ireland. English-speaking, in the enabled list, and unambiguous in a log.
 $script:EdgeUninstallGeoId = 68
@@ -214,21 +211,17 @@ function Get-WDHeldAssociations {
         Every protocol and file type currently pointed at one of the given
         ProgIds, read out of this user's own UserChoice keys.
 
-        "Change default browser" is not a question about http. A browser that is
-        the default holds the web protocols AND the file types that open in a
-        browser - .htm, .html, .pdf, .svg, .xht, .webp and more, differing by
-        which browser and which Windows build - and moving http alone leaves
-        every one of those still opening in the browser somebody just replaced.
-        That is the state people describe as "I changed my default browser and
-        PDFs still open in Edge", and it is the honest scope of this item.
+        "Change default browser" IS NOT A QUESTION ABOUT HTTP. The default holds
+        the web protocols and the file types that open in a browser - .htm,
+        .pdf, .svg, .xht, .webp, varying by browser and build - and moving http
+        alone is the state people describe as "I changed my default browser and
+        PDFs still open in Edge".
 
-        Reads rather than assumes, for the same reason Get-WDBrowserRegistrations
-        does: the ProgIds are per-install on half the browsers in use, so a
-        hardcoded list of what Edge holds is wrong on any machine where somebody
-        has already moved one of them.
+        READ, never assumed: ProgIds are per-install on half the browsers in use,
+        so a hardcoded list of what Edge holds is wrong on any machine where
+        somebody has already moved one.
 
-        Returns @{ Url = @(...); File = @(...) } - the protocol names and the
-        extensions, each as Windows spells them.
+        Returns @{ Url = @(...); File = @(...) }, as Windows spells them.
     #>
     param([string[]]$ProgIds)
 
@@ -259,23 +252,19 @@ function Get-WDHeldAssociations {
 
 function Get-WDOrphanedAssociations {
     <#
-        Protocols and file types whose UserChoice still names a ProgId, but the
-        program behind that ProgId is gone.
+        Protocols and file types whose UserChoice still names a ProgId whose
+        program is gone.
 
-        This is the state a debloat run leaves behind and it is worse than a
-        wrong default: Windows tries to launch something that is not there, so
-        the type does not open at all and the error names nothing useful. The
-        run that removed Edge left .svg and .xml like this, and removing the
-        mail app left mailto like it - and none of them were caught, because
-        every check asked "which ProgId holds this" and the ProgId had not
-        changed.
+        Worse than a wrong default: Windows tries to launch something that is not
+        there, so the type does not open and the error names nothing useful. This
+        is a defect our OWN removals create - Edge left .svg and .xml like it,
+        the mail app left mailto - and nothing caught them, because every check
+        asked "which ProgId holds this" and the ProgId had not changed.
 
-        Deliberately not limited to browsers. An orphan is an orphan whoever
-        made it, and this is what lets the browser hand-over pick up mailto
-        after the mail app went, rather than only the types Edge held.
+        Deliberately not limited to browsers: an orphan is an orphan whoever made
+        it, which is what lets the browser hand-over pick up mailto.
 
-        Returns @{ Url = @(...); File = @(...) }, same shape as
-        Get-WDHeldAssociations, so the two can be unioned.
+        Same shape as Get-WDHeldAssociations, so the two can be unioned.
     #>
     $out = [pscustomobject]@{ Url = @(); File = @() }
     $urls  = New-Object System.Collections.Generic.List[string]
@@ -349,7 +338,7 @@ function Test-WDProgIdResolves {
 function Get-WDAssociationLock {
     <#
         Why Windows will not let this be set silently, in the order the locks
-        actually bite. All three are real and stack; see RESEARCH-NOTES.md.
+        actually bite. All three are real and they stack. Measured on 25H2.
 
         Answers a reason string, or '' when nothing is in the way. Deliberately
         does not try to defeat any of them.
@@ -385,16 +374,15 @@ function Set-WDDefaultBrowserBestEffort {
     <#
         Hand http, https and the web file types to a replacement browser.
 
-        There is no silent path on current Windows and this does not pretend
-        otherwise. Three locks stack - a Deny ACE on every FileExts UserChoice
-        key, the UCPD driver, and UserChoiceLatest - and the last has no public
-        algorithm, so writing a hash would either be refused or silently
-        discarded and leave the association pointing at nothing. See
-        RESEARCH-NOTES.md for the measurements.
+        THERE IS NO SILENT PATH ON CURRENT WINDOWS and this does not pretend
+        otherwise. Three locks stack: a Deny SetValue ACE on every FileExts
+        UserChoice key, the UCPD kernel filter driver, and UserChoiceLatest -
+        whose algorithm is not public, so a fabricated hash is either refused or
+        silently discarded, and a discarded one falls back to Edge.
 
-        So this does the two things that genuinely help. It reports precisely
-        why, naming the lock rather than "it failed". And it opens Default apps
-        at the right browser so the remaining step is one click.
+        So this does the two things that genuinely help: report precisely WHICH
+        lock is in the way rather than "it failed", and open Default apps at the
+        right browser so the rest is one click.
 
         The important part is WHEN it runs: before Edge is uninstalled, never
         after. With Edge gone and nothing holding the associations, every web
@@ -416,19 +404,16 @@ function Set-WDDefaultBrowserBestEffort {
     $current = Get-WDDefaultBrowserProgId
     $wanted  = [string]$pick.ProgIds['http']
 
-    # Everything the outgoing browser currently holds, not just http.
+    # Everything the outgoing browser holds, not just http - the complaint this
+    # item answers is the half-move, where the browser changes and .pdf and .svg
+    # go on opening in the old one. Read off the machine, then intersected with
+    # what the incoming browser has registered for, since Windows will not point
+    # a type at a program that never claimed it.
     #
-    # The whole complaint behind this item is the half-move: the browser
-    # changes, and .pdf, .svg and the rest go on opening in the one that was
-    # replaced. So the set is read off the machine - which types the browser
-    # being replaced actually owns right now - and intersected with what the
-    # incoming one is registered to take, because Windows will not point a type
-    # at a program that has not claimed it.
-    # The incoming browser's own ProgIds are excluded, or everything it already
-    # holds counts as work still to do: on a machine where Chrome already owned
-    # http, http came back in the "moving" list and the count read 9 when the
-    # real answer was 7. It also made "already holds everything it can take"
-    # unreachable, since that set can then never be empty.
+    # The incoming browser's own ProgIds are EXCLUDED, or everything it already
+    # holds counts as work to do - http came back in "moving" on a machine where
+    # Chrome already owned it, and "already holds everything it can take" became
+    # unreachable.
     $mine = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($v in @($pick.ProgIds.Values)) { if ($v) { $null = $mine.Add([string]$v) } }
 
@@ -450,32 +435,25 @@ function Set-WDDefaultBrowserBestEffort {
 
     $allHeld = @(@($held.Url) + @($held.File) + @($orph.Url) + @($orph.File) | Sort-Object -Unique)
     $moving  = @($allHeld | Where-Object { $takes.Contains([string]$_) })
-    # Types the outgoing browser holds that the incoming one has not registered
-    # for. Named separately because no amount of pressing Set default moves
-    # these - Windows only offers a type to a program that claimed it - so they
-    # are the ones somebody has to point somewhere by hand or leave where they
-    # are. Reporting them is the difference between a finished job and a job
-    # that looks finished.
-    # Scoped to what the outgoing BROWSER held, not to every orphan on the
-    # machine. A run that removes Media Player, Movies & TV and the mail app
-    # orphans seventy-odd media types, and listing those here would bury the
-    # handful this item is actually about under a wall of extensions it has
-    # nothing to say about. The orphans this one can take are in $moving; the
-    # rest belong to RepointOrphanedTypes.
+    # Types the outgoing browser holds that the incoming one never registered
+    # for. No amount of pressing Set default moves these, so somebody has to
+    # point them by hand - and naming them is the difference between a finished
+    # job and one that looks finished.
+    #
+    # Scoped to what the outgoing BROWSER held, not every orphan on the machine:
+    # a run that removes Media Player and Movies & TV orphans seventy-odd media
+    # types, which would bury the handful this item is about.
     $stranded = @(@($held.Url) + @($held.File) | Where-Object { -not $takes.Contains([string]$_) })
 
     # "Already the default" is a claim about the WHOLE set, not about http.
+    # Tested on http alone, a machine where Chrome already held it reported
+    # "already the default" and stopped while Edge went on holding .svg, .xml,
+    # and mailto - and the next step uninstalled Edge, leaving those three
+    # pointing at a program that no longer existed. The item that exists to
+    # prevent the half-move performed one.
     #
-    # This used to be tested on http alone, above, before any of the above was
-    # worked out - so a machine where Chrome already held http reported "Google
-    # Chrome is already the default" and stopped, while Edge went on holding
-    # .svg, .xml and mailto. Edge was then uninstalled by the very next step and
-    # those three were left pointing at a program that no longer existed. The
-    # item that exists to prevent the half-move performed one.
-    #
-    # Nothing left that the incoming browser could take is the real test. What
-    # it cannot take is $stranded, and no amount of pressing Set default moves
-    # those, so they must not hold this open forever - they are reported instead.
+    # The real test is nothing left that the incoming browser COULD take.
+    # $stranded must not hold it open forever, so those are reported instead.
     if ($wanted -and $current -and $current -eq $wanted -and -not $moving.Count) {
         $msg = "$($pick.Name) already holds everything it can take"
         if ($stranded.Count) {
@@ -818,15 +796,13 @@ Register-WDHandler 'RemoveEdge' {
         }
     }
 
-    # 6. Sweep the folders. The uninstaller leaves its own directory tree behind
-    #    on nearly every machine, and those trees are held open by processes that
-    #    restart themselves - which is why doing it by hand takes several rounds
-    #    of kill-then-delete. Remove-WDStubbornDirectory is that loop.
+    # 6. Sweep the folders. The uninstaller leaves its tree behind on nearly
+    #    every machine, held open by processes that restart themselves - which is
+    #    why Remove-WDStubbornDirectory is a kill-then-delete loop.
     #
-    #    EdgeWebView is deliberately NOT in this list. It is the WebView2
-    #    Runtime, a separate product that a lot of unrelated desktop software
-    #    embeds, and deleting it breaks those applications rather than the
-    #    browser. Same reasoning as the appx step above.
+    #    EdgeWebView IS DELIBERATELY NOT SWEPT: it is the WebView2 Runtime, a
+    #    separate product a lot of desktop software embeds, so deleting it breaks
+    #    those applications rather than the browser.
     $sweepRoots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) |
         Where-Object { $_ } | ForEach-Object { Join-Path $_ 'Microsoft' }
     $edgeProcs = @('msedge', 'msedgewebview2', 'MicrosoftEdgeUpdate', 'identity_helper',
@@ -836,16 +812,13 @@ Register-WDHandler 'RemoveEdge' {
     foreach ($root in $sweepRoots) {
         if (-not (Test-Path -LiteralPath $root)) { continue }
         # NOTHING THIS RUN PARKED. Block-WDEdgeReinstall renames EdgeUpdate to
-        # EdgeUpdate.wd-disabled a hundred lines above this, under the comment
-        # "Rename rather than delete, so the rollback story stays honest", and
-        # journals a rename back. That name matches ^Edge and is not the exact
-        # string 'EdgeWebView', so this sweep then deleted it - permanently, with
-        # a delayed-delete at reboot as the fallback - leaving a journal entry
-        # promising to restore a folder that no longer existed.
+        # EdgeUpdate.wd-disabled above and journals a rename back - and that name
+        # matches ^Edge without being 'EdgeWebView', so this sweep deleted it,
+        # permanently, leaving a journal entry promising a folder that was gone.
         #
-        # Excluded by the .wd-disabled suffix rather than by that one folder's
-        # name, because parking is the general mechanism: anything this toolkit
-        # parks is something it has already promised to be able to put back.
+        # Excluded by the .wd-disabled SUFFIX rather than that one folder's name:
+        # parking is the general mechanism, and anything this toolkit parks is
+        # something it has already promised it can put back.
         $doomed = @(Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue |
                     Where-Object { $_.Name -match '^(Edge|Copilot)' -and
                                    $_.Name -ne 'EdgeWebView' -and
@@ -1076,24 +1049,16 @@ function Get-WDGuardPaths {
     <#
         Where a guard's files live.
 
-        ENTRY IS A COPY UNDER Root, NOT THE TOOLKIT THAT IS RUNNING. It was the
-        live location - two Split-Paths up from this module - and that is wrong
-        for the way this tool is actually used: from a USB stick, on somebody
-        else's machine, once. The stick goes home in a pocket, and a SYSTEM
-        task pointing at E:\WinSetupToolkit\WinSetupToolkit.ps1 then fails its own
-        Test-Path and exits 0 at every boot, for ever, saying nothing. Worse,
-        the update guard went on stamping each new build as handled, so the one
-        event it exists for was permanently marked done without the re-apply
-        ever having run.
+        ENTRY IS A COPY UNDER Root, NOT THE RUNNING TOOLKIT. Pointed at the live
+        location, a SYSTEM task aimed at E:\WinSetupToolkit\... fails its own
+        Test-Path and exits 0 at every boot, silently, for ever - and the update
+        guard went on stamping each new build as handled outside that test, so the
+        one event it exists for was permanently ticked off with the re-apply never
+        having run. The stick goes home in a pocket; the folder gets tidied out of
+        Downloads, moved, renamed.
 
-        Copying is also the answer to the duller versions of the same thing -
-        the folder was in Downloads and got tidied up, or moved, or renamed.
-        Same reasoning as SetupComplete.cmd, which copies the toolkit off the
-        medium "while it is certainly still attached".
-
-        This function stays PURE: it names the paths and creates nothing.
-        Copy-WDToolkitForGuard is what fills them in, called by the two
-        installers before they register anything.
+        PURE: names the paths and creates nothing. Copy-WDToolkitForGuard fills
+        them in, called by both installers before they register anything.
     #>
     param($Context, [string]$Root)
     if (-not $Root) { $Root = $Context.Session.Root }
@@ -1113,22 +1078,19 @@ function Get-WDGuardPaths {
 
 function Copy-WDToolkitForGuard {
     <#
-        Put a copy of the toolkit somewhere a SYSTEM task can still find it
-        after the medium it was run from has gone. Answers $true when
-        $Paths.Entry exists afterwards, and nothing else may register a guard
-        until it does - a task pointing at a file nobody wrote is the failure
-        this whole mechanism has already had once.
+        Put a copy of the toolkit where a SYSTEM task can still find it after the
+        medium has gone. Answers $true only when $Paths.Entry exists afterwards,
+        and NOTHING MAY REGISTER A GUARD UNTIL IT DOES - a task pointing at a file
+        nobody wrote is a failure this mechanism has already had once.
 
-        Everything except .git and profile_saves, rather than a list of the
-        files the guard is known to need. A copy that has to be kept in step
-        with the module list is a copy that breaks the first time somebody adds
-        a file, silently, at somebody else's next sign-in. The saved selections
-        are left behind deliberately: the guard is handed one profile by path
-        and has no business carrying the rest of somebody's folder into
-        ProgramData.
+        Everything except .git and profile_saves, rather than the files a guard is
+        known to need: a copy kept in step with the module list breaks the first
+        time somebody adds a file, silently, at somebody else's next sign-in. The
+        saved selections stay behind deliberately - the guard is handed one
+        profile by path and has no business carrying the rest into ProgramData.
 
-        Refreshed rather than reused when it is already there, so installing a
-        guard from a newer build does not leave an older toolkit re-applying it.
+        Refreshed rather than reused, so a guard installed from a newer build does
+        not leave an older toolkit re-applying it.
     #>
     param([Parameter(Mandatory)]$Paths)
 
@@ -1300,20 +1262,17 @@ function Save-WDGuardProfile {
     <#
         What a guard re-applies later: the run's REMOVALS, and nothing else.
 
-        It used to be the whole plan minus three ids, and that was wrong in a
-        way nobody would notice until it happened. A guard fires unattended -
-        at sign-in, or after a feature update - and re-running the plan there
-        re-ran the Add section with it: winget installs, PowerToys, a
-        replacement browser, the quality-of-life shell tweaks. Somebody who
-        installed Firefox in March and removed it in June would find it back
-        after the next feature update, with no prompt and no obvious cause.
+        A guard fires unattended, at sign-in or after a feature update. Saving the
+        whole plan re-ran the Add section there too - winget installs, PowerToys,
+        a replacement browser, the shell tweaks - so somebody who installed
+        Firefox in March and removed it in June would find it back after the next
+        feature update, with no prompt and no obvious cause.
 
-        Removing something that has come back is idempotent and is the whole
-        point of a guard. Installing something again is not - it is a decision,
-        it was made once, and a background task is the last place to re-make it.
-        The same argument covers the shell tweaks: re-applying "File Explorer
-        opens to This PC" behind somebody who changed their mind about it is
-        the tool overruling them.
+        Removing something that came back is idempotent and is the whole point of
+        a guard. Installing something again is a DECISION, it was made once, and a
+        background task is the last place to re-make it. Same argument for the
+        shell tweaks: re-applying "Explorer opens to This PC" behind somebody who
+        changed their mind is the tool overruling them.
 
         Extras are dropped for the older reason: re-installing the guard from
         inside the guard is noise, and re-running the log cleaner unattended is
@@ -1370,14 +1329,13 @@ function Get-WDBrowserSizeMb {
 
 # ------------------------------------------------------ interface state ---
 #
-# What the person using this chose about the interface itself, as opposed to
-# what a run does: the theme, which preset they were on, the edits they have
-# made to a preset, and any preset they have redefined outright.
+# Choices about the interface rather than about a run: the theme, the last preset,
+# any preset redefined outright.
 #
-# Under LOCALAPPDATA rather than ProgramData. These are one person's
-# preferences, not the machine's; and the ProgramData root grants Users create
-# but not modify, so a file written by an elevated run cannot be rewritten by
-# an unelevated one - which is exactly what a settings file has to do.
+# LOCALAPPDATA, not ProgramData. These are one person's preferences - and the
+# ProgramData root grants Users create but not modify, so a file written by an
+# elevated run could never be rewritten by an unelevated one, which is exactly
+# what a settings file has to do.
 
 function Get-WDUiStatePath {
     Join-Path (Join-Path $env:LOCALAPPDATA 'WinSetupToolkit') 'ui-state.json'
