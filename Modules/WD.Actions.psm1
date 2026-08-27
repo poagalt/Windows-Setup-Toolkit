@@ -179,16 +179,10 @@ function Invoke-WDAppxAction {
                         $done = $true
                     } catch { $msg = $_.Exception.Message }
 
-                    # 0x80073D02 is the deployment stack saying the app is
-                    # running: "resources it modifies are currently in use". It
-                    # is the appx spelling of the failure the uninstaller path
-                    # already answers, and the answer is the same - close what
-                    # is holding it and ask again.
-                    #
-                    # Swept by the package's own folder under WindowsApps, which
-                    # is per-package and so names exactly this app's processes.
-                    # Only retried when something was actually closed; otherwise
-                    # the second call fails identically and says so twice.
+                    # 0x80073D02 = the app is running. Swept by the package's own
+                    # WindowsApps folder, which names exactly this app's
+                    # processes. Retried only if something was actually closed -
+                    # otherwise the second call fails identically, twice.
                     if (-not $done -and $kill) {
                         $under = [string](Test-WDSweepableRoot -Path $pkg.InstallLocation)
                         # ASSIGNED, NEVER WRAPPED. Stop-WDBlockers ends in
@@ -251,22 +245,15 @@ function Invoke-WDAppxAction {
     $inbox   = @($inbox   | Sort-Object -Unique)
     $errors  = @($errors  | Sort-Object -Unique)
 
-    # ASK REALITY BEFORE REPORTING A REFUSAL.
+    # ASK REALITY BEFORE REPORTING A REFUSAL. A refusal is a statement about one
+    # call, not about the outcome: the same package is reachable by several
+    # routes, so an API that said no can be followed by the thing being gone
+    # anyway. OneDriveSync reported "Protected by Windows" against a machine with
+    # no OneDrive left on it. That sends somebody after a problem that does not
+    # exist and teaches them Blocked cannot be believed.
     #
-    # A refusal from the deployment stack is a statement about one call, not
-    # about the outcome. The same package is reachable by more than one route -
-    # the installed copy, the provisioned entry, an overlapping pattern in this
-    # same action, and a vendor uninstaller in another item - so an API that
-    # said no can be followed by the thing being gone regardless. OneDriveSync
-    # did exactly that: 'Protected by Windows - cannot be removed even as
-    # administrator' against a machine with no OneDrive left on it anywhere.
-    #
-    # Reporting that is worse than saying nothing. It sends somebody after a
-    # problem that does not exist, and it teaches them that Blocked cannot be
-    # believed - which is the status this toolkit needs believed most.
-    #
-    # NonRemovable packages are excluded from the re-check on purpose: those are
-    # still present, still refused, and still worth a row.
+    # NonRemovable packages are excluded from the re-check: still present, still
+    # refused, still worth a row.
     if (-not $preview -and $blocked.Count) {
         $stillThere = $false
         foreach ($pattern in $names) {
@@ -615,22 +602,14 @@ function Invoke-WDUninstallAction {
     foreach ($t in $targets) {
         if ($Context.Preview) { $removed.Add($t.DisplayName); continue }
 
-        # Two sources, because one of them is not enough on its own.
+        # Two sources, because neither is enough alone. BY PATH covers the
+        # ordinary case and needs no authoring. BY NAME ("processes": [...]) is
+        # for a launcher living somewhere else entirely - Riot Client sits in
+        # C:\Riot Games\Riot Client, not in Valorant's folder, and no amount of
+        # sweeping the target's directory finds it.
         #
-        # Anything running out of the program's OWN folder is found by path. That
-        # needs no authoring and covers the ordinary case - a game or an
-        # application whose own executable is what holds its files.
-        #
-        # A launcher that lives somewhere else entirely has to be named, and that
-        # is the case this exists for: Riot Client sits in C:\Riot Games\Riot
-        # Client, not in Valorant's directory, and it is what stops Valorant
-        # being removed. No amount of sweeping the target's folder finds it, so
-        # an item carries a "processes" list for exactly this.
-        #
-        # An installer may have written a bare shared root into InstallLocation.
-        # Sweeping that would kill every running program on the machine rather
-        # than this one, so the path is checked before it is used, and a refusal
-        # leaves the named half still working.
+        # InstallLocation may be a bare shared root, so the path is checked
+        # before use; a refusal there leaves the named half still working.
         $root = ''
         if ($kill) {
             $root = [string](Test-WDSweepableRoot -Path $t.InstallLocation)
@@ -656,26 +635,19 @@ function Invoke-WDUninstallAction {
 
         $res = Invoke-WDProcess -FilePath $exe -ArgumentList @($args) -TimeoutSeconds $timeout
 
-        # The refusal is the second place closing things earns its keep, and it
-        # catches what the sweep before the attempt cannot: a launcher that
-        # restarted itself, a helper the uninstaller started, or a process that
-        # simply was not running yet when the first sweep went past.
+        # Second sweep, after a refusal: catches a launcher that restarted
+        # itself, or a helper the uninstaller started.
         #
-        # Only retried when this sweep actually closed something NEW. A second
-        # identical run of an uninstaller that failed for some other reason is
-        # ten more minutes of the same answer, and on an uninstaller that shows
-        # UI it is a second dialog nobody asked for. A timeout is not retried at
-        # all - the first one may still be working, and starting a second
-        # uninstaller over the top of it is how a half-removed program happens.
+        # RETRIED ONLY IF THIS SWEEP CLOSED SOMETHING NEW. Otherwise the second
+        # attempt fails identically, costs the whole runtime again, and on an
+        # uninstaller that shows UI puts up a second dialog. A TIMEOUT IS NEVER
+        # RETRIED - the first may still be working, and a second uninstaller over
+        # the top of it is how a half-removed program happens.
         if ($kill -and -not $res.TimedOut -and $res.ExitCode -notin @(0, 3010, 1605)) {
-            # ASSIGNED, NEVER WRAPPED IN @(). This is the site where it cost the
-            # most: Stop-WDBlockers ends in ,@(...), so @() around its pipeline
-            # output gave Count 1 whether it had closed anything or not, and
-            # every uninstaller that exited non-zero was therefore run a SECOND
-            # time - the doubled runtime, the second dialog on an uninstaller
-            # that shows UI, and a log line reading "System.Object[] was closed
-            # and it is being retried". All three are what the comment above
-            # says this guard exists to prevent.
+            # ASSIGNED, NEVER WRAPPED IN @(). Stop-WDBlockers ends in ,@(...), so
+            # @() around it gives Count 1 whether it closed anything or not - and
+            # every uninstaller that exited non-zero then ran a SECOND time. All
+            # three costs the guard above exists to prevent.
             $again = Stop-WDBlockers -Path $root -AlsoNamed $killNamed `
                          -Because "$($t.DisplayName) could be uninstalled on a second attempt"
             if ($again.Count) {
@@ -768,25 +740,19 @@ function Test-WDRegistryValueSet {
     <#
         One value, one hive: is it already what the action would write?
 
-        The TYPE has to agree as well as the number, and that is not fussiness.
-        Get-ItemProperty hands back whatever .NET type the value is stored as,
-        so a policy written as REG_SZ "1" where this action wants a REG_DWORD 1
-        compares equal after a cast and is a different value as far as Windows
-        is concerned - the thing reading it looks for a DWORD and finds none.
-        Answering "already set" there would gray out the row that fixes it, and
-        (since the executor now asks this same question) skip the write that
-        fixes it.
+        THE TYPE HAS TO AGREE AS WELL AS THE VALUE. A policy stored as REG_SZ "1"
+        where the action wants REG_DWORD 1 compares equal after a cast and is a
+        different value to Windows - whatever reads it looks for a DWORD and finds
+        none. Answering "already set" there skips the write that fixes it.
 
-        The type check is a cast test rather than a call to GetValueKind,
-        because the value is already in hand: one property read answers both
-        halves and GetValueKind would be a second trip to the registry for
-        every value of every opt-in item while the window is being built.
+        A cast test rather than GetValueKind, because the value is already in
+        hand and this runs for every value of every opt-in item while the window
+        is built.
 
-        REG_EXPAND_SZ is the one case that always answers false: Get-ItemProperty
-        returns it expanded, so "%SystemRoot%\x" never equals "C:\Windows\x" and
-        the action is reported as outstanding. That is the safe direction - it
-        writes a value that was already correct - and it is not worth a second
-        read of every string value on the machine to sharpen.
+        ExpandString always answers false: Get-ItemProperty returns it expanded,
+        so "%SystemRoot%\x" never equals "C:\Windows\x". Safe direction (it
+        rewrites a correct value) and not worth a second read of every string
+        value on the machine to sharpen.
     #>
     param([string]$Full, [string]$Name, $Data, [string]$Kind, [bool]$Delete)
 
@@ -826,18 +792,14 @@ function Test-WDServiceActionSatisfied {
     <#
         Is every service this action names already where it would put it?
 
-        Deliberately reads the same two fields Invoke-WDServiceAction compares -
-        StartType, and Status when the action also stops the service - because a
-        probe that asks a different question from the executor answers about a
-        different machine.
+        Reads the same two fields Invoke-WDServiceAction compares - StartType,
+        and Status when the action also stops the service. A probe asking a
+        different question from the executor answers about a different machine.
 
-        A pattern that matches nothing answers FALSE, and that is the careful
-        direction rather than the obvious one. The executor would report
-        NotPresent, which is a success, so "nothing to do" is arguable - but the
-        tag this feeds says "already applied", and claiming a machine is already
-        set up a certain way because the service was never on it is a different
-        statement and not a true one. An item whose targets are genuinely absent
-        is answered by Get-WDItemPresence, in those words.
+        A pattern matching NOTHING answers false, which is the careful direction:
+        the tag this feeds says "already applied", and claiming that because the
+        service was never here is a different statement and not a true one.
+        Genuinely absent targets are Get-WDItemPresence's job.
     #>
     param($Action)
 
@@ -911,20 +873,15 @@ function Invoke-WDRegistryAction {
     $scope   = [string](Get-Prop $Action 'scope' 'machine')
     $values  = @(Get-Prop $Action 'values' @())
     $written = 0; $errors = New-Object System.Collections.Generic.List[string]
-    # Values that are already exactly what this would write. Counted, never
-    # written, and reported as a distinct outcome.
+    # Values already exactly what this would write. Counted, never written,
+    # reported as AlreadySet. The preview path was once
+    # `if ($Context.Preview) { $written++; continue }` - every value a change
+    # without ever being read, so previewing a just-applied selection promised
+    # 121 changes over a machine where all 121 were already true.
     #
-    # The preview path used to be `if ($Context.Preview) { $written++; continue }`
-    # - every value counted as a change without the value ever being read. So a
-    # preview of a selection that had just been applied to this machine reported
-    # a hundred and twenty-one items to change, all of which were already true,
-    # which is exactly the noise that teaches somebody to stop reading previews.
-    #
-    # Asked in apply too, not only in preview. Two reasons, and the second is
-    # the load-bearing one: writing a value that already holds it is work and a
-    # journal entry for nothing, and - if preview and apply asked different
-    # questions - a page of grey rows would turn green the moment somebody
-    # pressed the button, which is worse than either answer on its own.
+    # ASKED IN APPLY TOO, and that half is load-bearing: if the two asked
+    # different questions, a page of grey rows would turn green the moment
+    # somebody pressed the button.
     $already = 0
 
     # Build the list of hive roots this action applies to.
@@ -976,17 +933,14 @@ function Invoke-WDRegistryAction {
                 # to make the window build fast, not to make a run fast.
                 Clear-WDRegistryProbeCache
 
-                # The value, not a rendering of it. This used to wrap a string
-                # in single quotes here, so the journal held a PowerShell
-                # literal that Export-WDUndoScript then interpolated unquoted -
-                # which put the escaping in the one place nothing could check it.
-                # A previous value containing an apostrophe produced a rollback
-                # script that stopped parsing at that line; a MultiString one
-                # came out as the text "System.String[]"; and Get-WDUndoStatus,
-                # comparing "'Allow'" against the machine's Allow, reported
-                # every string value as still outstanding after a rollback that
-                # had already put it back. Rendering belongs to the emitter, and
-                # `raw` is what tells it this entry holds a value.
+                # THE VALUE, NOT A RENDERING OF IT. Quoting the string here put
+                # a PowerShell literal in the journal for the emitter to
+                # interpolate unquoted - so an apostrophe broke the rollback
+                # script's parse, a MultiString became "System.String[]", and
+                # Get-WDUndoStatus compared "'Allow'" against Allow and reported
+                # every string value outstanding after a rollback that had
+                # already restored it. Rendering belongs to the emitter; `raw`
+                # tells it this entry holds a value.
                 $prev = '__ABSENT__'
                 if (Test-Path -LiteralPath $full) {
                     $existing = Get-ItemProperty -LiteralPath $full -Name $name -ErrorAction SilentlyContinue
@@ -1112,15 +1066,10 @@ function Invoke-WDServiceAction {
         $svcs = @(Get-Service -Name $pattern -ErrorAction SilentlyContinue)
         foreach ($svc in $svcs) {
             $found = $true
-            # THE ONE THING NO OPTION GETS TO DO. Asked here, on the resolved
-            # service name, so a wildcard in a manifest cannot reach one of
-            # these by accident - 'Xbox*' is matched against the machine before
-            # anything arrives at this line.
-            #
-            # Refused in preview as well as in apply, and that half is
-            # load-bearing: a preview promising to disable a service the apply
-            # will refuse is a preview that stops being worth reading, which is
-            # the same argument AlreadySet exists under.
+            # THE ONE THING NO OPTION GETS TO DO. Asked on the RESOLVED name, so
+            # a manifest wildcard cannot reach one sideways. Refused in preview
+            # as well as apply - a preview promising what the apply will refuse
+            # is the defect AlreadySet exists to fix.
             if (Test-WDCriticalService -Name $svc.Name) {
                 $refused.Add($svc.Name)
                 Write-WDLog ("Refused to change $($svc.Name): it is on the toolkit's critical-service " +
@@ -1130,15 +1079,11 @@ function Invoke-WDServiceAction {
                 continue
             }
             if ($Context.Preview) {
-                # ServiceController carries StartType on .NET 4.6.1 and above,
-                # which is every machine this runs on, and it is already in hand.
-                # The CIM query the apply path uses costs tens of milliseconds
-                # per service and there are enough service actions in the
-                # manifest to make that seconds of a preview - and the apply
-                # path needs the CIM record anyway, for the process id.
-                #
-                # A StartType this cannot read is $null, compares unequal, and
-                # is reported as a change. That is the safe direction.
+                # ServiceController already carries StartType, and the CIM query
+                # the apply path uses costs tens of ms per service - enough
+                # service actions to make that seconds of a preview. An
+                # unreadable StartType is $null, compares unequal, and reports as
+                # a change: the safe direction.
                 $cur = $null
                 try { $cur = [string]$svc.StartType } catch { }
                 if ($cur -eq $target -and $svc.Status -ne 'Running') { $already.Add($svc.Name) }
@@ -1168,17 +1113,14 @@ function Invoke-WDServiceAction {
                 if ($stop -and $svc.Status -eq 'Running') {
                     Stop-Service -Name $svc.Name -Force -ErrorAction SilentlyContinue
 
-                    # A service that refuses to stop is the stubborn case here,
-                    # and the startup type alone does not answer it: Disabled
-                    # takes effect at the next boot, so until then the thing the
-                    # operator ticked a row to stop is still running and still
-                    # doing it. Closing its process is the same answer the
-                    # uninstaller and the file sweep give, under the same switch.
+                    # Disabled only takes effect at the next boot, so until then
+                    # the thing somebody ticked a row to stop is still running.
                     #
-                    # Never a shared host. Most of the services on the machine
-                    # run inside one svchost.exe, so killing it to stop one of
-                    # them takes the others with it - which is not a trade this
-                    # gets to make on somebody's behalf.
+                    # NEVER A SHARED HOST. Most services on the machine live in
+                    # one svchost.exe, so killing it to stop one takes the others
+                    # with it. Checked on PathName, and the CIM record is re-read
+                    # per service - inheriting the previous one's pid would kill
+                    # something else entirely.
                     if ($kill) {
                         try { $svc.Refresh() } catch { }
                         if ($svc.Status -eq 'Running' -and $wmi -and
@@ -1619,34 +1561,27 @@ function Invoke-WDShortcutAction {
 
 # ===================================================== symptom synonyms ====
 #
-# The lookup document is only worth as much as the phrase somebody happens to
-# type, and nobody types the phrase that was authored. "app cannot see my name"
-# is written down; what gets typed is "app can't see my name", "app doesnt see
-# my name", "cant access account info". One missing spelling and the document
-# answers nothing at all for that person, having been right the whole time.
+# The manifest carries SEED phrases; this generates the rest. Nobody types the
+# phrase that was authored - "app cannot see my name" is written down, and what
+# gets typed is "app can't see my name", "cant access account info". One missing
+# spelling and the document answers nothing for that person.
 #
-# So the manifest carries SEEDS and this generates the rest. Generated rather
-# than authored for the same reason Get-WDItemMechanics is: an authored list of
-# a thousand contractions is a thousand things to keep in step with the phrases
-# they came from, and the first item added after this is written would have
-# none of them. Every item gets the same treatment, including one added
-# tomorrow, and there is nothing to forget.
+# Generated rather than authored so an item added tomorrow gets the same
+# treatment and there is nothing to forget.
 #
-# Three families, applied in that order, most useful first:
+# Four families, most useful first:
 #
-#   TAILS   the phrase ends in a state word, so the rest of it is the subject
-#           and the subject can be recast. "account info blocked" gives up
-#           "account info", and out come "cannot access account info",
-#           "account info access denied", "cannot view account info".
-#   VERBS   a verb pair somewhere in the middle. "cannot see" also gets typed
-#           as "does not see", "cannot find", "does not have".
-#   SPELLING every contraction both ways, plus the apostrophe-free form. This
-#           is the cheapest family and probably the most valuable: "cant",
-#           "doesnt" and "wont" are what people actually type into a search box.
+#   TAILS     phrase ends in a state word, so the rest is a subject that can be
+#             recast: "account info blocked" -> "cannot access account info".
+#   LEADS     phrase starts with one: "no tips" -> "tips missing". Without this,
+#             82 of 276 items produced no variants at all.
+#   VERBS     a verb pair in the middle: "cannot see" -> "does not see".
+#   SPELLING  every contraction both ways plus the apostrophe-free form.
+#             Cheapest and probably most valuable - "cant" and "doesnt" are what
+#             people type.
 #
-# All lower case, because Notepad's Find is case-sensitive only if you ask and
-# the authored phrases are lower case already. Nothing over seventy characters:
-# past that it is a sentence, and nobody searches with a sentence.
+# Lower case throughout, and nothing over seventy characters: past that it is a
+# sentence, and nobody searches with a sentence.
 
 # The state word a phrase ends in, and what its subject can be recast as.
 # {0} is the phrase with the tail removed.
@@ -1892,15 +1827,12 @@ function Expand-WDSymptoms {
     $out.ToArray()
 }
 
-# What each script handler does, in one plain sentence that names the place it
-# acts on. Authored, and it has to be: the handler name is a function name, and
-# "A step in code rather than one setting: ClearDeliveryOptimization" told
-# somebody reading the detail dialog nothing at all - not what it is, not where
-# it lives, not how they would do it themselves.
+# One plain sentence per script handler, naming the place it acts on. Authored
+# because a handler name is a function name: "A step in code rather than one
+# setting: ClearDeliveryOptimization" told a reader nothing.
 #
-# Kept here beside the renderer rather than beside the handlers, so adding a
-# line is one edit in the file that reads it. The self test fails if a
-# registered handler has no note, which is the guard that makes that safe.
+# Beside the renderer rather than the handlers, so adding a line is one edit in
+# the file that reads it. The self test fails a registered handler with no note.
 $script:WDHandlerNotes = @{
     'CleanComponentStore'     = 'Runs DISM /StartComponentCleanup, which discards the superseded copies of Windows components kept under C:\Windows\WinSxS. The same thing Disk Cleanup calls Windows Update Cleanup.'
     'ClearActivityTraces'     = 'Clears the recent-items lists Windows keeps: jump lists, Quick Access, the Run box history, and the Registry Editor last key and favourites.'
@@ -1945,18 +1877,15 @@ $script:WDHandlerNotes = @{
     'VerifyShellHealth'       = 'Checks that Explorer, the Start menu, and the search host are running after the run. Changes nothing.'
 }
 
-# Handlers that ride along behind another action in the same item rather than
-# being the item. They change nothing, so an item whose every other action has
-# gone inert has nothing left to do, and Test-WDItemApplies drops it.
+# Handlers that ride along behind another action rather than BEING the item.
+# They change nothing, so an item whose other actions have gone inert has
+# nothing left to do and Test-WDItemApplies drops it.
 #
-# Not every handler that changes nothing belongs here, and the distinction is
-# the whole point. `VerifyDefender` also changes nothing and is deliberately
-# NOT in this list, because it IS its item - "Confirm Defender took back over"
-# is a row somebody can want on its own, and there is no removal for it to be a
-# rider on. `VerifyShellHealth` exists only because CoreAI removal can take
-# Explorer with it. Kept as a list rather than inferred from the "Changes
-# nothing." sentence above: that sentence is prose for the operator, and
-# rewording it must not silently change what gets listed.
+# Not every handler that changes nothing belongs here, and that is the point.
+# VerifyDefender changes nothing either and is deliberately NOT listed, because
+# it IS its item - "Confirm Defender took back over" is a row somebody can want
+# on its own. A list rather than inferred from the prose above: rewording an
+# operator-facing sentence must not silently change what gets listed.
 $script:WDPassiveHandlers = @('VerifyShellHealth')
 
 function Get-WDHandlerNote {
@@ -2009,30 +1938,24 @@ function Get-WDItemConsoles {
 
 function Get-WDItemMechanics {
     <#
-        What an item actually does to the machine, in plain lines, derived from
-        its own actions.
+        What an item does to the machine, in plain lines, derived from its own
+        actions.
 
-        Generated rather than authored, and that is the point: these are the
-        same fields the executors read, so the description cannot drift from
-        what happens. An authored "this writes X" is a second copy of a fact,
-        and the copy goes wrong the first time somebody edits the action and
-        not the prose.
+        GENERATED, not authored: these are the same fields the executors read, so
+        the description cannot drift from what happens. An authored "this writes
+        X" is a second copy of a fact, and the copy goes wrong the first time
+        somebody edits the action and not the prose.
 
-        Three things come off the item itself, because no amount of reading the
-        actions can produce them:
+        Three fields come off the item itself, because reading the actions cannot
+        produce them:
 
-        - settingsPath  where the same thing can be changed by hand, and only
-                        where a page for it genuinely exists. A hand-written
-                        path to a setting Windows has no page for is a fiction,
-                        and Microsoft moves the pages that do exist most
-                        releases - so this is authored for the few dozen items
-                        where it is both true and stable, and absent elsewhere.
-        - symptoms      what somebody would say if this turned out to be the
-                        cause of a problem weeks later, in their own words.
-                        Written for the failure moment; riskNote is written for
-                        the decision moment and reads nothing like it.
-        - mechanics     an override line for the handful of script handlers
-                        whose name says nothing useful on its own.
+          settingsPath  where to change the same thing by hand, and only where a
+                        page genuinely exists. Authored for the few dozen items
+                        where it is both true and stable.
+          symptoms      what somebody would say weeks later if this turned out to
+                        be the cause. Written for the failure moment; riskNote is
+                        written for the decision moment.
+          mechanics     an override for script handlers whose name says nothing.
     #>
     param(
         [Parameter(Mandatory)]$Item,
@@ -2242,15 +2165,12 @@ function Get-WDItemMechanics {
         Symptoms = @(Get-Prop $Item 'symptoms' @())
         RiskNote = [string](Get-Prop $Item 'riskNote' '')
         Revert   = (Get-WDItemRevertibility -Item $Item)
-        # Which consoles this item's changes can be reached through by hand,
-        # for the one-line pointer the readable record carries. The full steps
-        # are Get-WDItemRevertRoutes' job and live in the lookup document; two
-        # copies of a numbered procedure is one copy plus a way to disagree.
+        # Consoles this item's changes are reachable through by hand, for the
+        # one-line pointer. Full steps are Get-WDItemRevertRoutes' job.
         #
-        # Keys, not just a label, so a caller can tell whether the item's own
-        # authored settingsPath already named this console. Several do - "Task
-        # Scheduler, or undo the run" - and appending "By hand in Task
-        # Scheduler (taskschd.msc)" to that is the sentence saying itself twice.
+        # Carries Keys as well as a label, so a caller can tell whether the
+        # item's own settingsPath already named this console - several do, and
+        # appending it again is the sentence saying itself twice.
         Consoles = (Get-WDItemConsoles -Item $Item)
     }
 }
@@ -2310,27 +2230,21 @@ function Format-WDHivePath {
 
 function Get-WDItemRevertRoutes {
     <#
-        Every way one option can be put back, each one as steps somebody can
-        follow, narrowest first.
+        Every way one option can be put back, as followable steps, narrowest
+        first.
 
-        The manifest's settingsPath is one route and was the only one printed.
-        For an item that writes three policy values and has no Settings page,
-        that left "undo the run" as the whole of the advice - which is a
-        sledgehammer for one nail, and untrue besides: anybody can open regedit
-        and put a value back, and this run recorded exactly what it was.
-
-        THE PREVIOUS VALUES COME FROM THE JOURNAL, not the manifest. The
-        manifest knows what was written and cannot know what was there before,
-        so a document built from it alone can say "set it to 0" and never "set
-        it back to 1". The journal has both, and by the time the lookup
-        document is written it holds every entry this run made.
+        THE PREVIOUS VALUES COME FROM THE JOURNAL, not the manifest. The manifest
+        knows what was written and cannot know what was there before, so a
+        document built from it alone says "set it to 0" and never "set it back
+        to 1". By the time the lookup document is written (order 9990) the
+        journal holds every entry the run made.
 
         With no journal - a preview, or the self test - the registry route is
-        still emitted, because knowing WHERE the value lives is most of it, and
-        it says plainly that the previous value is in the rollback script
-        rather than inventing one.
+        still emitted, because knowing WHERE the value lives is most of it, and it
+        says the previous value is in the rollback script rather than inventing
+        one.
 
-        The two blunt instruments go last and are always offered. Somebody who
+        The two blunt instruments go last and are always offered: somebody who
         wanted the whole run gone would not be reading one option's entry.
     #>
     param($Item, $JournalEntries = @())

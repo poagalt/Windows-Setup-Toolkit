@@ -6,35 +6,28 @@
     exports taken before any key is touched.
 #>
 
-# StrictMode is deliberately off across the toolkit: journal and manifest data
-# arrives as JSON with many optional properties, and a missing property must
-# degrade rather than abort a run that is halfway through modifying a machine.
+# StrictMode is deliberately OFF toolkit-wide: manifest and journal data is JSON
+# full of optional properties, and a missing one must degrade rather than abort a
+# run that is halfway through changing a machine.
 #
-# Collections use List[psobject], never List[object]. On Windows PowerShell 5.1
-# the array subexpression @($list) throws "Argument types do not match" when the
-# generic argument is exactly System.Object - List[psobject], List[string] and
-# ArrayList are all unaffected. Do not "simplify" these back to List[object].
+# List[psobject], never List[object]. On PS 5.1, @($list) throws "Argument types
+# do not match" when the generic argument is exactly System.Object.
+# List[psobject], List[string], and ArrayList are all fine. Do not "simplify".
 
 $script:Session = $null
 
-# Status vocabulary shared by every action executor. Anything not in this list
-# is a bug. 'NotPresent' is deliberately a success state - on a fresh install
-# most of the removal list will legitimately not exist.
+# Status vocabulary shared by every executor. Anything not in this list is a bug.
+# Three of the nine are worth spelling out:
 #
-# 'AlreadySet' is the other success nobody expects to need until they see the
-# alternative. A registry value that is already the value this option would
-# write is not absent, so NotPresent is a lie about it, and it is not Changed
-# either - nothing happened. Reporting it as either one is what made a preview
-# of a selection that had just been applied claim a hundred and twenty-one
-# changes over a machine where every one of them was already true.
-#
-# 'Obstruction' is not an outcome for a removal at all. It is something in the
-# way: a subsystem this run depends on that is degraded, or a step Windows will
-# not let any program complete silently and hands to the operator instead.
-# Those used to report Blocked, which put "changing the default browser" and
-# "component store" in the same column as a package Windows refused to remove -
-# and Blocked has a specific meaning worth keeping, namely that this run tried
-# to do something and was told no.
+#   NotPresent   a success. On a fresh install most of the list is absent.
+#   AlreadySet   also a success. The target is here and is ALREADY what this
+#                option would make it - neither absent nor changed. Without it,
+#                previewing a selection just applied claimed 121 changes over a
+#                machine where every one was already true.
+#   Obstruction  not an outcome for a removal at all: something in the way. A
+#                degraded subsystem, or a step Windows hands to the operator.
+#                Blocked keeps its narrower meaning - this run tried and was
+#                told no - which is why these are not that.
 $script:StatusOrder = @{
     Removed     = 0   # target existed and is gone
     Changed     = 1   # setting written
@@ -49,24 +42,16 @@ $script:StatusOrder = @{
 
 # ------------------------------------------------------- native, and when ----
 #
-# EVERY Add-Type IN THIS TOOLKIT IS A CSC INVOCATION, AND ONE COSTS ABOUT 400 ms.
-# There were four, three of them at module-import time, and together they were
-# most of the two and a half seconds between the launcher exiting and anything
-# appearing on screen. Nothing about them is fast: the first compile in a
-# process pays for loading the compiler, and each one after it still pays
-# 150-200 ms of its own. Reflection.Emit was measured as an alternative and is
-# no better - 240-375 ms, for the same reason, one subsystem loading once.
+# EVERY Add-Type IS A CSC RUN: ~400 ms for the first in a process, 150-200 for
+# each after. Three at import time were most of the 2.5s before anything reached
+# the screen. Reflection.Emit is no better (240-375 ms, same cause).
 #
-# So: one shared type for the two the startup path actually needs, compiled on
-# a runspace of its own while the main thread goes on importing modules, and
-# everything else deferred to the moment something reaches for it.
-#
-# The two here are the ones that cannot wait. GetSystemMetrics answers the touch
-# question in the machine profile, and the AppUserModelID has to be set before
-# the first window is created or the taskbar draws PowerShell's icon whatever
-# Window.Icon says. The two heavyweights - WDPriv for ownership escalation and
-# WDDisk for the drive walk - are compiled by their own first caller, which on
-# a normal launch is a background runspace or a run that has already started.
+# So one shared type holds only what the startup path cannot defer -
+# GetSystemMetrics for the touch guard, and the AppUserModelID, which must be
+# set before the first window exists or the taskbar draws PowerShell's icon
+# whatever Window.Icon says - compiled on its own runspace while the main thread
+# imports modules. WDPriv (ownership) and WDDisk (drive walk) are compiled by
+# their own first caller.
 $script:WDNativeSource = @'
 using System;
 using System.Runtime.InteropServices;
@@ -150,16 +135,9 @@ function New-WDResult {
         [string]$Status,
         [string]$Message = '',
         [string]$Detail  = '',
-        # What had to be done differently for this to work. Set only when a
-        # first attempt was refused and a second route succeeded.
-        #
-        # The status is then a SUCCESS status and stays one. An outcome that was
-        # reached is not Blocked, however it was reached, and reporting the
-        # refusal that happened along the way puts a red row on the page for
-        # something that worked - which teaches people that red rows can be
-        # ignored. What is worth saying is that it took another route, because
-        # that is a fact about the machine somebody may need later; so it is
-        # said, in its own field, on a row that reads as done.
+        # What had to be done differently. Set only when a first attempt was
+        # refused and a second route worked - and the status stays a SUCCESS.
+        # A red row for something that worked teaches people to ignore red rows.
         [string]$Recovered = '',
         [switch]$Reboot
     )
@@ -188,19 +166,11 @@ function Initialize-WDSession {
     param(
         [string]$Root,
         [switch]$Preview,
-        # Skip the environment record. For the interface's own bookkeeping
-        # session ONLY, and it is worth four seconds of every launch.
-        #
-        # That record exists to reconstruct a run that went wrong - a pending
-        # restart that made DISM refuse everything, no disk space, a second
-        # copy of the toolkit running. The window's session runs nothing: a
-        # preview or an apply creates its OWN session on the run runspace, and
-        # writes the whole record there, where it describes the machine at the
-        # moment something actually happened to it.
-        #
-        # Measured on this machine: Get-WDRunEnvironment 1.75s and the tool
-        # sweep 2.25s, both on the critical path between the splash and the
-        # window, for a file nothing reads.
+        # Skip the environment record. GUI bookkeeping session ONLY, and worth
+        # ~4s of every launch. That record exists to reconstruct a run that went
+        # wrong, and the window's session runs nothing - a preview or an apply
+        # builds its own session and writes the full record there, describing the
+        # machine at the moment something happened to it.
         [switch]$QuickEnvironment
     )
 
@@ -221,14 +191,10 @@ function Initialize-WDSession {
         JournalFile = Join-Path $runDir 'journal.jsonl'
         ReportFile  = Join-Path $runDir 'report.json'
         UndoFile    = Join-Path $runDir 'Undo-WinSetupToolkit.ps1'
-        # Written beside the rollback script, and for the case the rollback
-        # script cannot serve: somebody who wants one thing back rather than
-        # the run back, or who is looking for what caused a problem weeks
-        # later and does not yet know this run is the answer.
-        # Markdown, not text. This is the one of the three written records that
-        # is meant to be read straight through rather than searched or parsed,
-        # so it gets headings, a summary table, and grouping - and .md is what
-        # makes a viewer render those rather than showing the hashes.
+        # For the case the rollback script cannot serve: somebody who wants one
+        # option back rather than the run, or who is chasing a problem weeks
+        # later and does not yet know this run caused it. Markdown because this
+        # is the record meant to be READ straight through rather than searched.
         NotesFile   = Join-Path $runDir 'What-this-run-did.md'
         # The searchable half, written by the issues-doc item when it is
         # selected. Named here rather than by the handler so that the handler,
@@ -302,22 +268,15 @@ function ConvertTo-WDAbsoluteHivePath {
     <#
         HKCU: IS NOT AN ADDRESS - it means "whichever user is asking".
 
-        That is fine for writing a value and wrong for recording how to put one
-        back, because the rollback is performed later and not necessarily by the
-        same person. A rollback script needs administrator rights, so on a
-        machine with two admin accounts it is entirely ordinary for the other
-        one to run it - and every HKCU entry in the journal would then restore
-        the first user's values into the second user's hive. Neither of them
-        would have any way to work out what had happened.
+        Fine for writing a value, wrong for recording how to put one back: a
+        rollback needs admin rights, so on a two-admin machine it is ordinary for
+        the OTHER one to run it, and every HKCU entry would restore the first
+        user's values into the second user's hive.
 
-        Rewritten to HKU:\<sid> so the entry names the hive it was actually
-        written to. Anything else is handed back untouched, which is every HKLM
-        path, every already-absolute HKU: path from an allusers write, and the
-        file and task methods that have no registry path at all.
-
-        No drive is created here: this produces a string, and the two things
-        that later read one - the Revert page and the generated rollback script
-        - each make HKU: for themselves.
+        Rewritten to HKU:\<sid>. Everything else is handed back untouched - all
+        HKLM paths, already-absolute HKU: paths, and the file and task methods
+        with no registry path. Produces a string and creates no drive; the two
+        readers each make HKU: for themselves.
     #>
     param([string]$Path)
     if (-not $Path) { return $Path }
@@ -379,22 +338,19 @@ function Add-WDJournal {
 
 function Add-WDTrace {
     <#
-        The diagnostic record, separate from the journal on purpose.
+        The flight recorder. Separate from the journal on purpose:
 
-        The journal is the UNDO: it holds what changed and how to put it back,
-        it is read by the rollback script, and every line in it is a promise.
-        This is the FLIGHT RECORDER: it holds everything that happened
-        including the things that did not change anything - actions that found
-        nothing, refusals, guards that failed, timings - and nothing reads it
-        but a human working out why.
+          journal.jsonl  the UNDO. Every line is a promise the rollback keeps.
+          trace.jsonl    everything that happened, including all the things that
+                         changed nothing. Nothing reads it but a person.
 
-        Keeping them apart matters both ways round. Noise in the journal turns
-        into rollback steps that do nothing, and a journal filtered down to
-        what is reversible cannot answer "why did that item do nothing".
+        Both directions matter. Noise in the journal becomes rollback steps that
+        do nothing; a journal filtered to what is reversible cannot answer "why
+        did that item do nothing".
 
-        JSON Lines, appended, flushed per line, so a machine switched off
-        mid-run still leaves a readable file up to the last completed action.
-        Never throws: a diagnostic that can take a run down is a liability.
+        JSON Lines, flushed per line, so a machine switched off mid-run still
+        leaves a readable file. Never throws - a diagnostic that can take a run
+        down is a liability.
     #>
     param(
         [Parameter(Mandatory)][string]$Kind,
@@ -452,27 +408,21 @@ function Format-WDException {
 
 function Get-WDMachineIdentity {
     <#
-        Which machine this is, in a form that survives a rename and can be
-        compared against a run recorded weeks ago.
+        Which machine this is. A run folder is portable on purpose, so "journals
+        I can see" and "journals about THIS machine" are different sets, and
+        reverting the wrong one writes another computer's values over this one's.
 
-        This exists because a run folder is portable ON PURPOSE - the whole
-        point of Export-WDRunFolder is that a copy can be carried away on the
-        stick that brought the toolkit - so "the journals I can see" and "the
-        journals that describe THIS machine" are not the same set, and reverting
-        against the wrong one writes another computer's registry values over
-        this one's.
+        Two ids, answering different questions:
 
-        Two ids rather than one, because they answer different questions.
-        MachineGuid is per Windows INSTALLATION: written at setup, stable across
-        renames, new hardware and domain joins. It is the one that decides,
-        because a journal describes registry state and a reimage makes every
-        previous value in it meaningless. The SMBIOS UUID is per HARDWARE and
-        survives a reimage, which is the only thing that can tell "this box,
-        reinstalled" apart from "a different box" - worth recording, never worth
-        deciding on.
+          MachineGuid   per Windows INSTALLATION. Stable across renames, new
+                        hardware, and domain joins. THIS is the one that decides
+                        - a journal describes registry state, and a reimage makes
+                        every previous value in it meaningless.
+          SMBIOS UUID   per HARDWARE, survives a reimage. The only thing that
+                        can tell "this box, reinstalled" from "a different box".
+                        Recorded, never decided on.
 
-        Read once per process. Two CIM queries and a registry read, on a path
-        the window build waits for.
+        Read once per process; the window build waits for it.
     #>
     if ($script:MachineIdentity) { return $script:MachineIdentity }
     $g = { param([scriptblock]$B) try { & $B } catch { $null } }
@@ -507,17 +457,13 @@ function Get-WDMachineIdentity {
 
 # ---------------------------------------------------------- one at a time ---
 #
-# THE NAME IS SHARED WITH THE ROLLBACK SCRIPT ON PURPOSE. Both change the same
-# machine, and the failure this prevents is the one Write-WDRunEnvironment has
-# always recorded and never stopped: two copies running at once each read the
-# other's changes as the "previous value" for their own journal, so both
-# rollbacks then restore the wrong thing. That is not a crash, it is a pair of
-# undo files that are quietly, permanently wrong - the worst outcome this
-# project has.
+# THE NAME IS SHARED WITH THE GENERATED ROLLBACK SCRIPT ON PURPOSE, so the two
+# are mutually exclusive rather than one of each - a rollback is precisely the
+# thing that must not run while the Revert page is open.
 #
-# So the toolkit and any rollback script are mutually exclusive, not merely one
-# of each. A rollback script is exactly the thing that must not run while the
-# Revert page is open.
+# Two copies at once each read the other's changes as the "previous value" for
+# their own journal, so afterwards BOTH rollbacks restore the wrong thing. Not a
+# crash: a pair of undo files that are quietly, permanently wrong.
 $script:WDInstanceName  = 'Global\WinSetupToolkit.Toolkit.1'
 $script:WDInstanceMutex = $null
 
@@ -526,20 +472,17 @@ function Enter-WDSingleInstance {
         Answers whether this process may proceed, and holds the claim if so.
 
         THE HANDLE IS THE CLAIM, not ownership of the mutex. WaitOne/ReleaseMutex
-        is thread-affine - the GUI runs its dispatcher on this thread and the
-        engine runs on another - and it has the abandoned-mutex case to get right
-        when a process is killed. A named mutex object exists for exactly as long
-        as somebody holds a handle to it, and Windows closes handles on process
-        exit however the process died, so "did I create it" answers the question
-        with no ownership, no release, and nothing to leak.
+        is thread-affine (dispatcher on one thread, engine on another) and has
+        the abandoned-mutex case to get right. A named mutex lives as long as any
+        handle is open and Windows closes handles however a process died, so "did
+        I create it" answers everything - no ownership, no release, no leak.
 
-        Global\ so it spans sessions, and an explicit Everyone rule so it spans
-        users: this writes HKLM and deprovisions packages, which are machine-wide
-        whoever is signed in.
+        Global\ to span sessions, explicit Everyone rule to span users: this
+        writes HKLM whoever is signed in.
 
-        Never throws. If the mutex cannot be created at all - a locked-down image,
-        a policy - the answer is YES. Refusing to start because a safety
-        interlock could not be built is a worse failure than the one it guards.
+        Never throws, and if the mutex cannot be built at all the answer is YES.
+        Refusing to start over an interlock that would not build is worse than
+        the thing it guards against.
     #>
     param([string]$Mode = '')
     if ($script:WDInstanceMutex) { return @{ Ok = $true; Holder = @() } }
@@ -582,15 +525,13 @@ function Get-WDRunningToolkits {
         Best effort description of who else is running, for the message only -
         the mutex has already decided.
 
-        Matched on the SCRIPT rather than the word, the same rule
-        Write-WDRunEnvironment follows: 'WinSetupToolkit' alone matches any shell
-        whose command line merely mentions the folder. Undo-WinSetupToolkit.ps1
-        matches the same pattern, which is wanted here - it is the other thing
-        this interlock exists to exclude.
+        Matched on the SCRIPT, not the word: 'WinSetupToolkit' alone matches any
+        shell that merely mentions the folder. Undo-WinSetupToolkit.ps1 matches
+        too, which is wanted - it is the other thing this interlock excludes.
 
-        Unelevated this may see nothing at all, because reading another user's
-        command line needs rights this may not have. An empty list is therefore
-        "could not tell", never "nobody", and the caller words it that way.
+        Unelevated this may see nothing, since reading another user's command
+        line needs rights it may not have. An empty list is "could not tell",
+        never "nobody", and the caller words it that way.
     #>
     $out = New-Object System.Collections.Generic.List[psobject]
     try {
@@ -642,13 +583,11 @@ function Test-WDSameMachine {
     <#
         Does this record describe the machine we are running on?
 
-        THREE-VALUED, and the third value is the whole point. $true is a match
-        on an id, $false is a mismatch on an id, and $null is "cannot say" -
-        which is what every run written before this existed answers, because it
-        carries no id at all. Folding $null into either of the others is the one
-        thing that must not happen: called $false it hides every historical run
-        from the page that exists to undo them, and called $true it hands back
-        the guarantee this function was written to provide.
+        THREE-VALUED, and the third value is the point: $true matched, $false
+        mismatched, $null "cannot say" - which is what every run written before
+        this existed answers. Folding $null either way is the one thing that must
+        not happen. Called $false it hides every historical run from the page
+        that exists to undo them; called $true it hands back the guarantee.
 
         MachineGuid decides. The others are recorded for a human reading the
         file and are deliberately not compared: a computer can be renamed, and
@@ -685,24 +624,20 @@ function Get-WDRunIndexPath {
 
 function Register-WDRunRecord {
     <#
-        One line per apply, written at the ROOT of the data folder rather than
-        inside the run folder it describes.
+        One line per apply, at the ROOT of the data folder rather than inside the
+        run folder it describes - and that placement is the whole feature.
+        "Delete old run logs" removes the run-* folders and every journal with
+        them, leaving a machine changed by runs it holds no record of, not even
+        their dates. This outlives that, so the revert page can still name what
+        happened and say plainly that the journal is gone. A change nobody can
+        undo is bad; one nobody can account for is worse.
 
-        That placement is the entire feature. "Delete old run logs" removes the
-        run-* folders and every journal with them, so after it the machine has
-        been changed by runs it holds no record of whatsoever - not even their
-        dates. This file outlives that, which lets the page that offers to undo
-        things still name what happened, when, and by which run, and say plainly
-        that the journal it would have needed is gone. A change nobody can undo
-        is bad; a change nobody can even account for is worse.
+        Carries the machine identity too, which is what makes "runs that happened
+        on THIS machine" answerable - a run folder is portable by design, so its
+        presence on a disk says nothing about where it was applied.
 
-        It also carries the machine identity, which is what makes "runs that
-        happened on THIS machine" answerable at all - a run folder is portable
-        by design, so its presence on a disk is not evidence about which
-        computer it was applied to.
-
-        Append-only, and best-effort throughout: this runs after an apply has
-        already succeeded and must never be the thing that fails it.
+        Append-only and best effort: runs after an apply has already succeeded
+        and must never be the thing that fails it.
     #>
     param($Report = $null)
 
@@ -787,14 +722,10 @@ function Get-WDRunEnvironment {
                            TotalGb = [Math]::Round($d.Size / 1GB, 2) }
     }
 
-    # 2 means running on mains. Anything else on a machine that HAS a battery
-    # means a run could lose power partway, which is the one interruption this
-    # toolkit cannot make safe.
-    #
-    # hasBattery is recorded separately rather than letting onMains default to
-    # true, because "plugged in" and "there is no battery to be unplugged from"
-    # are different facts and only one of them is reassuring. A desktop and a
-    # laptop whose battery cannot be enumerated would otherwise read alike.
+    # 2 means on mains. hasBattery is recorded separately rather than defaulting
+    # onMains to true: "plugged in" and "there is no battery to unplug" are
+    # different facts, only one is reassuring, and a desktop and a laptop whose
+    # battery cannot be read would otherwise look alike.
     $bat = & $g { @(Get-CimInstance Win32_Battery -ErrorAction Stop) }
     $hasBattery = [bool]($bat -and @($bat).Count)
     $onMains = $true
@@ -813,14 +744,10 @@ function Get-WDRunEnvironment {
     try { $rpCount = @(Get-ComputerRestorePoint -ErrorAction Stop).Count }
     catch { $rpError = $_.Exception.Message }
 
-    # Another copy of the toolkit, or a guard task firing mid-run. Two runs
-    # interleaving read each other's "previous value" into their journals and
-    # both rollbacks then restore the wrong thing.
-    # Matched on the SCRIPT, not on the word. 'WinSetupToolkit' alone matches any
-    # shell whose command line merely mentions the folder - a test harness, an
-    # editor's terminal, a path in an unrelated argument - and a false alarm
-    # about corrupted undo data is exactly the kind nobody can check and so
-    # everybody learns to ignore.
+    # Another copy, or a guard task firing mid-run. Matched on the SCRIPT, not
+    # the word: 'WinSetupToolkit' alone matches any shell whose command line
+    # merely mentions the folder, and a false alarm about corrupted undo data is
+    # the kind nobody can check and everybody learns to ignore.
     $others = & $g {
         @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Stop |
           Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match 'WinSetupToolkit\.ps1' } |
@@ -1013,13 +940,10 @@ function New-WDRestorePoint {
     # Lift the once-per-24h throttle for this run, then put it back.
     #
     # RESTORING A SAVED SETTING HAS THREE CASES, NOT TWO: it was this, it was
-    # that, or IT WAS NOT THERE. SystemRestorePointCreationFrequency does not
-    # exist on a default Windows install, so the old "put it back if it is not
-    # null" ending never fired and the value was left at 0 permanently - which
-    # makes Windows take a restore point at every trigger rather than at most
-    # one a day, churning through the shadow storage cap and deleting older
-    # restore points, including in time the one this function just made. The
-    # safety net degraded because the safety net was created.
+    # that, or IT WAS NOT THERE. SystemRestorePointCreationFrequency is absent on
+    # a default install, so a "put it back if not null" ending never fires and
+    # leaves it at 0 - which takes a restore point at every trigger, churns the
+    # shadow storage cap, and evicts older points including the one just made.
     $srKey    = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore'
     $freqName = 'SystemRestorePointCreationFrequency'
     $hadFreq  = $false
@@ -1035,15 +959,10 @@ function New-WDRestorePoint {
             $null = New-Item -Path $srKey -Force
         }
         Set-ItemProperty -Path $srKey -Name $freqName -Value 0 -Type DWord -Force
-        # JOURNALLED AS WELL AS RESTORED IN THE FINALLY, and the two cover
-        # different failures. A finally covers an exception; it does not cover
-        # the process being killed - and Checkpoint-Computer below holds this
-        # window open for tens of seconds. Left at 0, Windows takes a restore
-        # point at every trigger rather than at most one a day, churns through
-        # the shadow storage cap and evicts older restore points including the
-        # one this function just made, and nothing anywhere records that this
-        # run is why. Exactly the argument RemoveEdge's home-region flip is
-        # journalled under.
+        # JOURNALLED AS WELL AS RESTORED IN THE FINALLY. A finally covers an
+        # exception, not the process being killed - and Checkpoint-Computer holds
+        # this window open for tens of seconds. Same argument as RemoveEdge's
+        # home-region flip.
         Add-WDJournal -ItemId 'restore-point' -Type 'registry' -Target "$srKey\$freqName" `
                       -Status 'Changed' -Undo @{
                           method   = 'registry'
@@ -1122,16 +1041,14 @@ function Backup-WDRegistryKey {
 
 # ------------------------------------------------- ownership escalation ----
 #
-# Some objects are owned by TrustedInstaller, and an administrator gets access
-# denied on them. Taking ownership and granting Administrators full control is
-# the standard fix, and it works reliably for REGISTRY objects - which covers
-# service configuration, scheduled task entries and policy keys.
+# TrustedInstaller-owned objects deny an administrator. Seizing the owner and
+# granting Administrators full control works reliably for REGISTRY objects:
+# service config, TaskCache entries, and policy keys.
 #
-# It is deliberately NOT used for Appx packages Windows marks non-removable.
-# Those are refused by the deployment stack, not by an ACL; seizing
-# C:\Program Files\WindowsApps and deleting the folder does not make
-# Remove-AppxPackage succeed, it just desynchronizes the package state
-# repository and breaks servicing and Store updates. See CLAUDE.md.
+# Deliberately NOT used on NonRemovable Appx packages. Those are refused by the
+# deployment stack rather than by an ACL, so seizing WindowsApps and deleting
+# the folder desynchronizes the package state repository and breaks CBS
+# servicing and Store updates instead of removing anything.
 
 #
 # Compiled by Enable-WDOwnershipPrivileges rather than at import, because it is
@@ -1369,20 +1286,17 @@ public static extern int SHEmptyRecycleBin(IntPtr hwnd, string pszRootPath, uint
 
 function Remove-WDToRecycleBin {
     <#
-        Delete to the Recycle Bin rather than outright, so the one part of this
-        toolkit that touches the file system is still reversible. Everything
-        else in the journal can be put back exactly; a hard Remove-Item cannot,
-        which is why the leftover sweep and the extension removals both come
-        through here.
+        Delete to the Recycle Bin, because file deletion is the one thing a
+        journal cannot reverse. Everything else can be put back exactly.
 
-        SHFileOperation rather than Microsoft.VisualBasic.FileSystem: the latter
-        can raise a shell dialog, and the engine runs on a background runspace
-        where a modal dialog has nobody to dismiss it.
+        SHFileOperation, not Microsoft.VisualBasic.FileSystem: that one can raise
+        a shell dialog, and the engine runs on a background runspace where a
+        modal has nobody to dismiss it.
 
-        Returns $true only when the item is actually gone. FOF_ALLOWUNDO is a
-        request, not a guarantee - a volume with no Recycle Bin, or an item
-        larger than the bin's quota, deletes permanently instead. Callers that
-        promise reversibility must check Test-WDRecycleAvailable first.
+        FOF_ALLOWUNDO IS A REQUEST, NOT A GUARANTEE - a volume with no bin, or an
+        item over its quota, deletes permanently and still reports success. So
+        anything promising reversibility must call Test-WDRecycleAvailable first.
+        Returns $true only when the item is actually gone.
     #>
     param([Parameter(Mandatory)][string]$Path)
 
@@ -1455,21 +1369,18 @@ public static extern bool MoveFileEx(string lpExistingFileName, string lpNewFile
 
 function Test-WDSweepableRoot {
     <#
-        Whether a directory is specific enough to be treated as one program's
-        own, and the normalized path when it is.
+        Whether a directory is specific enough to be one program's own, and the
+        normalized path when it is.
 
-        Installers do write bare shared roots into InstallLocation - "C:\Program
-        Files" is the one that actually turns up - and anything that then acts on
-        that folder is acting on every program on the machine rather than on one.
-        The leftover sweep has needed this check since it existed. The process
-        kill before an uninstall needs exactly the same answer, and it is here
-        rather than copied because two copies of a safety list is one list and a
-        bug waiting for whoever extends the other one.
+        Installers write bare shared roots into InstallLocation - "C:\Program
+        Files" really does turn up - and acting on such a folder acts on every
+        program on the machine. Both users of that property need the identical
+        answer, so the list lives here: a safety list kept in two places is one
+        list plus a bug waiting for whoever extends the other copy.
 
-        Answers with the normalized path or $null, rather than true or false, so
-        a caller cannot check this and then go on to use the raw value it was
-        handed - which may still have quotes, a trailing slash, or unexpanded
-        environment variables in it.
+        Answers with the PATH or $null rather than true/false, so a caller cannot
+        validate and then use the raw value with its quotes and trailing slash
+        still attached.
     #>
     param([string]$Path)
     if (-not $Path) { return $null }
@@ -1487,12 +1398,9 @@ function Test-WDSweepableRoot {
         (Join-Path ${env:ProgramFiles(x86)} 'Common Files'),
         (Join-Path $env:ProgramFiles 'WindowsApps'),
         (Join-Path $env:SystemRoot 'System32'),
-        # The PARENT of the profile, which the list reached round on both sides
-        # and never named: USERPROFILE and PUBLIC were both here while the
-        # folder holding them was not, so an installer declaring C:\Users as its
-        # install location described every profile on the machine. Derived
-        # rather than literal, so a machine whose profiles were relocated is
-        # covered by the same line.
+        # C:\Users - the list named USERPROFILE and PUBLIC but not the folder
+        # holding them, so an installer declaring C:\Users described every
+        # profile on the machine. Derived, so relocated profiles are covered.
         (Split-Path -Parent $env:USERPROFILE)
     ) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\').ToLowerInvariant() }
     if ($forbidden -contains $p.ToLowerInvariant()) { return $null }
@@ -1501,23 +1409,18 @@ function Test-WDSweepableRoot {
 
 # ====================================================== critical services ===
 #
-# Services no run may switch off or stop, whatever asked for it.
+# Services no run may switch off or stop, whatever asked for it. Enforced in the
+# executor, in preview as well as apply, so it is a fact about what the toolkit
+# DOES rather than about what one screen offers.
 #
-# THIS IS NOT WD.Discover's $ProtectedServices AND MUST NOT BE MERGED WITH IT.
-# That list answers "may the scan OFFER this", and it is deliberately broad -
-# Themes, FontCache, W32Time, TermService, SysMain and a dozen more are on it
-# because an unrecognized service is the worst possible thing to offer to switch
-# off, not because disabling them breaks anything. Enforcing that list here
-# would forbid a legitimate future item for any of them, and would have made
-# the shipped svc-sysmain item silently do nothing - the exact shape this
-# project complains about everywhere else.
+# NOT WD.Discover's $ProtectedServices, AND MUST NOT BE MERGED WITH IT. That one
+# answers "may the scan offer this" and is deliberately broad (Themes, SysMain,
+# W32Time...) because an unrecognized service is the worst thing to offer to
+# disable - not because disabling it breaks anything. Enforcing the broad list
+# here would make the shipped svc-sysmain item silently do nothing.
 #
-# This list is the narrow one: disabling any of these leaves the machine unable
-# to reach a usable desktop, unable to be patched, or unable to defend itself.
-# It is enforced in the executor, so it is a fact about what the toolkit does
-# rather than about what one of its screens offers. It had no enforcement at all
-# before - the guarantee held only because no shipped item happens to name one,
-# and a typo naming RpcSs or DcomLaunch would have gone straight through.
+# This list is the narrow one: lose any of these and the machine cannot reach a
+# desktop, be patched, or defend itself.
 $script:CriticalServices = @(
     # Boot, logon, and the shell. Nothing reaches a desktop without these.
     'RpcSs', 'RpcEptMapper', 'DcomLaunch', 'PlugPlay', 'Power', 'ProfSvc', 'UserManager',
@@ -1541,11 +1444,10 @@ function Test-WDCriticalService {
     <#
         Whether a service is one no run may touch.
 
-        Exact name, case-insensitively, and deliberately NOT a wildcard match:
-        these are real service names rather than patterns, and a pattern in a
-        safety list is a list that quietly grows to cover things nobody put in
-        it. A manifest pattern like 'Xbox*' is matched against the machine
-        first, so what arrives here is always a resolved name.
+        Exact name, case-insensitive, deliberately NOT a wildcard: a pattern in
+        a safety list quietly grows to cover things nobody put in it. Manifest
+        patterns are resolved against the machine first, so what arrives here is
+        always a real service name.
     #>
     param([string]$Name)
     if (-not $Name) { return $false }
@@ -1608,28 +1510,23 @@ function Stop-WDProcessesUnder {
 
 function Stop-WDBlockers {
     <#
-        Close whatever is holding a thing open, say what was closed, and wait
-        for the handles to drop.
+        Close whatever is holding a thing open, log it, and wait for the handles
+        to drop. Stop-WDProcessesUnder is the mechanism; this is the policy, and
+        the policy has to be identical everywhere.
 
-        Stop-WDProcessesUnder is the mechanism; this is the policy around it,
-        and the policy is the half that has to be identical everywhere. The
-        settle especially: file handles do not drop the instant a process dies,
-        so a retry that starts immediately fails for the exact reason this
-        exists to remove - and it then looks like a case where closing the
-        program did not help, which is the wrong lesson to leave in a log.
+        THE SETTLE IS LOAD-BEARING. File handles do not drop the instant a
+        process dies, so a retry that starts immediately fails for the exact
+        reason this exists to remove - and then reads in the log as a case where
+        closing the program did not help.
 
-        Nothing here is journalled. Nothing can put a running process back, and
-        an undo entry claiming otherwise is a lie the rollback script would then
-        repeat - the same rule the Edge folder sweep follows. It is logged
-        instead, because "the toolkit closed my game" has to be answerable.
+        Nothing here is journalled: nothing can put a running process back, and
+        an undo entry claiming otherwise is a lie the rollback would repeat.
+        Logged at Info instead, because "the toolkit closed my game" has to be
+        answerable.
 
-        -Because completes the sentence "Closed X, Y so ...", so it reads as a
-        reason rather than as a bare list of casualties.
-
-        Returns the names it closed, so a caller can report a fight rather than
-        claim a clean removal - and can tell "nothing was in the way" from
-        "something was, and now is not", which is what decides whether a retry
-        is worth the attempt.
+        Returns what it closed, so a caller can tell "nothing was in the way"
+        from "something was, and now is not" - which is what decides whether a
+        retry is worth the attempt. -Because completes "Closed X, Y so ...".
     #>
     param(
         [string]$Path = '',
@@ -1759,14 +1656,11 @@ function Remove-WDStubbornDirectory {
         return $out
     }
 
-    # MOVEFILE_DELAY_UNTIL_REBOOT. Files before the directories that hold them,
-    # deepest first, or the queued directory delete finds itself non-empty and
-    # is skipped at boot.
-    # Sorted on actual path depth. This was `Sort-Object { $_.Length }`, which
-    # is a STRING length - correct only because $left holds FullName strings and
-    # a longer path is usually a deeper one. It reads as sorting by file size,
-    # and the day anyone keeps the FileInfo objects instead it silently becomes
-    # exactly that, which is not an ordering at all.
+    # MOVEFILE_DELAY_UNTIL_REBOOT. Files before their directories, deepest
+    # first, or a queued directory delete finds itself non-empty and is skipped.
+    # Sorted on real path depth. `Sort-Object { $_.Length }` was a STRING length
+    # that only worked because $left holds FullName strings - it reads as file
+    # size, and becomes exactly that the day anyone keeps the FileInfo objects.
     $queued = 0
     foreach ($f in ($left | Sort-Object { ([string]$_ -split '\\').Count } -Descending)) {
         try { if ([WD.Pending]::MoveFileEx($f, $null, 0x4)) { $queued++ } } catch { }
@@ -1814,13 +1708,10 @@ function Export-WDRunNotes {
         [Parameter(Mandatory)]$Items,
         [string]$PresetName = '',
         [string]$Path = '',
-        # All three default to the live session and exist because -Path already
-        # promised this works without one. It did not: the run id and the
-        # rollback path were read off $script:Session regardless, so a caller
-        # that passed -Path got a document headed "run unnumbered" over "(no
-        # rollback script was written)" while the script sat beside it. That is
-        # a header stating two things that are false about a real run, in the
-        # one file written to be believed.
+        # All three default to the live session, and are parameters because
+        # -Path has to work without one. Read off $script:Session instead, a
+        # caller passing -Path got a document headed "run unnumbered" over "(no
+        # rollback script was written)" with the script sitting beside it.
         [string]$RunId = '',
         [string]$UndoFile = '',
         [datetime]$Started = [datetime]::MinValue
@@ -1964,14 +1855,9 @@ function Export-WDRunNotes {
     }
 
     & $w '## What changed, option by option'
-    # A rule before every OPTION, not between categories. Two levels of heading
-    # already separate the categories, and a rule is the only separator markdown
-    # has that survives being read as plain text - which this file has to,
-    # because half the people who open it will do so in Notepad.
-    #
-    # Indentation was tried first and buys nothing: a list indented by two
-    # spaces is still a top-level list to every renderer, so it reads as
-    # structure in the raw file and as nothing at all once formatted.
+    # A rule before every OPTION, not between categories: two heading levels
+    # already separate those, and a rule is the only markdown separator that
+    # survives being read as plain text - which half these readers will do.
     foreach ($cat in $order) {
         & $w
         & $w "### $cat"
@@ -1994,20 +1880,11 @@ function Export-WDRunNotes {
             } else {
                 & $w '- (nothing recorded)'
             }
-            # The one-line pointer, and the reason the old file needed fixing:
-            # for an item that writes three policy values and has no Settings
-            # page, "By hand:" was blank and the only advice on offer was to
-            # undo the whole run. Anybody can open regedit, and the paths are
-            # right there in the list above.
-            #
-            # The regedit sentence is NOT repeated per item - it is stated once
-            # at the top, because it is true of every registry line in the file
-            # and a hundred and fifty copies of one fact is how a document
-            # stops being read. What is named per item is the thing that is
-            # specific to it: the Settings page somebody wrote down, or a
-            # console other than regedit. Only an item with neither falls back
-            # to naming regedit, which is exactly the case that used to say
-            # nothing at all.
+            # The regedit instruction is stated ONCE at the top, not per item:
+            # it is true of every registry line here, and 150 copies of one fact
+            # is how a document stops being read. Per item, name only what is
+            # specific - the Settings page, or a console other than regedit.
+            # An item with neither falls back to naming regedit.
             $undoBits = New-Object System.Collections.Generic.List[string]
             $said = ([string]$m.Settings).ToLower()
             if ($m.Settings) { $undoBits.Add([string]$m.Settings) }
@@ -2106,36 +1983,24 @@ function Get-WDWrapUpLines {
 
 function Get-WDDesktopRunFolder {
     <#
-        Where Export-WDRunFolder is going to put the copy, worked out without
-        creating anything.
+        Where Export-WDRunFolder will put the copy, worked out WITHOUT creating
+        anything, so a preview can name the real destination. The rollback script
+        and the issues lookup are written under %ProgramData% and copied here
+        afterwards, so their preview rows used to quote the ProgramData path -
+        true, and useless as an answer to "where will I find this".
 
-        This exists so a preview can name the real destination. The two document
-        items - the rollback script and the common issues lookup - are written
-        into the run directory under %ProgramData% and copied here afterwards,
-        so their preview rows quoted the ProgramData path: technically true,
-        useless as an answer to "where will I find this", and directly at odds
-        with what both descriptions promise ("the run folder left on your
-        desktop").
+        Returns Ok, Path, and Why. Ok is false when there is no desktop at all,
+        which happens on a service account or a stripped image.
 
-        Returns Ok, Path and Why. Ok is false when there is no desktop to write
-        to, which is a real case on a service account or a stripped image - and
-        a preview that says "your desktop" on a machine that has none is the
-        same defect one step further on.
+        -Public forces C:\Users\Public\Desktop, for the SetupComplete.cmd run:
+        that is Local System before any account exists, so there is no per-user
+        desktop and no way to know who will want this.
 
-        -Public forces C:\Users\Public\Desktop, and the run that needs it is the
-        one launched from SetupComplete.cmd: that runs as Local System before
-        any account has signed in, so there is no per-user desktop to write to
-        and no way to know which account will eventually want this. The public
-        desktop is on every account's, which is the closest thing to "their
-        desktop" that exists at that moment.
-
-        It is also a trap this has to defend against rather than an option to
-        offer. Asked as SYSTEM, GetFolderPath('Desktop') answers
-        C:\Windows\system32\config\systemprofile\Desktop - a folder that
-        genuinely exists, so every check here would pass and the whole run
-        folder would be written somewhere no human being will ever look. So the
-        system profile is detected and redirected whether or not -Public was
-        asked for.
+        AND IT IS A TRAP, not just an option. Asked as SYSTEM,
+        GetFolderPath('Desktop') answers systemprofile\Desktop - which genuinely
+        exists, so every check passes and the run folder lands somewhere nobody
+        will ever look. The system profile is redirected whether or not -Public
+        was passed.
     #>
     param($Session, [string]$Desktop = '', [switch]$Public)
 
@@ -2231,26 +2096,21 @@ function Read-WDSetupResult {
 
 function Register-WDSetupPrompt {
     <#
-        Asks Windows to show the finished run to the first person who signs in.
+        Asks Windows to show the finished run to whoever signs in first.
 
-        HKLM RunOnce, and every part of that is deliberate:
+        HKLM RunOnce, and each part is deliberate:
 
-        - **RunOnce, not Run.** Windows deletes the value before it executes it,
-          so a command that crashes cannot come back tomorrow, and a machine
-          whose owner ignores it once is never asked again. That is the right
-          behavior for a courtesy: there is no state to protect and the report
-          is on the desktop either way.
-        - **HKLM, not HKCU.** The run happens as Local System before any profile
-          exists, so there is no HKCU to write into that belongs to anybody.
-        - **Unelevated.** The entry runs in the signing-in user's own context at
-          their normal token. -SetupResult is exempt from this script's own
-          elevation gate for that reason - see the note there.
+          RunOnce, not Run  Windows deletes the value before executing it, so a
+                            crash cannot recur and an ignored prompt is never
+                            repeated.
+          HKLM, not HKCU    Local System, before any profile exists.
+          Unelevated        Runs in the signing-in user's own context. This is
+                            why -SetupResult is exempt from the elevation gate.
 
-        Refused, rather than half-done, in the states where it cannot be honest:
-        no run folder, no script to point at, or a script somewhere the machine
-        will not still have after Setup. Returns $true only if the value is
-        actually there afterwards - the write is verified by reading it back,
-        because a policy or a locked-down image can refuse it silently.
+        REFUSES rather than half-registering wherever it cannot be honest: no run
+        folder, no script, or a script on a drive that will not be attached.
+        Verified by reading the value back - a locked-down image can refuse the
+        write silently.
     #>
     param([string]$RunDir, [string]$ScriptPath)
 
@@ -2296,21 +2156,15 @@ function Export-WDSetupResult {
     <#
         The two things a run with no interface has to leave behind.
 
-        A run started from SetupComplete.cmd happens in session 0, before
-        anybody signs in, with no desktop to draw on. Everything the finished
-        Run page would have said - the counts, every item and what happened to
-        it, what needs a restart, where the way back is - has nowhere to go. So
-        it goes in a text file, in the same folder as the rollback script, in
-        the same words $wrapUpText uses on screen.
+        Session 0 has no desktop, so everything the Run page would have shown
+        goes into a text file beside the rollback script, in the same words
+        $wrapUpText uses on screen. Then a small JSON of the same facts, which
+        -ShowRun replays into the real Run page.
 
-        And a small JSON beside it, which is the same facts in the form the
-        interface can read back: -ShowRun replays it into the real Run page, so
-        the person who signs in can be shown the finished run rather than a
-        transcript of it. The text file is the fallback and is written first -
-        if anything about the second half fails, what is left is still a
-        complete account of the run in a file anybody can open.
+        The TEXT FILE IS WRITTEN FIRST and is the fallback: if the JSON half
+        fails, what is left is still a complete account anybody can open.
 
-        Returns the text file's path, or '' if even that could not be written.
+        Returns the text file's path, or '' if even that failed.
     #>
     param(
         $Session,
@@ -2436,25 +2290,20 @@ function Export-WDSetupResult {
 
 function Export-WDRunFolder {
     <#
-        Copies everything worth keeping out of the run directory and onto the
-        desktop, in a folder named for the run.
+        Copies everything worth keeping onto the desktop, in a folder named for
+        the run.
 
-        The run directory is under %ProgramData% on the machine that was
-        debloated, which is the right place for it and the wrong place for
-        somebody to find it. This exists because of how the toolkit is actually
-        used: from a USB stick, on somebody else's machine, once. The stick goes
-        home in a pocket and the person left behind has a rollback script they
-        do not know exists, in a folder they would have to be told about, under
-        a directory Explorer hides by default.
+        %ProgramData% is the right place to keep a run and the wrong place to
+        find one, and this exists because of how the toolkit is actually used:
+        from a USB stick, on somebody else's machine, once. The stick goes home
+        in a pocket and the person left behind has a rollback script they do not
+        know exists, under a directory Explorer hides.
 
-        So: on the desktop, named in plain words, with a note at the top saying
-        what each file is for. Unconditional - there is no option for it,
-        because the case for one is "I do not want a way back" and nobody means
-        that until it is too late to say so.
+        Unconditional, with no option, because the case for one is "I do not want
+        a way back" and nobody means that until it is too late to say so.
 
-        Preview runs are excluded. There is nothing to keep and a folder called
-        "Windows Setup Toolkit run" containing a rollback script for a run
-        that never happened is worse than no folder.
+        Previews excluded: a folder of rollback instructions for a run that never
+        happened is worse than no folder.
     #>
     param($Session, [string]$Desktop = '', [switch]$Public)
 
