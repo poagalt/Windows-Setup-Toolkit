@@ -307,17 +307,13 @@ function Show-WDMessage {
     & $ref $tb 'Foreground' 'Text'
     $null = $body.Children.Add($tb)
 
-    # THE WINDOW IS SIZED TO THE TEXT, not the text to the window. Measured off
-    # this very element with wrapping turned off, so the typeface, the size and
-    # the line height are the ones that will actually be drawn - a separate
-    # probe element would have to be kept in step with this one and would drift
-    # the first time somebody changed the font.
+    # THE WINDOW IS SIZED TO THE TEXT, not the text to the window - measured off
+    # THIS element with wrapping off, so the typeface and line height are the ones
+    # that will be drawn. A separate probe element would drift the first time
+    # somebody changed the font.
     #
-    # The cap is the screen, so a line only ever wraps because it is wider than
-    # the display, never because the dialog was born 560 wide. Wrapping stays on
-    # for that case rather than a horizontal scrollbar: the text here is a mix of
-    # paths and prose, and putting a paragraph on one endless line to spare a
-    # path is the wrong way round.
+    # Capped at the screen, so a line wraps only because it is wider than the
+    # DISPLAY, never because the dialog was born 560 wide.
     $tb.TextWrapping = 'NoWrap'
     $tb.Measure((New-Object Windows.Size ([double]::PositiveInfinity), ([double]::PositiveInfinity)))
     $natural = [double]$tb.DesiredSize.Width
@@ -767,18 +763,16 @@ function New-WDIconDrawing {
     $pen.LineJoin = 'Round'
     $pen.Freeze()
 
-    # THE MARK IS SIZED TO THE TILE, and everything else is allowed off the
-    # edge. This drawing used to be fitted by its own bounding box, which
-    # sounds right and is exactly backwards here: the shards are thrown well
-    # clear and the handle runs a long way past the head, so the box is nearly
-    # twice the mark, and fitting it shrank the four panes to about half the
-    # room. Beside a Start button the icon read as a small thing in a big gap.
+    # THE MARK IS SIZED TO THE TILE, and everything else may go off the edge.
+    # Fitted by its own bounding box - which every other generated thing here does
+    # - the shards and the handle make the box nearly twice the mark, so the four
+    # panes came out at half the room and the icon read as a small thing in a big
+    # gap beside a Start button.
     #
-    # So the panes are laid out to fill 64 less a hairline margin - the same
-    # footprint the Windows logo has in the taskbar - and the frame render
-    # clips whatever leaves. The handle is cut off by the corner, which is the
-    # right trade: a handle is legible as the part of it you can see, and the
-    # mark is not legible small.
+    # So the panes fill 64 less a hairline, the footprint the Windows logo has in
+    # the taskbar, and the frame render clips whatever leaves. The handle is cut
+    # off: a handle is legible as the part you can see, a half-size four-pane mark
+    # is not legible at all.
     $inset  = 0.02
     $spread = 0.45          # thrown clear, but mostly still in frame
     $radF   = 0.045
@@ -1145,17 +1139,16 @@ function Get-WDAppIcon {
     $script:WDAppIcon[$key]
 }
 
-# How wide a vertical scrollbar is in this window. The visible mark is 5.5 of it
-# and the rest is hit area - see WdVBarTemplate - and it is named here because
-# something outside the XAML needs the same number: the Compare page's pinned
-# header has to reserve exactly the gutter the cards below it lose to the bar, or
-# every card sits that difference away from its own heading.
+# How wide a vertical scrollbar is here: 16px of hit area carrying a 5.5px mark
+# (see WdVBarTemplate). Named because something outside the XAML needs the same
+# number - Compare's pinned header must reserve exactly the gutter its cards lose
+# to the bar, or every card sits that difference from its own heading. Asking
+# SystemParameters instead put them 5.8px out.
 #
 # THE XAML CARRIES THE LITERAL AND THIS IS THE COPY, because a here-string cannot
-# read a variable. [7] measures the arranged bar against this, which is the only
-# check that can catch the two drifting - a setter can be read back correctly
-# while the bar arranges at something else entirely, which this file has been
-# caught by twice.
+# read a variable. [7] measures the ARRANGED bar against this, which is the only
+# check that catches the two drifting: a setter reads back correctly while the bar
+# arranges at the theme's MinWidth instead.
 $script:WDVBarWidth = 16
 
 $script:Xaml = @'
@@ -2911,16 +2904,15 @@ function Show-WDWindow {
 
     # ---- the theme, as resources rather than as brushes --------------------
     #
-    # Every palette color is also a keyed brush in a dictionary the window and
-    # the page both merge, and everything that can take a DynamicResource takes
-    # one. That is what makes a theme switch a matter of writing new brushes
-    # under the same keys - about two hundred elements repaint themselves and
-    # nothing is re-created, re-parented or re-measured.
+    # Every palette colour is also a keyed brush, and everything that can take a
+    # DynamicResource takes one. That is what makes a theme switch a matter of
+    # writing new brushes under the same keys: ~200 elements repaint and nothing
+    # is re-created, re-parented, or re-measured.
     #
-    # Merged into both windows because the page is built inside $shell and lives
-    # inside $win, and a resource reference resolves by walking up from the
-    # element it is on. One dictionary instance in two MergedDictionaries, so
-    # writing a value once reaches both.
+    # MERGED INTO BOTH WINDOWS, because the page is built inside $shell and lives
+    # inside $win, and a resource reference resolves by walking UP from its
+    # element. One dictionary instance in two MergedDictionaries, so writing a
+    # value once reaches both.
     $themeDict = $(if ($win.Tag.ThemeDict) { $win.Tag.ThemeDict } else { New-Object Windows.ResourceDictionary })
     $win.Tag.ThemeDict = $themeDict
     foreach ($host_ in @($shell, $win)) {
@@ -3169,18 +3161,14 @@ function Show-WDWindow {
     # default Foreground, and the trap this file warns about twice.
     & $Ref $ui.TxtRevHomeTitle 'Foreground' 'Text'
     & $Ref $ui.TxtRevHomeHint  'Foreground' 'Sub'
-    # THE RUN BUTTONS, FILLED. Preview is the only way into an apply, so on both
-    # pages that carry one it is the button somebody is looking for - and it was
-    # the same gray as Back, Save, and Compare beside it, distinguished only by
-    # being a shade bolder. Filled in the accent it reads as the one thing on the
-    # footer that does something to the machine.
+    # THE RUN BUTTONS, FILLED. Preview is the only way into an apply, and it was
+    # the same gray as Back and Compare beside it, a shade bolder at most. Filled
+    # in the accent it reads as the one control that does something to the machine.
+    # Apply Now gets the same face rather than a louder one - two filled buttons in
+    # one flow, each the end of its own page.
     #
-    # Apply Now is the same button one page later - the press that is no longer a
-    # simulation - so it gets the same face rather than a louder one: two filled
-    # buttons in one flow, each the end of its own page.
-    #
-    # Through $Ref like everything else, so a theme switch repaints them with the
-    # rest of the window rather than leaving last palette's blue behind.
+    # Through $Ref like everything else, so a theme switch repaints them instead of
+    # leaving the last palette's blue behind.
     foreach ($b in @('BtnModePreview', 'BtnPreview', 'BtnApplyNow')) {
         if (-not $ui[$b]) { continue }
         & $Ref $ui[$b] 'Background'  'GoBg'
@@ -3309,17 +3297,14 @@ function Show-WDWindow {
     # preset's color follows the palette without this table being rebuilt.
     $presetColor = @{ Conservative = 'T1'; Balanced = 'T2'; Aggressive = 'T3'; Extreme = 'T4'
                       Custom = 'Sub' }
-    # Custom sits at the far left, opposite Extreme: one selects nothing, the
-    # other selects everything, and the ladder runs between them.
+    # Custom at the far left, opposite Extreme: one selects nothing, the other
+    # everything, and the ladder runs between them.
     #
-    # A List rather than an array, because it is no longer only the five the
-    # manifest ships: a selection loaded from a file joins it and is then a
-    # preset everywhere - a column of its own in Advanced's picker, a side in
-    # Compare, a thing Reset preset can reset. That is the whole point of
-    # loading one. It gets no column on the mode grid, which is the one place
-    # it is deliberately not equal: five columns of authored prose are a
-    # comparison somebody wrote, and a saved file has nothing to say in that
-    # form. It gets a row in a box underneath instead.
+    # A List, not an array, because this is no longer only the five the manifest
+    # ships - a loaded file joins it and is then a preset everywhere: a column in
+    # Advanced's picker, a side in Compare, a thing Reset preset can reset. The one
+    # place it is deliberately NOT equal is the mode grid, where five columns of
+    # authored prose are a comparison somebody wrote and a file has nothing to say.
     $presetNames = New-Object System.Collections.Generic.List[string]
     foreach ($n in @(@('Custom') + $ladderNames)) { $null = $presetNames.Add([string]$n) }
     # The shipped five, kept separately: the mode grid builds its columns from
@@ -4041,23 +4026,16 @@ function Show-WDWindow {
         foreach ($h in @($counts, $consequence, $totDelta)) { if ($h.ContainsKey($Name)) { $h.Remove($Name) } }
         # ---- nothing is left pointing at it ---------------------------------
         #
-        # This is the whole of the intermittent crash on the Remove button, and
-        # the reason it was intermittent. Removing a preset that was not the
-        # selected one is harmless; removing the SELECTED one left $state.Preset
-        # naming a preset that no longer exists in any table - and loading a
-        # file selects it on the way in, so the obvious gesture (load it, look
-        # at it, take it off again) is exactly the case that breaks.
+        # This was an intermittent crash on Remove, and this is why it was
+        # intermittent: removing an unselected preset is harmless, while removing
+        # the SELECTED one left $state.Preset naming something in no table - and
+        # loading a file selects it on the way in, so "load it, look at it, take it
+        # off again" hit it every time.
         #
-        # Nothing failed at the moment of removal. It failed at whatever read
-        # the name next, which is why it looked random: $selectPreset reaching
-        # into $consequence for a key that is gone, $updateTally asking
-        # $presetColor for a brush key and handing $null to a resource
-        # reference, Preview resolving the selection of a preset with no base
-        # set. Restarting cleared it because the startup fallback below catches
-        # a dangling name in the settings file.
-        #
-        # Fixed here rather than in each reader: a name that is not a preset has
-        # no business surviving the call that stopped it being one.
+        # NOTHING FAILED AT THE MOMENT OF REMOVAL. It failed at whatever read the
+        # name next, which is why it looked random. Fixed here rather than in each
+        # reader: a name that is not a preset has no business surviving the call
+        # that stopped it being one.
         if ([string]$state.Preset -eq $Name) { $state.Preset = 'Balanced' }
         if ([string]$cmpState.A -eq $Name)   { $cmpState.A   = 'Balanced' }
         if ([string]$cmpState.B -eq $Name)   { $cmpState.B   = 'Aggressive' }
@@ -4096,30 +4074,29 @@ function Show-WDWindow {
     # every green "added" tag are measured against.
     # ---- options that cannot both be on ------------------------------------
     #
-    # One-directional and stated as such: When wins, Blocks goes, and Why is
-    # printed on the row that went so nobody has to work out which tick took it
-    # away. A pair rather than a symmetric rule, because these are never
-    # symmetric in practice - one of the two is a decision about the run and the
-    # other is a consequence of it.
+    # ONE-DIRECTIONAL: When wins, Blocks goes, and Why is printed on the row that
+    # went so nobody has to work out which tick took it away. Never symmetric in
+    # practice - one of the pair is a decision about the run and the other is a
+    # consequence of it.
     #
-    # Only one pair is real today, and it was a lie the page had been telling
-    # since the rollback script became an option: Extreme selects both "Make
-    # this run permanent" and "Generate rollback script", and the script it
-    # writes cannot restore a file that skipped the Recycle Bin. Registry and
-    # service changes still reverse, so the script is not useless - but a row
-    # promising a way back beside a row that removes it is the kind of thing
-    # this project exists not to do.
+    # APPLIED IN TWO PLACES, and both are needed: $syncExclusions unticks and
+    # annotates the row, and $effectiveIds drops the blocked id from the preset's
+    # own baseline - without the second, Extreme reads as "-1 removed" against a
+    # row the operator cannot touch.
     #
-    # Applied in $effectiveIds as well as on the checkboxes, so a preset that
-    # selects both does not read as "modified" for a change nobody made.
+    # Two pairs today:
+    #   irreversible blocks rollback-script  Extreme selects both, and the script
+    #       cannot restore a file that skipped the Recycle Bin. Registry and
+    #       service changes still reverse, so it is not useless - but a row
+    #       promising a way back beside a row that removes it is the thing this
+    #       project exists not to do.
+    #   wu-off blocks wu-notify-first  both write AU\NoAutoUpdate and disagree.
+    #       wu-off has the higher order so it already wins at run time; this only
+    #       stops the page showing two ticks when one will not happen. Both are
+    #       tier 0, so only a person ticking both can produce the pair.
+    #
     # A sweep of the manifest for registry values two items write differently
-    # finds exactly one other pair, and it is the Windows Update one this file
-    # already documents: wu-off and wu-notify-first both write AU\NoAutoUpdate
-    # and disagree about it. Adding it here is not a reversal of that decision -
-    # wu-off has the higher order, so it already wins at run time and the other
-    # item's write is already thrown away. All this does is stop the page
-    # showing two ticks when only one of them will happen. Both are tier 0, so
-    # no preset can produce the pair; only a person ticking both can.
+    # finds exactly those two ids and nothing else.
     $EXCLUSIONS = @(
         @{ When   = 'irreversible'
            Blocks = 'rollback-script'
