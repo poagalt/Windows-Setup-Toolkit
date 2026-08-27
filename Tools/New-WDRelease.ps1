@@ -1,4 +1,4 @@
-<#
+﻿<#
     Builds the release artefact and everything that has to agree with it.
 
     Three outputs, and the second two are derived from the first so they cannot

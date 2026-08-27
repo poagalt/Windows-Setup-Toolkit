@@ -1,4 +1,4 @@
-<#
+﻿<#
     Publishes the whole removal list as one self-contained HTML page.
 
     The point is that somebody can decide whether to trust this without running
