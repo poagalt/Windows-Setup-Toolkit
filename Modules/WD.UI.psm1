@@ -4845,8 +4845,7 @@ function Show-WDWindow {
             $col.Applied.Text = $note
             $col.Applied.Visibility = $(if ($note) { 'Visible' } else { 'Collapsed' })
         }
-        # What the mode costs, in the one term this can answer honestly.
-        # Absent on Custom, whose set is empty until somebody fills it.
+        # The risky count - see where $facts is built. Absent on Custom.
         if ($col.Facts) {
             $cq = $consequence[$Name]
             if ($cq -and [int]$cq.Risky -gt 0) {
@@ -8616,13 +8615,19 @@ function Show-WDWindow {
         if (-not $dependants.ContainsKey($r.Requires)) { $dependants[$r.Requires] = New-Object System.Collections.Generic.List[psobject] }
         $dependants[$r.Requires].Add($r)
     }
-    foreach ($pid in $dependants.Keys) {
-        $parent = $rowById[$pid]
+    # $parentId, NOT $pid. $PID is a READONLY automatic variable, so
+    # `foreach ($pid in ...)` throws "Cannot overwrite variable PID because it is
+    # read-only or constant" on its first iteration - and it is never zero
+    # iterations, because the five PowerToys options all require add-powertoys.
+    # Inside an $advWork entry that throw stops the pre-warm and leaves this
+    # wiring unattached, so unticking the parent left its children ticked.
+    foreach ($parentId in $dependants.Keys) {
+        $parent = $rowById[$parentId]
         if (-not $parent) { continue }
-        $kids   = $dependants[$pid]
+        $kids   = $dependants[$parentId]
         $filt   = $applyFilterRef
         $inst   = $installedIds
-        $pidKey = [string]$pid
+        $pidKey = [string]$parentId
         $sync = {
             # Nothing is withdrawn when the parent is already on the machine:
             # its box is off because there is nothing to install, not because
@@ -9351,19 +9356,18 @@ function Show-WDWindow {
     }.GetNewClosure()
     $applyOrderRef.Fn = $applyOrder
 
-    # ---- filtering: a multi-select drop-down plus free text ----------------
-
-    # Page order, not alphabetical, and for the same reason as the rail: these
-    # are the same twenty-odd names, and two lists of the same things in two
-    # different orders is a worse picker than either order on its own.
-    # A list rather than an array, filled rather than assigned: the drop-down is
-    # built from it inside a closure, and an array rebuilt with += would leave
-    # that closure holding the empty one it captured.
+    # ---- the category names the filter offers -------------------------------
+    #
+    # PAGE ORDER, not alphabetical, for the same reason as the rail: these are the
+    # same twenty-odd names, and two lists of the same things in two different
+    # orders is a worse picker than either order alone.
+    #
+    # A List filled in place, never an array reassigned: the drop-down is built
+    # from it inside a closure, and += would leave that closure holding the empty
+    # one it captured.
     $catNames = New-Object System.Collections.Generic.List[string]
     $advWork.Add({
         if ($advSay.Fn) { & $advSay.Fn 'Listing the categories' }
-        # Recurring had to be appended by hand here for as long as it had no
-        # entry in $catHeaders. It has one now.
         foreach ($h in $catHeaders) { $catNames.Add([string]$h.Name) }
     }.GetNewClosure())
 
