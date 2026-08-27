@@ -26,16 +26,13 @@
       does not, and interpolating the RGB of transparent pixels - black, out
       of the renderer - puts a dark rim on every edge.
 
-    Long edge is 1024. 512 was the old value on the reasoning that the biggest
-    frame drawn is 256 and a pane there is about 120px, so 512 was already
-    four times oversampled. That reasoning is wrong, and measurably: against a
-    2048px reference the 512px build misses by about 4 RMS at every frame size
-    and the 1024px build by about 2.3. The scaling in between is not ideal
-    enough for the oversampling argument to hold. 2048 halves the error again
-    and costs 2.3 MB to do it, which is where this stops.
+    Long edge is 1024, not the 512 it was: oversampling only helps if the
+    downstream scaling is good enough to spend it, and this one is not. Measured
+    against a 2048px reference, 512 misses by ~4 RMS at every frame size and 1024
+    by ~2.3. 2048 halves it again for 2.3 MB, which is where this stops.
 
-    Needs Chrome and the network. Nothing else here does, which is why this is
-    a tool you run when a mark changes rather than part of a build.
+    Needs Chrome and the network - nothing else here does, which is why this is a
+    tool you run when a mark changes rather than part of a build.
 
         .\Tools\Build-WDIconAssets.ps1                  # straight into Assets\
         .\Tools\Build-WDIconAssets.ps1 -OutDir .\tmp    # somewhere to look first

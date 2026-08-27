@@ -144,20 +144,15 @@ function Show-WDMessage {
         [switch]$BuildOnly
     )
 
-    # Both call forms, and the second one is why: every site in this file was
+    # BOTH CALL FORMS. Every site was
+    # `[Windows.MessageBox]::Show($text, $title, 'YesNo', 'Warning')`, forty of
+    # them with a dozen spanning several lines - and converting to parameter
+    # syntax means deleting the parentheses holding those continuations together,
+    # in a file that cannot be exercised without a window on somebody's screen.
+    # Kept, the comma operator hands all four over as one array, so the whole
+    # conversion was replacing the method name.
     #
-    #     Show-WDMessage ($text, $title, 'YesNo', 'Warning')
-    #
-    # and forty of them, a dozen spanning several lines. Converting those to
-    # parameter syntax means deleting the parentheses that are holding the line
-    # continuations together - forty chances to break a code path in a file
-    # that cannot be exercised without putting a window on somebody's screen.
-    # Keeping the parentheses makes the comma operator hand all four over as
-    # one array, so the conversion is a single literal replacement of the
-    # method name and nothing else moves.
-    #
-    # Unambiguous: no caller passes an array as the message text, so an array
-    # in position 0 can only be the packed form.
+    # Unambiguous: no caller passes an array AS the message text.
     if ($Text -is [array]) {
         $packed = @($Text)
         $Text = [string]$packed[0]
@@ -3334,21 +3329,19 @@ function Show-WDWindow {
     # they were loaded and the settings file round-trips in the same order.
     $loadedPresets = [ordered]@{}
 
-    # Which presets have actually been run on this machine, and with what.
-    # name -> @{ When; Folder; Ids }. Persisted, unlike an override: this is not
-    # an unsaved edit, it is a thing that happened, and it stays true across a
-    # restart in a way an edit deliberately does not.
+    # Which presets have actually been RUN here. name -> @{ When; Folder; Ids }.
+    # Persisted, unlike an override: an edit is something somebody might not have
+    # meant to keep, a run is a thing that happened.
     #
-    # The Ids are the whole point. A marker saying "applied on Tuesday" over a
-    # preset somebody has since edited is worse than no marker - it would read
-    # as a promise that the machine matches the card, which is exactly what an
-    # edit breaks. So the marker is shown only while the preset's effective
-    # selection is still, item for item, the one that was run.
-    # @($null) is a one-element array holding nothing, so a settings object with
-    # no applied map at all - which nothing this build writes, but a caller
-    # constructing one by hand might - would otherwise put a single entry keyed
-    # by the empty string into the table. That is not an error anything raises;
-    # it is a preset called "" that never matches and never goes away.
+    # THE IDS ARE THE FEATURE. A marker saying "applied on Tuesday" over a preset
+    # since edited reads as a promise that the machine matches the card. But set
+    # equality is the WRONG test - an apply makes things stop applying, so ids
+    # legitimately drop out. See $appliedNote for the three-way question.
+    #
+    # The $null guard: @($null) is a one-element array holding nothing, so a
+    # settings object with no applied map would put one entry keyed by the empty
+    # string into the table - a preset called "" that never matches and never
+    # goes away, and nothing raises an error about it.
     $appliedRuns = @{}
     if ($UiState -and $UiState.PSObject.Properties['applied'] -and $UiState.applied) {
         foreach ($p in @($UiState.applied.PSObject.Properties)) {
@@ -3798,21 +3791,17 @@ function Show-WDWindow {
         if ([string](Get-Prop $item 'browser' '') -eq 'Edge') { $edgeExtIds.Add([string]$item.id) }
     }
 
-    # What each column lists, and it is authored.
+    # What each column lists. AUTHORED, and briefly generated instead - the
+    # mode's items counted into the bloat bands, band and count per line. That
+    # form cannot drift, which is a real advantage and answers the wrong question:
+    # a count of each kind says how MUCH of each a mode takes and never what any
+    # of it IS, and "what does this actually remove" is the only reason anybody
+    # reads the mode screen.
     #
-    # It was briefly generated - the mode's items counted into the bloat bands,
-    # band and count per line - on the reasoning that an authored list is a
-    # promise about contents that nothing checks, and that every item moved
-    # between tiers makes four columns quietly wrong. That reasoning is true and
-    # it is not the point of this list. A column of band counts says how much of
-    # each kind a mode takes; it does not say what any of it IS, and "what does
-    # this actually remove" is the only question somebody reads the mode screen
-    # to answer.
-    #
-    # An authored line also carries things no item name and no band can: one
-    # line stands for eleven packages ("All pre-installed games"), and a
-    # consequence lives beside the change ("reverted to right ctrl"). The cost
-    # is that these have to be re-read whenever items move between tiers.
+    # An authored line also carries two things no generated one can: one line
+    # standing for a dozen entries ("All pre-installed games"), and a consequence
+    # beside the change ("reverted to right ctrl"). The cost is that these have to
+    # be re-read whenever items move between tiers - nothing checks them.
     $presetBullets = @{
         Custom       = @()
         Conservative = @(

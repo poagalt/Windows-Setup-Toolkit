@@ -3,18 +3,15 @@
 
       irm https://raw.githubusercontent.com/poagalt/Windows-Setup-Toolkit/main/install.ps1 | iex
 
-    WHAT THIS DOES NOT DO IS RUN ANYTHING WITHOUT SHOWING ITS WORK. Piping a URL
-    into iex is the least inspectable thing a person can do on Windows, and this
-    project's whole argument is that you should be able to read what it does
-    before granting it administrator rights. So this downloads the release,
-    checks it against the SHA256SUMS published beside it, prints the hash and
-    the folder, and then stops - unless -Run says otherwise. The toolkit itself
-    is a folder of readable scripts sitting where you were just told, and the
-    launcher is the thing that asks for elevation, not this.
+    THIS RUNS NOTHING WITHOUT SHOWING ITS WORK. Piping a URL into iex is the
+    least inspectable thing a person can do on Windows, and this project's whole
+    argument is that you can read what it does before granting it administrator
+    rights. So it downloads the release, checks it against the SHA256SUMS
+    published beside it, prints the hash and the folder, and STOPS - unless -Run
+    says otherwise.
 
-    It also refuses to carry on if the hash does not match, rather than warning
-    and continuing, because a mismatched download is the one case where
-    continuing is never the right answer.
+    A hash mismatch aborts rather than warning and continuing: that is the one
+    case where continuing is never right.
 #>
 [CmdletBinding()]
 param(
@@ -77,13 +74,12 @@ $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvaria
 $expected = ''
 try {
     $raw = (Invoke-WebRequest -Uri "$base/SHA256SUMS.txt" -UseBasicParsing -TimeoutSec 60).Content
-    # .Content IS A BYTE ARRAY WHENEVER THE SERVER SAYS octet-stream, and GitHub
-    # serves every release asset that way whatever its extension. [string] on a
-    # byte[] gives the decimal bytes space-separated - "98 50 53 100 ..." - so
-    # every line failed the regex below and this reported "no SHA256SUMS.txt"
-    # for a release that published one. The one safety check this script exists
-    # to perform, silently never happening, on a path where the warning it
-    # printed instead looked like an honest answer.
+    # .Content IS A BYTE ARRAY WHEN THE SERVER SAYS octet-stream, and GitHub
+    # serves every release asset that way whatever the extension. [string] on a
+    # byte[] gives space-separated decimals, so every line failed the regex and
+    # this reported "no SHA256SUMS.txt" for a release that publishes one - the
+    # one safety check here, silently never running, behind a warning that read
+    # as an honest answer.
     $sums = if ($raw -is [byte[]]) { [Text.Encoding]::UTF8.GetString($raw) } else { [string]$raw }
     foreach ($line in ($sums -split "`r?`n")) {
         if ($line -match '^\s*([0-9a-fA-F]{64})\s+\*?(.+?)\s*$' -and $Matches[2] -eq $zipName) {

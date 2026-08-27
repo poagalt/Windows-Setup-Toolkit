@@ -30,11 +30,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# RESOLVED HERE, NOT IN THE PARAM DEFAULTS. $PSScriptRoot is not populated when
-# a param block's defaults are evaluated under `powershell -File`, so
-# `Split-Path -Parent $PSScriptRoot` there fails with "cannot bind argument to
-# parameter 'Path' because it is an empty string" - naming neither the variable
-# nor the reason.
+# RESOLVED HERE, NOT IN THE PARAM DEFAULTS: $PSScriptRoot is empty when a param
+# block's defaults are evaluated under `powershell -File`, and the failure names
+# neither the variable nor the reason.
 $here = $PSScriptRoot
 if (-not $here) { $here = Split-Path -Parent $MyInvocation.MyCommand.Path }
 if (-not $Source) { $Source = Split-Path -Parent $here }
@@ -116,14 +114,11 @@ $zip  = Join-Path $OutDir "$name-$Version.zip"
 if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-# ENTRY BY ENTRY, WITH FORWARD SLASHES. Not CreateFromDirectory: on .NET
-# Framework that writes Path.DirectorySeparatorChar into the entry names, which
-# on Windows is a BACKSLASH - and the zip format requires forward slashes
-# (APPNOTE 4.4.17.1). Explorer and Expand-Archive cope; 7-Zip, unzip on macOS
-# and Linux, and other extractors treat "WinSetupToolkit\Modules\WD.Core.psm1"
-# as one filename that happens to contain backslashes, and unpack a flat folder
-# of files with unusable names. That would break the winget install path and
-# anybody unpacking onto a stick from a Mac.
+# ENTRY BY ENTRY, WITH FORWARD SLASHES. NOT CreateFromDirectory: on .NET
+# Framework that writes Path.DirectorySeparatorChar - a BACKSLASH on Windows -
+# and the zip spec requires forward slashes (APPNOTE 4.4.17.1). Explorer and
+# Expand-Archive cope; 7-Zip and unzip on macOS or Linux read the whole path as
+# one filename and unpack a flat folder of unusable names.
 $archive = [IO.Compression.ZipFile]::Open($zip, 'Create')
 try {
     foreach ($file in @(Get-ChildItem -LiteralPath $staging -Recurse -File -Force)) {
