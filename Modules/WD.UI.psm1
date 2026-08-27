@@ -3839,7 +3839,6 @@ function Show-WDWindow {
         if (-not $catTotals.ContainsKey($a.Cat)) { $catTotals[$a.Cat] = 0 }
         $catTotals[$a.Cat]++
     }
-    $grandTotal = $applicable.Count
 
     # Custom's base is empty of removals by definition, with two exceptions: the
     # rollback script and the common issues lookup. Its column promises both,
@@ -6888,7 +6887,6 @@ function Show-WDWindow {
     }.GetNewClosure()
 
     $catHeaders = New-Object System.Collections.Generic.List[psobject]
-    $sectionHost = @{ remove = $ui.ColLeft; add = $ui.AddLeft; extras = $ui.ExtraLeft }
 
     # The rows: the expensive half of the application, and why any of this is
     # deferred.
@@ -13772,7 +13770,6 @@ function Show-WDWindow {
     }
     $revHomeRef = @{ Paint = $null }
     $buildRevertHome = {
-        $uiRef  = $ui
         $refFn  = $Ref
         $goRun  = $openRevertRun
         $panel  = $ui.RevHomeCards
@@ -16196,7 +16193,6 @@ function Show-WDWindow {
         param($status, $name, $detail, $itemId)
         # Locals, because the click handler below is a closure built in this
         # child scope and would otherwise capture these as null.
-        $advice     = $statusAdvice
         $st         = $state
         $setExcl    = $setRowExcluded
         # The same two things the Advanced page's Details button assembles, so
@@ -18004,10 +18000,8 @@ function Show-WDWindow {
             $revRailL   = $revRailCards
             $revStateL  = $revState
             $revOrderL  = $revApplyOrder
-            $revFiltL   = $revApplyFilter
             $revSelL    = $revFilterSel
             $revBoxesL  = $revFilterBoxes
-            $revSpyL    = $revSpy
             $revGrpsL   = $REV_GROUPS
             $revSortsL  = $REV_SORTS
             # Grepped for a collision before it was added, as this block's own
@@ -18101,8 +18095,6 @@ function Show-WDWindow {
             $browFreeL  = $freeBrowsers
             $browDefL   = $browserDefault
             $headsL     = $catHeaders
-            $bandsL     = $BLOAT_BAND
-            $factsL     = $itemFacts
             $custBaseL  = $CUSTOM_BASE
             $cmpAddL    = $cmpAddButtons
             # The Compare rail's scroll spy, driven directly. It normally runs
@@ -18189,12 +18181,10 @@ function Show-WDWindow {
             $uiOutL     = $uiStateOut
             $advUndoL   = $advUndo
             $storeL     = $storage
-            $storeCatL  = $STORAGE_CAT
             $storeRowsL = $storageRows
             $bytesL     = $rowBytes
             $noteMapL   = $itemNote
             $cmpDetailL = $cmpChips
-            $presenceL  = $Presence
             $acctBoxL   = $accountChecks
             $acctTagsL  = $accountTags
             $acctKeysL  = $accountKeys
@@ -23645,7 +23635,7 @@ function Show-WDWindow {
                 # that is the whole difference from the rebuild this replaced.
                 if (-not $winL.IsVisible) { throw 'the switch closed the window' }
                 if ($uiL.PageAdvanced.Visibility -ne 'Visible') { throw 'the switch threw away the open page' }
-                if ($rowsL[0].Panel.Parent -eq $null) { throw 'the switch detached the rows' }
+                if ($null -eq $rowsL[0].Panel.Parent) { throw 'the switch detached the rows' }
                 $want = $(if ($stateL.Theme -eq 'dark') { 'light' } else { 'dark' })
                 if ("$($uiL.BtnTheme.Content)" -notmatch $want) {
                     throw "the button still offers '$($uiL.BtnTheme.Content)'"
