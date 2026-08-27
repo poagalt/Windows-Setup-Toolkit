@@ -747,13 +747,11 @@ Register-WDHandler 'RemoveEdge' {
     try {
         # 4. Run every setup.exe we can find. Version folders move between
         #    updates, so search rather than assume a path.
-        $ran = $false
         $lastExit = $null
         foreach ($dir in $edgeDirs) {
             $setups = @(Get-ChildItem -LiteralPath $dir -Recurse -Filter 'setup.exe' -ErrorAction SilentlyContinue |
                         Where-Object { $_.FullName -match '\\Installer\\setup\.exe$' })
             foreach ($s in $setups) {
-                $ran = $true
                 $r = Invoke-WDProcess -FilePath $s.FullName -TimeoutSeconds 600 -ArgumentList @(
                     '--uninstall', '--system-level', '--verbose-logging', '--force-uninstall')
                 $lastExit = $r.ExitCode

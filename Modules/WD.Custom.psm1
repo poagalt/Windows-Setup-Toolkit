@@ -43,13 +43,15 @@ $script:VK = @{ LWin = 91; Shift = 16; LShift = 160; F23 = 134; RCtrl = 163 }
 Register-WDHandler 'CopilotKeyToRightCtrl' {
     param($Action, $Context)
 
-    $profile = $Context.Profile
-    if ($profile.CopilotKey -eq 'Absent') {
+    # $machine, not $profile: that is an automatic variable holding the path to
+    # the PowerShell profile script, and shadowing it reads as a bug.
+    $machine = $Context.Profile
+    if ($machine.CopilotKey -eq 'Absent') {
         return New-WDResult -Status NotPresent -Message 'No Copilot key on this keyboard'
     }
 
     # --- Preferred: the native setting Microsoft added in build 27500 -------
-    if ($profile.Build -ge 27500) {
+    if ($machine.Build -ge 27500) {
         $r = Set-WDNativeCopilotKey -Context $Context
         if ($r.Status -in @('Changed','Removed')) { return $r }
         Write-WDLog 'Native Copilot key setting unavailable, falling back to PowerToys.' -Level Info -Item $Context.ItemId

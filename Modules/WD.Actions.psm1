@@ -320,11 +320,13 @@ function Invoke-WDAppxPolicyAction {
     #>
     param($Action, $Context)
 
-    $profile = $Context.Profile
-    if (-not $profile.IsEnterprise) {
+    # $machine, not $profile: that is an automatic variable holding the path to
+    # the PowerShell profile script, and shadowing it reads as a bug.
+    $machine = $Context.Profile
+    if (-not $machine.IsEnterprise) {
         return New-WDResult -Status Skipped -Message 'Policy needs Enterprise/Education; appx removal already covers this'
     }
-    if ($profile.Build -lt 26200) {
+    if ($machine.Build -lt 26200) {
         return New-WDResult -Status Skipped -Message 'Needs Windows 11 25H2 or newer'
     }
 
@@ -381,15 +383,17 @@ function Invoke-WDWingetInstall {
         # is named - so an item can supply the installer's own command line.
         # --silent is dropped alongside it: winget refuses the pair, and the
         # override has to carry its own quiet switches anyway.
+        # $argv, not $args: that is an automatic variable holding this function's
+        # unbound arguments, and this function has a param block.
         $over = [string](Get-Prop $Action 'override' '')
-        $args = @('install', '--id', $id, '--exact')
-        if ($over) { $args += @('--override', $over) } else { $args += '--silent' }
-        $args += @('--accept-source-agreements', '--accept-package-agreements', '--disable-interactivity')
+        $argv = @('install', '--id', $id, '--exact')
+        if ($over) { $argv += @('--override', $over) } else { $argv += '--silent' }
+        $argv += @('--accept-source-agreements', '--accept-package-agreements', '--disable-interactivity')
         # Big toolchains legitimately outrun the default; the item says so.
         $secs = [int](Get-Prop $Action 'timeoutSeconds' 900)
         if ($secs -le 0) { $secs = 900 }
 
-        $res = Invoke-WDProcess -FilePath 'winget.exe' -ArgumentList $args -TimeoutSeconds $secs
+        $res = Invoke-WDProcess -FilePath 'winget.exe' -ArgumentList $argv -TimeoutSeconds $secs
         if ($res.ExitCode -eq 0) {
             $done.Add($id)
             Add-WDJournal -ItemId $Context.ItemId -Type 'winget' -Target $id -Status 'Changed' `
@@ -628,12 +632,14 @@ function Invoke-WDUninstallAction {
             continue
         }
 
-        # Split the resolved command into executable + arguments.
-        $exe = $cmd; $args = ''
-        if ($cmd -match '^\s*"([^"]+)"\s*(.*)$') { $exe = $Matches[1]; $args = $Matches[2] }
-        elseif ($cmd -match '^\s*(\S+\.exe)\s*(.*)$') { $exe = $Matches[1]; $args = $Matches[2] }
+        # Split the resolved command into executable + arguments. $argLine rather
+        # than $args, which is an automatic variable holding this function's own
+        # unbound arguments - and this one is a string, not an array.
+        $exe = $cmd; $argLine = ''
+        if ($cmd -match '^\s*"([^"]+)"\s*(.*)$') { $exe = $Matches[1]; $argLine = $Matches[2] }
+        elseif ($cmd -match '^\s*(\S+\.exe)\s*(.*)$') { $exe = $Matches[1]; $argLine = $Matches[2] }
 
-        $res = Invoke-WDProcess -FilePath $exe -ArgumentList @($args) -TimeoutSeconds $timeout
+        $res = Invoke-WDProcess -FilePath $exe -ArgumentList @($argLine) -TimeoutSeconds $timeout
 
         # Second sweep, after a refusal: catches a launcher that restarted
         # itself, or a helper the uninstaller started.
