@@ -10294,9 +10294,6 @@ function Show-WDWindow {
         $null = & $clearLogs
     }.GetNewClosure())
 
-    # Every color is resolved once while the window is built, so switching the
-    # theme means building it again. Cheap, and honest: the alternative is
-    # rewriting several hundred brush assignments to go through resources.
     # The theme switch is a REPAINT, not a rebuild. Everything carrying a colour
     # points at a theme key, so writing new brushes under those keys repaints
     # ~200 elements in about 150 ms with nothing re-created, re-parented, or
@@ -10465,23 +10462,14 @@ function Show-WDWindow {
         }
     }
 
-    # The gutter the pinned header has to leave for the scrollbar below it, asked
-    # of the system rather than assumed. The header is a different grid from the
-    # cards, so the two line up only while they are the same width, and 17 is a
-    # number that is right on this machine's theme and DPI and nowhere else.
+    # The gutter the pinned header must leave for the scrollbar below it, plus the
+    # page's own right inset - the cards get that as CmpScroll's Padding, and the
+    # header, not being inside it, has to add it for itself.
     #
-    # Plus the page's own right inset, which the cards get as CmpScroll's Padding
-    # and the header - not being inside it - has to add for itself. The bar now
-    # sits at the window edge rather than 20px in, so what the header has to
-    # clear is the bar AND the inset, not the bar alone.
-    # AND IT IS OUR WIDTH, NOT THE SYSTEM'S, which is a correction rather than a
-    # simplification. SystemParameters answers what the system's bar would be -
-    # 17.33 here - and the bars in this window are retemplated to a width this
-    # file chooses ($WD_VBAR). While those two disagreed the header was reserving
-    # room for a bar that is not the one on screen, and the cards sat that
-    # difference away from the heading they belong to: 5.8px while the bar was
-    # 11.5, and 1.3px now it is 16. Asking the same constant the style uses makes
-    # it exactly zero and keeps it there when the width next changes.
+    # OUR WIDTH, NOT THE SYSTEM'S. SystemParameters answers what the SYSTEM's bar
+    # would be (17.33 here) while the bars in this window are retemplated to
+    # $WD_VBAR. The two disagreeing put every card that difference away from its
+    # own heading: 5.8px at 11.5, 1.3px at 16, zero now.
     $CMP_EDGE   = 20
     $CMP_GUTTER = [double]$script:WDVBarWidth + $CMP_EDGE
 
@@ -10510,23 +10498,21 @@ function Show-WDWindow {
         foreach ($g in $CMP_FACETS) { $n += $cmpSel[$g].Count }
         $n
     }.GetNewClosure()
-    # Whether an item is something anybody could actually take, on this machine,
-    # today. Nothing to do with the filter - the filter narrows a list of
-    # choices, and this decides what counts as a choice at all.
+    # Whether an item is something anybody could actually take here, today.
+    # Nothing to do with the filter: the filter narrows a list of choices, this
+    # decides what counts as a choice at all.
     #
-    # Compare offers to hand an item from one preset to the other, which is an
-    # edit exactly like ticking its box in Advanced. So the two pages have to
-    # agree about which boxes can be ticked, and they did not: Advanced disables
-    # a row whose target is not on this machine, disables an Add-section row for
-    # something already installed, and takes the default-browser row off the
-    # page entirely on a machine with only Edge - and every one of those was
-    # still sitting on the Compare page behind a live "Add to Balanced" button.
-    # Advanced is the page that shows everything the toolkit covers; Compare is
-    # a page of decisions, and a decision that cannot be carried out is not one.
+    # Handing an item across is an edit exactly like ticking its box in Advanced,
+    # so the two pages have to agree about which boxes can be ticked - and they
+    # did not. Advanced disables an absent row, disables an already-installed Add
+    # row, and takes the default-browser row off the page entirely; every one of
+    # those was sitting here behind a live "Add to Balanced" button. ADVANCED IS
+    # THE PAGE THAT SHOWS EVERYTHING; COMPARE IS A PAGE OF DECISIONS, and a
+    # decision that cannot be carried out is not one.
     #
-    # Applied to the two selections before anything is compared, not to the
-    # cards at the end, so the headline counts and the difference lists are
-    # counting the same things the page is showing.
+    # Applied to the two SELECTIONS before anything is compared, not to the cards
+    # afterwards, so the headline counts and the difference lists count the same
+    # set the page is showing.
     $cmpLive = {
         param([string]$Id)
         # Every target this item names was looked for and none of them is here.
@@ -10587,23 +10573,20 @@ function Show-WDWindow {
     # Every "add to the other mode" button on the page, so the self test can
     # click one without digging through nested panels to find it.
     $cmpAddButtons = New-Object System.Collections.Generic.List[psobject]
-    # The cards, kept between rebuilds, keyed by the three things that decide
-    # what one looks like: the item, the side it is on, and the mode its button
-    # offers. A card is about fifteen WPF elements and a handful of resource
-    # references, which measured around fifteen milliseconds each - and this page
-    # rebuilds itself completely on a hand-over, on a side switch, on a filter
-    # box, and on every keystroke in the search box, when almost every card is
-    # the same card it was a moment ago.
+    # REPAINT RATHER THAN REBUILD. Cards are kept between rebuilds, keyed by the
+    # three things that decide what one looks like: item, side, and the mode its
+    # button offers. A card is ~15 WPF elements at ~15 ms, and this page rebuilt
+    # itself completely on a hand-over, a side switch, a filter box, and every
+    # keystroke - when almost every card was the same card as a moment before.
     #
-    # What genuinely changes about a card between builds is three things - the
-    # "you added this" tag, the blocked reason, and the state of its button - so
-    # those are built once, always, and repainted; everything else is built once
-    # and reused. See $newCard and $paintCard.
+    # Three things genuinely change: the "you added this" tag, the blocked reason,
+    # and the button's state. Those are built ALWAYS, collapsed, and repainted - a
+    # card whose parts must be CONSTRUCTED to appear is a card that must be
+    # rebuilt to change. See $newCard and $paintCard.
     #
-    # Cleared by $buildCompareRows, which is the one event that can change what a
-    # card should look like without changing its key: a preset renamed, dropped,
-    # or loaded moves the short names printed on the buttons and the colors the
-    # cards are edged in.
+    # Cleared by $buildCompareRows, the one event that changes how a kept card
+    # should look without changing its key: a preset renamed, dropped, or loaded
+    # moves the short names on the buttons and the colours the cards are edged in.
     $cmpCards = @{}
     # Every description on a Compare card, so Non-verbose can reach them. The
     # cards outlive a rebuild, so this is added to rather than rebuilt - a card
@@ -11031,20 +11014,13 @@ function Show-WDWindow {
                 $bt.Text = $riskStyle[$rk].Label; $bt.FontSize = 10.5
                 & $Ref $bt 'Foreground' $riskStyle[$rk].Col
                 $bd.Child = $bt
-                # A MARKER, NOT A CONTROL, and that is a correction. This badge
-                # was clickable and opened the risk note in a dialog, which was
-                # right while the note lived nowhere else - Compare is the one
-                # page whose whole purpose is deciding whether to take an item
-                # on, and it had no way to read what taking it on costs.
-                #
-                # The note is the FIRST thing in the Details panel now, on this
-                # page and on Advanced alike, so the badge has nothing left to
-                # say that its own colour and word do not. Advanced's stopped
-                # being a control when that happened and this one did not, which
-                # left the same badge answering a click on one page and ignoring
-                # it on the other. No hand cursor, no hover tint, no handler -
-                # the same treatment the Compare rail gives an entry that is not
-                # a place to go.
+                # A MARKER, NOT A CONTROL. It was clickable while the risk note
+                # lived nowhere else, which was right then; the note is the FIRST
+                # thing in the Details panel now, on both pages, so the badge has
+                # nothing left to say that its colour and word do not. Advanced's
+                # stopped being a control when that happened and this one did not,
+                # which left one badge answering a click on one page and ignoring it
+                # on the other. Same treatment the rail gives an inert entry.
                 $null = $line.Children.Add($bd)
             }
 
@@ -11275,17 +11251,14 @@ function Show-WDWindow {
 
         # ---- one layout, always two columns ---------------------------------
         #
-        # There used to be a second, wider one: when a mode removed nothing the
-        # other did not - which is every shipped pair, because the modes are a
-        # ladder - the populated side took the whole width and split into two
-        # columns of its own. Twice as much on screen, and the reason it is gone
-        # is that it made the page stop being a comparison at the exact moment
-        # somebody was comparing. The columns moved, the headings moved, the
-        # empty mode disappeared instead of saying it was empty, and switching
-        # one picker relaid the entire page out from under the pointer. A
-        # comparison of two things has two sides even when one of them is empty;
-        # an empty column that says so is information, and a page that silently
-        # becomes a list is not.
+        # There was a wide layout: when one side was empty - which is every shipped
+        # pair, since the modes are a ladder - the populated side took the whole
+        # width and split into two columns of its own. Twice as much on screen, and
+        # it made the page stop being a comparison at the exact moment somebody was
+        # comparing: the columns moved, the headings moved, the empty mode
+        # disappeared instead of saying it was empty, and switching a picker relaid
+        # the page from under the pointer. AN EMPTY COLUMN THAT SAYS SO IS
+        # INFORMATION; a page that silently becomes a list is not.
         $divideFrom = -1
         $divideTo   = -1
 
@@ -11349,20 +11322,18 @@ function Show-WDWindow {
             # middle of a sentence is a divider dividing nothing.
         }
 
-        # Every heading either mode could have here, differing or not - see
-        # $coveredKeys. The ones they differ under get their cards; the rest get
-        # a rail entry and nothing on the page, which is the honest shape of
-        # "these two agree about this category".
-        # A hairline between one category and the next, in two segments rather
-        # than one span. A single Border across all three columns would be drawn
-        # straight through the rule down the middle, and a cross is a shape
-        # neither line meant to make. The spacer column is already 16px of air on
-        # each side of that rule, so two segments in the card columns stop short
-        # of it on their own and still read as one line interrupted by the
-        # divider - which is what the page is: two sides, not one list.
+        # Every heading either mode could have here, differing or not (see
+        # $coveredKeys). The differing ones get cards; the rest get a rail entry
+        # and nothing on the page, which is the honest shape of "these two agree".
         #
-        # Between categories, not after each one: a separator under the last
-        # block would be a line with nothing beneath it.
+        # A hairline between categories IN TWO SEGMENTS, never one span: a single
+        # Border across all three columns would be drawn straight through the rule
+        # down the middle, and a cross is a shape neither line meant to make. The
+        # spacer column is 16px of air either side, so the segments stop short of
+        # it on their own.
+        #
+        # BETWEEN categories, not after each one - a separator under the last block
+        # is a line with nothing beneath it.
         $ruleBetween = {
             param([int]$Row)
             foreach ($col in @(0, 1)) {
@@ -11442,17 +11413,14 @@ function Show-WDWindow {
 
         # ---- the rule down the middle ---------------------------------------
         #
-        # One hairline in the spacer column rather than a box around each side.
-        # A pair of boxes is the obvious way to say "two things" and the wrong
-        # one here: the cards inside already carry a colored edge saying which
-        # mode they belong to, and a frame around eighty of those turns a
-        # comparison into two lists that happen to be adjacent. A line says the
-        # same thing with nothing left over.
+        # One hairline in the spacer column, NOT a box around each side. A pair of
+        # boxes is the obvious way to say "two things" and the wrong one: the cards
+        # already carry a coloured edge saying which mode they belong to, and a
+        # frame around eighty of those turns a comparison into two adjacent lists.
         #
-        # It starts at the picker row on purpose - the pickers are the top of
-        # the two sides, not a header above them - and stops before the
-        # filtered-everything note, which spans both columns and would have the
-        # rule drawn through it.
+        # Starts at the picker row - the pickers are the top of the two sides, not
+        # a header above them - and stops before the filtered-everything note,
+        # which spans both columns and would have the rule drawn through it.
         if ($divideFrom -ge 0 -and $divideTo -ge $divideFrom) {
             $div = New-Object Windows.Controls.Border
             $div.Width = 1; $div.Margin = '16,4,16,0'
@@ -11466,17 +11434,15 @@ function Show-WDWindow {
 
         # ---- the index rail ------------------------------------------------
         #
-        # Rebuilt with the page rather than kept and repainted, because unlike
-        # Advanced's the list of headings is not stable: it changes with the two
-        # modes, with the grouping, and with every keystroke in the search box.
-        # Cheap to rebuild - a couple of dozen cards.
+        # Rebuilt with the page rather than kept and repainted: unlike Advanced's,
+        # this list of headings is not stable - it changes with the two modes, the
+        # grouping, and every keystroke. Cheap, a couple of dozen cards.
         #
-        # The count is two numbers, one per side, in the order the columns are
-        # in: "6 | 0" says the left mode removes six things here that the right
-        # one leaves alone, and the right one removes nothing the left does not.
-        # A single total could not say that, and it is the whole question the
-        # page exists to answer - a rail reading "6" left somebody to scroll to
-        # the heading to find out which half the six were in.
+        # THE COUNT IS TWO NUMBERS, ONE PER SIDE, in the order the columns are in.
+        # "6 | 0" says the left mode removes six things here that the right one
+        # leaves alone, and the right removes nothing the left does not. A single
+        # total cannot say which half the six are in, which is the whole question
+        # the page answers.
         $ui.CmpIndexPanel.Children.Clear()
         $cmpSpyRows.Clear()
         $cmpSpy.Offsets = $null
@@ -11628,19 +11594,16 @@ function Show-WDWindow {
         $cmpChips.Clear()
         $cmpDescEls.Clear()
         foreach ($k in @('A','B')) {
-            # The word sits on the same line as the buttons and OUTSIDE the
-            # scroller, which are two separate requirements pulling the same way.
-            # Above them it cost a whole row of height on the one page where
-            # vertical space is what runs out. Inside the scrolling row it would
-            # slide off to the left the moment somebody scrolled towards a preset
-            # near the end - and "Compare" is the one word on that line whose
-            # whole job is to stay put and say what the row is.
+            # The word sits on the buttons' line and OUTSIDE the scroller. Above
+            # them it cost a whole row of height on the one page where vertical
+            # space runs out; inside the scrolling row it would slide off to the
+            # left, and "Compare" is the one word on that line whose job is to stay
+            # put and say what the row is.
             #
-            # Grid, not a horizontal StackPanel. A StackPanel measures its
-            # children with infinite width, so the ScrollViewer would be handed
-            # the full length of the button line, size itself to it, and never
-            # scroll at all - the trap this file keeps a section about, arriving
-            # by way of a control whose entire purpose is to be narrower than its
+            # GRID, NOT A HORIZONTAL StackPanel. A StackPanel measures its children
+            # with INFINITE width, so the ScrollViewer would be handed the full
+            # length of the button line, size itself to it, and never scroll -
+            # arriving at a control whose entire purpose is to be narrower than its
             # content.
             $wrap = New-Object Windows.Controls.Grid
             $wrap.Margin = '0,4,0,2'
@@ -11852,25 +11815,20 @@ function Show-WDWindow {
         $out.V
     }
 
-    # Rename a loaded preset, which means renaming its file. The two cannot come
-    # apart: the name of one of these IS the name of the file it came from - the
-    # row prints it, the tooltip prints the path - and the list is rebuilt from
-    # paths at startup, so an in-app-only rename would be undone by the next
-    # launch and would meanwhile describe a file it no longer matched.
+    # RENAMING A LOADED PRESET RENAMES ITS FILE. The two cannot come apart: the
+    # name of one of these IS the file's name, and the list is rebuilt from paths
+    # at startup - so an in-app-only rename is undone by the next launch and
+    # meanwhile describes a file it no longer matches.
     #
-    # Every table keyed by name has to move together, and $presetNames moves in
-    # place rather than by remove-then-add: that list is the order the Advanced
-    # and Compare button rows are built in, and a renamed preset jumping to the
-    # end of both is a button moving under the pointer for no reason anybody can
-    # see. $loadedPresets is ordered for the same reason and an ordered
-    # dictionary cannot rename a key, so it is rebuilt around the one that
-    # changed. The short form is derived rather than carried over, because it is
-    # derived from the name.
-    # The half without a dialog in it, so the self test can drive the rename the
-    # way it drives the two halves of Save. Returns the new name, or the reason
-    # it did not happen - every refusal is checked BEFORE the file moves, or a
-    # rejected rename would leave the file called one thing and the preset
-    # another, which is the one state this feature exists to prevent.
+    # Every table keyed by name moves together. $presetNames moves IN PLACE rather
+    # than remove-then-add, because it is the order the Advanced and Compare button
+    # rows are built in and a renamed preset jumping to the end is a button moving
+    # under the pointer. $loadedPresets is rebuilt, since an ordered dictionary
+    # cannot rename a key. The short form is re-derived, not carried.
+    #
+    # The half with no dialog in it, so the self test can drive it. EVERY REFUSAL
+    # IS CHECKED BEFORE THE FILE MOVES, or a rejected rename leaves the file called
+    # one thing and the preset another - the one state this exists to prevent.
     $renameLoadedTo = {
         param([string]$Name, [string]$NewName)
         $name = [string]$Name
@@ -12060,17 +12018,15 @@ function Show-WDWindow {
 
     # ---- the three buttons in the box's header -----------------------------
     #
-    # Wired once, at this scope, rather than per row: they act on whatever is
-    # selected and read $state.Preset when they are pressed, so there is nothing
-    # per-file for them to close over. $paintLoaded shows and hides them.
+    # Wired once at this scope rather than per row: they act on whatever is
+    # selected and read $state.Preset when pressed, so there is nothing per-file to
+    # close over. $paintLoaded shows and hides them.
     #
-    # Each one re-selects afterwards through $selectPreset rather than trusting
-    # the name it started with. Removing the preset that is CURRENTLY selected is
-    # the likeliest gesture there is - loading a file selects it, so "load it,
-    # look at it, take it off again" hits that path every time - and it is the
-    # one that used to leave $state.Preset naming something no longer in any
-    # table, then take the window down at whatever read it next. $dropLoaded
-    # moves the selection off; this puts the screen on wherever it moved to.
+    # Each re-selects afterwards through $selectPreset rather than trusting the
+    # name it started with. Removing the CURRENTLY selected preset is the likeliest
+    # gesture there is - loading a file selects it, so "load it, look at it, take it
+    # off again" hits that path every time. $dropLoaded moves the selection off;
+    # this puts the screen on wherever it moved to.
     $dropAllLoaded = {
         # Snapshotted before the loop: $dropLoaded rebuilds $loadedPresets, and
         # enumerating a collection while removing from it throws.
@@ -12114,17 +12070,14 @@ function Show-WDWindow {
 
     # ---- what the load could not honor, said out loud ----------------------
     #
-    # A saved selection is a list of ids and nothing else, so loading one on a
-    # machine other than the one it was saved on drops whatever that machine
-    # cannot do. That has always happened silently apart from a fraction in the
-    # row - "42 of 48 apply here" - which tells somebody six things went missing
-    # and not one thing about which six or why, on the one screen where the
-    # answer decides whether the file is still the file they meant to use.
+    # A saved selection is a list of ids, so loading one from another machine drops
+    # whatever this one cannot do. "42 of 48 apply here" tells somebody six things
+    # went missing and nothing about WHICH six or why - on the one screen where
+    # that decides whether the file is still the file they meant.
     #
-    # Built as text and returned, with the dialog as the last step: the self
-    # test drives this and a MessageBox blocks the dispatcher with nobody to
-    # dismiss it. Empty string when there is nothing to report, which is the
-    # normal case and gets no dialog.
+    # Built as text and RETURNED, with the dialog last: the self test drives this,
+    # and a MessageBox blocks the dispatcher with nobody to dismiss it. Empty
+    # string when there is nothing to report, which is the normal case.
     $reportDropped = {
         param($Names)
         $lines = New-Object System.Collections.Generic.List[string]
@@ -12330,17 +12283,14 @@ function Show-WDWindow {
 
     # ---- "compare this one with which?" ------------------------------------
     #
-    # A comparison needs two presets and a card can only name one, so the card's
-    # button asks for the other rather than assuming whatever the page happened
-    # to be comparing last time. The question is put IN the page, not in a
-    # dialog: what it wants is a click on one of the cards below it, and a modal
-    # over them would cover the answer to its own question.
+    # A comparison needs two presets and a card can only name one, so the button
+    # ASKS rather than assuming whatever the page compared last. The question goes
+    # IN THE PAGE, not in a dialog: what it wants is a click on one of the cards
+    # below it, and a modal over them would cover the answer to its own question.
     #
-    # While it is up the cards mean "pick me to compare" instead of "select me",
-    # which is why $cmpPick.On is read at the top of $selectPreset rather than
-    # the handlers being swapped - a card is clickable in three places (its
-    # border, its panel, and the loaded-preset rows use the same route) and
-    # rewiring all of them per gesture is three chances to leave one behind.
+    # $cmpPick.On is read at the top of $selectPreset rather than the handlers
+    # being swapped: a card is clickable in three places, and rewiring all of them
+    # per gesture is three chances to leave one behind.
     $cmpPick = @{ On = $false; From = $null }
     $endComparePick = {
         $cmpPick.On = $false
@@ -12604,21 +12554,17 @@ function Show-WDWindow {
             $dscEl = $dt
         }
 
-        # WHAT AN UNTICKED ROW MEANS, SAID ON THE ROW. Every option on this page
-        # arrives ticked, so clearing one is a decision - the same decision as
-        # clearing a row a preset selected on the Advanced page, and marked the
-        # same way: the name in Bad and bold. What this line adds is the half a
-        # colour cannot carry, because on that page the tick is what a run will
-        # do and on this one it is what a run will UNDO, and red on a page about
-        # putting things back could as easily read as the dangerous half.
+        # WHAT AN UNTICKED ROW MEANS, SAID ON THE ROW. Every option here arrives
+        # ticked, so clearing one is an edit - marked like an edit on the Advanced
+        # page, name in Bad and bold. The words are the half a colour cannot carry:
+        # there a tick is what a run will DO, here it is what a run will UNDO, and
+        # red on a page about putting things back could read as either.
         #
-        # Built empty and collapsed on every row rather than only where it is
-        # needed, for the reason the Gate line is: a row that grew its notice
-        # only if somebody remembered to build one is a rule that silently does
-        # half its job. Same size, wrap, and margin as that line.
+        # Built empty and collapsed on EVERY row, like the Gate line: a notice that
+        # exists only where somebody remembered to build one does half its job.
         #
-        # Never taken away by Non-verbose. That option drops what is the same on
-        # every visit; this answers a question about THIS run.
+        # NEVER taken away by Non-verbose - that option drops what is the same on
+        # every visit, and this answers a question about THIS run.
         $skip = New-Object Windows.Controls.TextBlock
         $skip.Text = 'Option will not be reverted'
         $skip.FontSize = 12.5; $skip.TextWrapping = 'Wrap'; $skip.Margin = '0,4,0,0'
@@ -12687,24 +12633,19 @@ function Show-WDWindow {
             $card.Add_MouseLeave({ & $refL $card 'Background' 'Flat'     }.GetNewClosure())
         }
 
-        # CLICKING THE ROW TICKS IT, which the Advanced page has always done and
-        # this page did not. The two are meant to be one interface and they are
-        # used the same way - a page of options with a box on each - so a gesture
-        # that works on one and not the other is a gesture somebody learns twice.
-        # A tick box is a 13px target on a row 40px tall and the whole width of a
-        # column; aiming at the box was the only way in.
+        # CLICKING THE ROW TICKS IT, as the Advanced page has always done. The two
+        # are one interface used the same way, so a gesture that works on one and
+        # not the other is a gesture learnt twice - and a tick box is a 13px target
+        # on a row 40px tall and a column wide.
         #
-        # Two things it has to honour, both learnt on the other page. A Button
-        # marks the click handled before it bubbles, so the Details chip does not
-        # also toggle the row it is on - that is what the Handled test is for.
-        # And IsEnabled does not block a programmatic set, so the row has to
-        # check it or an already-back option would tick from a click on its name.
-        # And it repaints the counts itself. The box on this page is wired on
-        # Add_Click, which does not fire for a programmatic set - so the row has
-        # to do what the box's own handler would have done, which is the same
-        # arrangement the Advanced row has for the same reason. Filled in by the
-        # loop that wires the boxes, since that is where those two blocks are in
-        # scope.
+        # Two things it must honour. A Button marks its click handled before it
+        # bubbles, so the Details chip does not also toggle the row it sits on -
+        # that is the Handled test. And IsEnabled does NOT block a programmatic
+        # set, so the row has to test it or an already-back option ticks from a
+        # click on its name.
+        #
+        # It also repaints the counts itself: the box is wired on Add_Click, which
+        # does not fire for a programmatic set.
         $card.Add_MouseLeftButtonUp({
             if (-not $args[1].Handled -and $this.Tag.Box.IsEnabled) {
                 $this.Tag.Box.IsChecked = -not [bool]$this.Tag.Box.IsChecked
@@ -12839,19 +12780,16 @@ function Show-WDWindow {
             $rcOn  = 0; if ($on.ContainsKey($k))  { $rcOn  = $on[$k] }
             $rcCan = 0; if ($can.ContainsKey($k)) { $rcCan = $can[$k] }
             $rcAll = 0; if ($all.ContainsKey($k)) { $rcAll = $all[$k] }
-            # A FRACTION IS ABOUT WHAT IS LEFT TO DECIDE, and there are groups
-            # here with nothing left to decide and plenty in them. Grouped by
-            # What is left, "Already back" is every option this run has finished
-            # with: none of them takes a tick, so the denominator was zero and
-            # the card read 0/0 - which is what a group emptied by the search box
-            # reads, and says nothing about a dozen options sitting under it.
+            # A FRACTION IS ABOUT WHAT IS LEFT TO DECIDE, and grouped by "What is
+            # left" there is a group with nothing left to decide and plenty in it:
+            # "Already back" takes no ticks, so the denominator was zero and the
+            # card read 0/0 - which is what a group emptied by the search box reads.
             #
-            # Three states, then, not two. A bare count in Ok for a group that is
-            # settled, the fraction for one with decisions in it, and 0/0 only
-            # when there is genuinely nothing there. Ok rather than Accent for
-            # the same reason the Compare rail uses it on an entry the two modes
-            # agree about: Accent is what this application paints things you can
-            # act on, and a blue number on an inert card reads as "click me".
+            # THREE STATES, NOT TWO: a bare count in Ok for a settled group, the
+            # fraction for one with decisions in it, and 0/0 only when there is
+            # genuinely nothing there. Ok rather than Accent, because Accent is what
+            # this application paints things you can ACT on, and a blue number on
+            # an inert card reads as "click me".
             if ($rcAll -gt 0 -and $rcCan -eq 0) {
                 $rc.Num.Text = "$rcAll"
                 & $Ref $rc.Num 'Foreground' 'Ok'
@@ -13788,22 +13726,20 @@ function Show-WDWindow {
 
     # ---- the past runs, one card each ---------------------------------------
     #
-    # The page this one opens on. It is shaped like the mode screen because it is
-    # the same shape of question - here are the things you could act on, each
-    # saying what it is, with what you can do with it standing on it.
+    # The page reverting opens on, shaped like the mode screen because it is the
+    # same shape of question: here are the things you could act on, each saying
+    # what it is, with what you can do with it standing on it.
     #
-    # CHEAP, and that is what makes it the landing page. Get-WDPastRuns is a
-    # read of runs.jsonl and a look at the run folders; the page below it takes
-    # five to eleven seconds because it asks the machine about every change of
-    # every option. Somebody arriving to undo one thing used to pay that before
-    # seeing anything at all.
+    # CHEAP, WHICH IS WHAT MAKES IT THE LANDING PAGE. Get-WDPastRuns is a read of
+    # runs.jsonl and a look at the folders; the page below takes five to eleven
+    # seconds because it asks the machine about every change of every option, and
+    # somebody arriving to undo one thing used to pay that before seeing anything.
     #
-    # The one figure a card cannot have cheaply is how much of the run is still
-    # in place, which is Get-WDUndoStatus at about 1.8 seconds a run. That is
-    # already cached per run id in $appliedState and warmed one run per idle tick
-    # for the mode cards' "Applied on..." line, so this reads the same cache and
-    # queues the same want list. A card is never wrong, only briefly less
-    # specific - exactly as $appliedNote is.
+    # The one figure a card cannot have cheaply is how much of the run is still in
+    # place - Get-WDUndoStatus, ~1.8s a run. That is already cached per run id in
+    # $appliedState and warmed one run per idle tick for the mode cards, so this
+    # reads the same cache and queues the same want list. A card is never wrong,
+    # only briefly less specific.
     $openRevertRun = {
         param([string]$Sel, [bool]$RunItNow)
         $revertPick.Sel = [string]$Sel
@@ -14027,21 +13963,17 @@ function Show-WDWindow {
         # height has changed, so the common floor is re-measured here too.
         if ($revHomeRef.Fit) { & $revHomeRef.Fit }
     }
-    # One height for all of them, measured rather than guessed. A WrapPanel
-    # hands each child its desired height, so cards holding two lines of prose
-    # and cards holding four come out ragged beside each other - the mode screen
-    # avoids that by putting its five in one grid row, which is not available
-    # when the number of cards has no ceiling.
+    # One height for all of them, measured. A WrapPanel arranges each child at its
+    # DESIRED height, so cards holding two lines of prose and four come out ragged
+    # beside each other; the mode screen avoids it with one grid row, which is not
+    # available when the number of cards has no ceiling.
     #
     # CLEAR THE FLOOR FIRST. Measuring with last pass's MinHeight still on gives
-    # the answer that floor already produced, and the cards ratchet upwards a
-    # little every time the text changes. This is the same discipline $blurbFit
-    # follows for the mode descriptions, and the same trap.
+    # the answer that floor already produced, and the cards ratchet upward every
+    # time the text changes. Same trap and same discipline as $blurbFit.
     #
-    # Not hooked to SizeChanged: a narrower window re-wraps the cards but every
-    # card is the same height by then, so which of them share a line does not
-    # change the answer. It runs after a build and after a repaint, because both
-    # can change how many lines a card holds.
+    # Not hooked to SizeChanged: a narrower window re-wraps the cards, but they are
+    # all one height by then, so which share a line does not change the answer.
     $fitRevertCards = {
         $cards = @($ui.RevHomeCards.Children)
         if ($cards.Count -lt 2) { return }
@@ -14732,20 +14664,15 @@ function Show-WDWindow {
 
     $uaAddField = {
         param($Field, $Host2)
-        # One box per SECTION, not per option, and that is a reversal worth
-        # recording. Every option was a bordered card of its own, which is the
-        # right answer on the Advanced page - two columns of forty short rows,
-        # where the card is what stops a name running into the next name. Here
-        # it was wrong for a reason that only shows up in one column: a column
-        # of boxes each holding one label and one text field is a stack of
-        # frames drawn around nothing, and the frame ends up louder than the
-        # field inside it. The section is the unit somebody works through, so
-        # the section gets the box, and the options inside it are separated by a
-        # hairline - present enough to group, quiet enough to disappear.
+        # ONE BOX PER SECTION, NOT PER OPTION. A card per option is right on the
+        # Advanced page - two columns of forty short rows, where the card stops one
+        # name running into the next - and wrong here for a reason that only shows
+        # in a single column: boxes each holding one label and one field are frames
+        # drawn around nothing, and the frame ends up louder than the field. The
+        # SECTION is the unit somebody works through, so the section gets the box.
         #
-        # Single column deliberately, unlike Advanced: these are a sequence to
-        # be worked through, not a list to be scanned, and half of them are
-        # text boxes that want the width.
+        # Single column deliberately: these are a sequence to work through rather
+        # than a list to scan, and half of them are text boxes that want the width.
         $kind = [string]$Field.T
         $ctrl = $null
 
@@ -14898,22 +14825,19 @@ function Show-WDWindow {
                 $null = $holder.Children.Add($ctrl)
             }
             'file' {
-                # A file picker, not a drop-down of one folder. The drop-down
-                # listed whatever happened to be in profile_saves, which is a
-                # database this form has no business being: a saved selection is
-                # a file somebody keeps where they keep files, and the whole
-                # point of one is carrying it between machines. The Load button
-                # on the home screen has always been a dialog for exactly that
-                # reason, and these two do the same job.
+                # A FILE PICKER, not a drop-down of one folder. The drop-down listed
+                # whatever was in profile_saves, which is a different question from
+                # "which selection": a saved selection is a file somebody keeps
+                # where they keep files, which is why the home screen's Load has
+                # always been a dialog.
                 #
-                # What is stored is still the LEAF NAME, because that is what
-                # the answer file can use: the generated command runs the
-                # toolkit out of C:\Windows\Setup\Scripts\WinSetupToolkit, which is a
-                # copy of the WinSetupToolkit folder off the medium, so the selection
-                # has to be inside that folder to exist at all. Picking one from
-                # anywhere else therefore copies it into profile_saves - without
-                # that the file would name a selection that never reaches the
-                # machine, and Setup would run with no selection at all.
+                # What is STORED is still the leaf name, because the generated
+                # command runs the toolkit out of
+                # C:\Windows\Setup\Scripts\WinSetupToolkit - a copy of the folder off
+                # the medium - so the selection has to be inside it to exist at all.
+                # Picking from anywhere else therefore COPIES it into profile_saves;
+                # without that the file names a selection that never reaches the
+                # machine, and Setup runs with none.
                 $row = New-Object Windows.Controls.StackPanel
                 $row.Orientation = 'Horizontal'
                 $ctrl = New-Object Windows.Controls.TextBox
@@ -15282,19 +15206,14 @@ function Show-WDWindow {
         $ui.PageUnattend.Add_SizeChanged($uaSizeRail)
 
         foreach ($sec in $UA_SECTIONS) {
-            # One box, and everything about the section is inside it: the title,
-            # the rule under the title, the section's own note, and the options.
-            # A titled panel rather than a heading floating above a group of
-            # loose cards - the box is what says where a section starts and
-            # stops, which is the whole complaint the per-option cards created.
-            # Stretch to a common width rather than shrink to fit, and that is
-            # the answer to "the boxes don't line up". They were left-aligned
-            # with a 700px ceiling, so each one was as wide as it needed to be
-            # and no two agreed - eleven boxes with eleven different right-hand
-            # edges down the left of a window twice that wide. One ceiling and
-            # Stretch gives them all the same two edges, which is what makes a
-            # column of boxes read as a column, and it uses the width that was
-            # sitting empty beside them.
+            # One box holding the whole section: title, rule, note, options. The
+            # box is what says where a section starts and stops.
+            #
+            # STRETCH TO A COMMON WIDTH, not shrink to fit. Left-aligned with a
+            # 700px ceiling, each box was as wide as it needed to be and no two
+            # agreed - eleven boxes with eleven different right-hand edges down the
+            # left of a window twice that wide. One ceiling plus Stretch gives them
+            # all the same two edges, and uses the width that was sitting empty.
             $block = New-Object Windows.Controls.Border
             $block.Margin = '0,0,0,14'; $block.Padding = '18,13,18,15'
             $block.CornerRadius = New-Object Windows.CornerRadius 6
@@ -15462,18 +15381,18 @@ function Show-WDWindow {
 
         # ---- auto-debloat needs an administrator, and says so ---------------
         #
-        # The run happens before anybody signs in, as Local System, so it needs
-        # no password and no UAC prompt - but it is the account this file
-        # creates that has to be able to undo it afterwards. A standard user
-        # cannot open the toolkit to revert, cannot run the rollback script, and
-        # cannot read half of what the run left behind. Offering to debloat a
-        # machine and leaving its only account unable to reverse that is the one
-        # combination this page should not be able to produce.
+        # The RUN needs no administrator - it happens as Local System before anybody
+        # signs in. But the account this file creates is the one that would have to
+        # UNDO it, and a standard user cannot open the toolkit to revert, cannot
+        # execute the rollback script, and cannot read half of what the run left
+        # behind. Debloating a machine and leaving its only account unable to
+        # reverse that is the one combination this page must not produce.
         #
-        # Grayed rather than hidden, with the reason beside it: a control that
-        # vanishes when an unrelated radio moves is a page that appears to have
-        # lost a feature. And forced Off rather than merely disabled, because a
-        # disabled On that is still selected is a file that still runs it.
+        # Grayed rather than hidden, with the reason in the HEADING row - the body
+        # is what gets hidden while the section is Off, so a reason printed there
+        # could only be read after the thing it forbids had been done. And forced
+        # Off, not merely disabled: a disabled On still selected is a file that
+        # still runs it.
         $gate = $uaGate['toolkit']
         $grpBox = @($uaControls | Where-Object { $_.Key -eq 'AccountGroup' })
         if ($gate -and $grpBox.Count) {
@@ -15713,20 +15632,16 @@ function Show-WDWindow {
         # differently-shaped one above one field.
         & $uaWarnBox 'wifi' $UA_PWD_WARN
 
-        # One paragraph, and the rest is in the README.
-        #
-        # This was five paragraphs plus a boxed four-paragraph section about
-        # pre-installed laptops - which is genuinely useful and genuinely not
-        # something to read before filling in a form. What has to be here is
-        # what the page is, that it does nothing to this machine, why somebody
+        # ONE PARAGRAPH, and the procedure is in the README. What has to be here is
+        # what the page is, that it does nothing to THIS machine, why somebody
         # would want one, and the instruction to leave the rest alone. Anything
-        # procedural - where the file goes, the Rufus conflict, the sysprep
-        # route on a machine that is already installed - is a thing you read
-        # once, with the stick in your hand, and that is what a README is for.
-        # README.md is a live link in both paragraphs that name it. It is the
-        # place both of them send somebody, it is sitting in the folder this
-        # application is running out of, and telling a reader the name of a file
-        # they then have to go and find is a citation where a door would do.
+        # procedural - where the file goes, the Rufus conflict, the sysprep route
+        # on a machine already installed - is read once with the stick in hand.
+        #
+        # README.md is a LIVE LINK in both paragraphs that name it: it is sitting
+        # in the folder this application is running out of, and telling a reader
+        # the name of a file they then have to find is a citation where a door
+        # would do.
         $readmeRun = {
             param($Block)
             $link = New-Object Windows.Documents.Hyperlink
@@ -15845,18 +15760,17 @@ function Show-WDWindow {
         [pscustomobject]@{ Options = $o; Xml = $xml; Check = (Test-WDUnattendXml -Xml $xml -Options $o) }
     }.GetNewClosure()
 
-    # Built before the page is shown, not after. It used to swap the pages over,
-    # pump a frame, and then build - which painted the empty page on purpose and
-    # is exactly what "the page appears blank and then fills in" is. A frame was
-    # pumped there so the window would not look frozen during the build, and the
-    # frame it bought was of nothing.
+    # BUILT BEFORE THE PAGE IS SHOWN, not after. It used to swap pages, pump a
+    # frame, then build - painting the empty page on purpose, which is the whole of
+    # "it appears blank and then fills in". The frame was there so the window would
+    # not look frozen, and it bought a frame of nothing.
     #
-    # Nothing to look at during the build either way, so the honest choice is
-    # which nothing: a blank version of the page you asked for, or the page you
-    # were already on for a moment longer. The second reads as a click that took
-    # a moment; the first reads as a page that is broken. It is normally neither,
-    # because the pre-warm has built this long before anybody clicks - see the
-    # $advWarm tick.
+    # There is nothing to look at during the build either way, so the choice is
+    # WHICH nothing: a blank version of the page you asked for, or the page you
+    # were already on for a moment longer. The second reads as a click that took a
+    # moment; the first reads as a page that is broken. Normally neither, because
+    # $advWarm has built this long before anybody clicks.
+    #
     # $ui.BtnUnattend is the home page's third card - see $buildHomeCards.
     $ui.BtnUnattend.Add_Click({
         & $uaBuild
@@ -16605,20 +16519,16 @@ function Show-WDWindow {
 
             # ---- the line under the bar, at the end -------------------------
             #
-            # That line tracks whatever is happening right now, and at the end
-            # nothing is - so it was left holding the last thing that had
-            # happened. On a simulation that is "Writing the report...", which
-            # sits under a full progress bar looking like a step that never
-            # finished. It gets the closing sentence instead: the same words the
-            # card at the bottom used to carry, in the place the eye is already
-            # on because the bar above it just filled.
+            # That line tracks what is happening now, and at the end nothing is -
+            # so it held the last thing that HAD happened, which on a simulation is
+            # "Writing the report..." sitting under a full bar looking like a step
+            # that never finished. It gets the closing sentence instead, where the
+            # eye already is because the bar above just filled.
             #
-            # And the bar goes green with it. A finished run and a run stopped
-            # halfway both end with a full bar, so the color is the only thing
-            # on the page saying which - green for a run that got to the end,
-            # left alone for one that was canceled. Cleared at the start of the
-            # next run rather than set back to a literal, so the ProgressBar
-            # keeps whatever its default is under the current theme.
+            # The bar goes green with it. A finished run and one stopped halfway
+            # both end with a full bar, so the colour is the only thing saying
+            # which. Cleared at the start of the next run rather than set back to a
+            # literal, so the ProgressBar keeps the current theme's default.
             if (-not $state.Sync.Cancel) { & $Ref $ui.BarOverall 'Foreground' 'Ok' }
 
             if ($state.Mode -eq 'revert') {
@@ -16875,15 +16785,13 @@ function Show-WDWindow {
 
     # ---- a run that already happened, put back on the page it belongs on ----
     #
-    # For -ShowRun, which is how the prompt at the first sign-in after a setup
-    # run opens "the results". The alternative was a second, read-only window
-    # that renders a report - and that is a whole page of interface built to
-    # look like the one three feet away from it, which would then have to be
-    # kept looking like it forever. This one drives the real page through the
-    # same two functions a live run does: $enterRunPage to put it back to zero,
-    # $addLogRow per item. Everything downstream - the status filter, the
-    # counters, Open log folder, Save a copy - is the real thing, working, with
-    # no idea the run is not happening right now.
+    # For -ShowRun, which is how the first-sign-in prompt opens "the results". The
+    # alternative was a second read-only window rendering a report - a whole page
+    # built to look like the one three feet away, which would then have to be KEPT
+    # looking like it forever. This drives the real page through the same two
+    # functions a live run does: $enterRunPage, then $addLogRow per item. The
+    # status filter, the counters, Open log folder, and Save a copy are all the
+    # real thing, with no idea the run is not happening now.
     #
     # It never starts a runspace and never touches the machine. The only thing
     # it fakes is the arrival of results.
