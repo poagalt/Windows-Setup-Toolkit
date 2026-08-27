@@ -236,26 +236,21 @@ function Get-WDPastRuns {
     <#
         Every apply this machine has a record of, newest first.
 
-        TWO SOURCES, merged on the run id, because neither is complete on its
-        own. The run FOLDERS carry the journals, which are the only thing that
-        can actually put anything back. The standing index (runs.jsonl at the
-        root) carries what "Delete old run logs" throws away - so a run whose
-        folder is gone still appears, named and dated, saying plainly that it
-        can no longer be undone. Silently forgetting that a machine was changed
-        is the one outcome worth more than the disk space.
+        TWO SOURCES, merged on the bare run id (not the folder name - the session
+        is 20260817-001047 and its folder is run-20260817-001047, so keying on
+        the directory lists every run twice). Neither is complete alone: the run
+        FOLDERS carry the journals, which are the only thing that can put
+        anything back, and runs.jsonl at the root outlives "Delete old run logs"
+        - so a run whose folder is gone still appears, named and dated, saying
+        plainly that it can no longer be undone.
 
-        RUNS BELONGING TO ANOTHER MACHINE ARE DROPPED, and that is not
-        theoretical: Export-WDRunFolder copies a run folder to the desktop
-        precisely so it can be carried away, and one copied back here describes
-        registry values that were never on this computer. Replaying it would
-        write another machine's settings over this one's, with a journal saying
-        it was a restoration.
+        RUNS FROM ANOTHER MACHINE ARE DROPPED. Export-WDRunFolder copies a run to
+        the desktop precisely so it can be carried away, and one brought back
+        here describes registry values that were never on this computer.
 
-        SameMachine is three-valued and only an explicit $false is excluded.
-        Every run written before identities were recorded answers "cannot say",
-        and treating those as foreign would empty this page for everybody who
-        used the toolkit before this build - so they are kept, and the page says
-        which ones could not be confirmed.
+        SameMachine is three-valued and only an explicit $false excludes. Runs
+        written before identities were recorded answer "cannot say", and calling
+        those foreign would empty this page for everybody on an older build.
     #>
     param([string]$Root, [switch]$AllMachines)
 
@@ -382,16 +377,11 @@ function Get-WDRemovedItems {
         $provisioned = @($Provisioned)
     }
 
-    # And the packages that are installed right now, enumerated ONCE. This was a
-    # Get-AppxPackage -Name per removed package, which is about 76 ms each and was
-    # the real cost of this whole function - 2,220 ms of it on a machine with 29
-    # removed packages, against 170 ms for one enumeration of the lot. The DISM
-    # call above it took the blame for years because it is the one that sounds
+    # Installed packages, enumerated ONCE. A Get-AppxPackage -Name per removed
+    # package is ~76 ms each and was the real cost here - 2,220 ms against 170 for
+    # one enumeration. The DISM call above took the blame because it sounds
     # expensive; measured unelevated, where DISM refuses instantly, the 2.2
-    # seconds did not move.
-    #
-    # Lazy, for the same reason $provisioned is: a run that removed no Store
-    # package should not enumerate them.
+    # seconds did not move. Lazy, so a run that removed no package never pays it.
     $installed = $null
 
     foreach ($run in $Runs) {
@@ -490,16 +480,13 @@ function Start-WDRemovedScan {
         $rs.Open()
         $ps = [powershell]::Create()
         $ps.Runspace = $rs
-        # ONLY THE DISM CALL CROSSES, not the whole function. Journal reading is
-        # file I/O and JSON, which is fast and needs four toolkit modules; the
-        # provisioned-package query is the entire cost and needs none of them.
-        # Sending the function over meant the runspace spent its first 600 ms
-        # importing before it could start the thing being waited for, and that
-        # 600 ms came straight off the overlap - measured as the difference
-        # between an "extra" phase of 1,666 ms and one of about 100.
+        # ONLY THE DISM CALL CROSSES, not the whole function. Sending the function
+        # over meant the runspace spent its first 600 ms importing four modules
+        # before it could start the thing being waited for, and that came straight
+        # off the overlap.
         #
         # No comma: EndInvoke hands back a collection of what the script emitted,
-        # so ",@(...)" would make that one element holding the whole array.
+        # so ",@(...)" would be one element holding the whole array.
         $null = $ps.AddScript({
             @(Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
                 ForEach-Object { $_.DisplayName })
@@ -545,50 +532,42 @@ function Get-WDUndoStatus {
     <#
         How much of one run is still in place.
 
-        Offering "Roll back 15 August, 22:30" over a run that has already been
-        rolled back - by this script, by hand, or by an MDM putting its policies
-        straight back - is the same defect as a preview reporting 121 changes on
-        a machine where all 121 are already made. The journal says what was
-        changed and what it was before, so the question is answerable: read each
-        target and see which side of the change it is on.
+        Offering "Roll back 15 August, 22:30" over a run already rolled back - by
+        this script, by hand, or by an MDM putting its policies back - is the same
+        defect as a preview promising 121 changes where all 121 are already made.
+        The journal holds what changed and what it was before, so the question is
+        answerable: read each target and see which side of the change it is on.
 
-        Three counts, and Unknown is a real answer rather than a rounding error:
+        Three counts, and Unknown is a real answer:
 
           Outstanding  the change this run made is still in place
           Done         the machine is back at the previous value
           Unknown      could not be asked cheaply, or at all
 
-        Unknown is mostly the default profile. Values written with scope
-        allusers go to HKU:\WD_DEFAULT as well, and that hive is only mounted
-        for the length of a run - about a third of a full run's registry
-        entries, which is far too many to fold silently into either of the other
-        two. Scheduled tasks and Windows features are Unknown for cost: one
-        Get-ScheduledTask is about a second and DISM is worse, and this runs
-        once per past run while somebody waits on a page.
+        UNKNOWN IS MOSTLY THE DEFAULT PROFILE. allusers values go to
+        HKU:\WD_DEFAULT too, and that hive is only mounted for the length of a run
+        - about a third of a full run's registry entries, far too many to fold
+        into either of the others. Features, capabilities, and winget packages are
+        Unknown for cost.
 
-        Nothing here changes anything, and it deliberately does not mount
-        anything either - a status read that loads a registry hive is no longer
-        a status read.
+        Changes nothing, and MOUNTS nothing: a status read that loads a registry
+        hive is no longer a status read.
     #>
     param([Parameter(Mandatory)][string]$Journal)
 
     $out = [pscustomobject]@{ Total = 0; Outstanding = 0; Done = 0; Unknown = 0 }
     if (-not (Test-Path -LiteralPath $Journal)) { return $out }
 
-    # Read through Get-WDUndoPlan, which is what the rollback script is
-    # generated from. Two things follow, and both were wrong before.
+    # THROUGH Get-WDUndoPlan, which is what the rollback script is generated from,
+    # so the number on the page and the list in the script cannot disagree. Two
+    # things come with it:
     #
-    # The previous value is normalised, so a string compares against a string.
-    # The journal used to hold a PowerShell literal for those - "'Allow'", quotes
-    # included - and this compared it against the machine's Allow and found them
-    # different, so all 75 string values in a real run read as outstanding for
-    # ever, including straight after a rollback that had put every one of them
-    # back. Nothing about that is visible from the page: the count is simply too
-    # high, which is the failure mode this whole read exists to prevent.
-    #
-    # And duplicates are gone. Two options can write the same value; only the
-    # first entry knows what was there before the run, so counting both counted
-    # a change that the rollback does not make.
+    #   - previous values are normalised, so a string compares against a string.
+    #     Holding a PowerShell literal ("'Allow'", quotes included) made all 75
+    #     string values in a real run read as outstanding for ever, including
+    #     right after a rollback that had restored every one.
+    #   - duplicates are gone. Two options can write the same value, and only the
+    #     first entry knows what was there before the run.
     $plan = Get-WDUndoPlan -Journal $Journal
     if (Get-Command Use-WDUserHiveDrive -ErrorAction SilentlyContinue) { Use-WDUserHiveDrive }
 
@@ -817,20 +796,14 @@ function Invoke-WDRevertPlan {
                 'effect'    { $r = Remove-WDRecurringEffect -Id $op.Id -Preview:$Preview }
                 'reinstall' { $r = Invoke-WDReinstall -Item $op.Item -Preview:$Preview }
                 'rollback'  {
-                    # Restricted to named options when the page asked for some
-                    # rather than all of them. The script's own -Only is used
-                    # rather than a second executor here, because that script is
-                    # the tested one and duplicating it would mean two answers
-                    # to "how is a step put back".
+                    # The script's own -Only, not a second executor here: that
+                    # script is the tested one, and a copy means two answers to
+                    # "how is a step put back".
                     #
-                    # The caller orders these NEWEST FIRST, which is what makes
-                    # a value several runs wrote come out right: June's script
-                    # puts it back to what it was before June, then March's puts
-                    # it back to what it was before March, and the last write
-                    # wins. Oldest first would leave June's value standing.
-                    # Not $args: that is an automatic variable, and assigning to
-                    # it inside a function that also takes parameters is a trap
-                    # this file has no reason to walk into.
+                    # The caller orders these NEWEST FIRST, which is what gets a
+                    # value several runs wrote right: June's script restores
+                    # pre-June, then March's restores pre-March, and the last
+                    # write stands. Oldest first leaves June's value standing.
                     $only = @(@($op.Only) | Where-Object { $_ })
                     $cmdArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$($op.Path)`"", '-Console')
                     if ($only.Count) { $cmdArgs += @('-Only', ($only -join ',')) }
@@ -870,16 +843,12 @@ function Invoke-WDRevertPlan {
 
 # ================================================== the rollback script =====
 #
-# Export-WDUndoScript lives here rather than in WD.Core, where it started. It
-# is the third thing in this module that undoes what a past run did, and Core
-# is the session, the log and the journal - the thing this reads, not the thing
-# that reads it. Nothing else moved with it, so the four generated-runner import
-# lists in WD.UI are untouched: WD.Revert is already in all of them.
+# Here rather than WD.Core because this is the third thing in this module that
+# undoes a past run, and Core is what a rollback READS rather than what reads it.
 #
-# The generator's one job is to hand the emitted script REAL VALUES. Everything
-# about quoting, escaping and rendering belongs on this side, because the
-# script cannot import anything and a mistake in it is only ever discovered by
-# somebody running a rollback.
+# The generator's one job is to hand the emitted script REAL VALUES. Quoting,
+# escaping, and rendering all belong on this side: the script imports nothing,
+# and a mistake in it is only ever discovered by somebody running a rollback.
 
 function ConvertTo-WDPsLiteral {
     <#
@@ -1195,16 +1164,13 @@ function Get-WDUndoStepKind {
     }
 }
 
-# The verbs an item description actually opens with, in the past tense. Harvested
-# from the manifest rather than imagined: of 266 descriptions, about 77 begin with
-# one of these and the other 190 begin with a noun - "The taskbar search box...",
-# "Windows sends...", "Microsoft's..." - which describe the SUBJECT and read
-# correctly on either page, so they are left exactly as they are.
+# The verbs item descriptions actually open with, past-tensed. HARVESTED from the
+# manifest, not imagined: ~107 of 266 begin with one of these and the rest begin
+# with a noun ("The taskbar search box...", "Windows sends...") which describes
+# the SUBJECT and reads correctly on either page, so those are left alone.
 #
-# The irregulars are why this is a table and not a rule. Takes/Took, Goes/Went,
-# Hides/Hid, Leaves/Left, Makes/Made, Runs/Ran, Brings/Brought, Holds/Held,
-# Gives/Gave, Writes/Wrote and Sets/Set all break "add -ed", and half of them
-# appear in the list.
+# A table rather than a rule because the irregulars break "add -ed": Takes/Took,
+# Goes/Went, Hides/Hid, Leaves/Left, Makes/Made, Runs/Ran, Holds/Held, Sets/Set.
 $script:WDPastVerbs = @{
     'adds' = 'Added'; 'blocks' = 'Blocked'; 'brings' = 'Brought'; 'checks' = 'Checked'
     'clears' = 'Cleared'; 'compacts' = 'Compacted'; 'confirms' = 'Confirmed'
@@ -1248,25 +1214,21 @@ function Get-WDRevertDescription {
     <#
         An item's own description, in the tense the Revert page is written in.
 
-        The page lists what this machine has already had done to it, so a line
-        reading "Stops Windows sending diagnostic data" is describing something
-        that already happened as though it were about to. Past tense is the whole
-        adjustment: "Stopped Windows sending diagnostic data" is true, is what
-        somebody is looking at, and needs no other words.
+        The page lists what a machine has ALREADY had done to it, so "Stops
+        Windows sending diagnostic data" describes something that already happened
+        as though it were about to.
 
-        PAST TENSE RATHER THAN REVERSAL VOICE, and that was the first attempt.
-        Turning "Stops X" into "Allows X" needs the object rearranged - "Allows
-        Windows sending diagnostic data" is not English, it wants "to send" - and
-        every rule that fixes one description breaks another. Past tense touches
-        one word and cannot produce a sentence that does not parse.
+        PAST TENSE RATHER THAN REVERSAL VOICE. Turning "Stops X" into "Allows X"
+        needs the object rearranged - "Allows Windows sending diagnostic data"
+        wants "to send" - and every rule that fixes one description breaks
+        another. Past tense touches one word and cannot produce a sentence that
+        does not parse.
 
         THE WHOLE SENTENCE MOVES OR NONE OF IT DOES. "Removes the Copilot app and
-        blocks its return" has to become "Removed ... and blocked ..." or the two
-        halves disagree, and the second half would be claiming a removal is still
-        being enforced by a run somebody is looking at undoing. But a description
-        that OPENS with a noun is not in this voice at all, and rewriting a later
-        clause of one would leave it half in each - so a clause is only touched
-        when the first word was.
+        blocks its return" must become "Removed ... and blocked ...", or the
+        second half claims a removal is still being enforced by the run you are
+        undoing. But a description OPENING with a noun is not in this voice at
+        all, so a later clause is only touched when the first word was.
     #>
     param([string]$Desc)
     $Desc = [string]$Desc
@@ -1933,26 +1895,22 @@ function global:Enter-WDUndoSingleInstance {
     <#
         One copy of anything that changes this machine, at a time.
 
-        THE MUTEX NAME IS THE TOOLKIT'S. This script and the toolkit are mutually
-        exclusive, not merely one of each, and this is the half that matters most:
-        a rollback script is precisely the thing that must not run while somebody
-        has the Revert page open. Two of them going at once each read the other's
-        changes as the "previous value" they are restoring from, and the machine
-        ends holding values nobody chose.
+        THE MUTEX NAME IS THE TOOLKIT'S, so the two are mutually exclusive rather
+        than one of each - a rollback is precisely the thing that must not run
+        while the Revert page is open. Two at once each read the other's changes as
+        the "previous value" they restore from.
 
         A HANDLE, NOT OWNERSHIP. WaitOne/ReleaseMutex is thread-affine and has the
-        abandoned-mutex case to get right; a named mutex object exists for as long
-        as any handle is open, and Windows closes handles however a process dies.
-        So "did I create it" is the whole question, and there is nothing to
-        release and nothing to leak.
+        abandoned-mutex case to get right; a named mutex lives as long as any
+        handle is open and Windows closes handles however a process dies, so "did
+        I create it" is the whole question.
 
-        Spelled out again here rather than imported, like every other helper in
-        this file: the premise of this script is that it runs on a machine where
-        the toolkit may be gone.
+        Spelled out again rather than imported, like every helper here: the premise
+        of this script is that the toolkit may be gone.
 
-        Never refuses on its own failure. If the interlock cannot be built, the
-        answer is yes - a rollback somebody is trying to run is not worth blocking
-        over a guard that would not build.
+        NEVER REFUSES ON ITS OWN FAILURE - if the interlock cannot be built, the
+        answer is yes. Blocking a rollback over a guard that would not build is
+        worse than the thing guarded against.
     #>
     $createdNew = $false
     try {
@@ -2188,34 +2146,29 @@ function global:Invoke-WDUndoConsole {
 }
 '@
 
-# The window. Separate from the body above only so the two can be read apart:
-# everything here is interface, and everything above it works with no screen.
+# The window. Split from the body above only so the two read apart: everything
+# here is interface, everything above works with no screen.
 #
-# It is deliberately the same page the toolkit's own Advanced list is - a
-# category heading, a rule, a row per option with a tick and a tag, an index of
-# counts down the side, and a footer that says what pressing the button will
-# do. Somebody who has used the toolkit has already learnt this page, and this
-# is the screen they see when something has gone wrong, which is the worst
-# possible moment to make them learn a second one.
+# DELIBERATELY THE SAME PAGE as the toolkit's Advanced list - heading, rule, a row
+# per option with a tick and a tag, an index of counts down the side. Somebody who
+# has used the toolkit has already learnt this page, and this is the screen they
+# see when something has gone wrong.
 #
-# It does NOT re-implement the toolkit's own Revert page. That one lists
-# recurring effects and removed software across every past run, from a machine
-# that still has the toolkit on it. This is one run, on a machine that may not.
+# It is NOT the toolkit's Revert page. That lists recurring effects and removed
+# software across every run, from a machine that still has the toolkit. This is
+# one run, on a machine that may not.
 $script:WDUndoWindow = @'
 
 # ============================================================= the window ===
 #
-# The toolkit's Advanced page, as closely as a file that imports nothing can
-# carry it: both palettes, the retemplated Button, TextBox and ComboBox, the
-# thin scrollbars, the index rail with a scroll spy on it, Group by and Sort
-# by, a multi-select filter, a collapse control and a Select all on every
-# heading with a page-wide one beside them in the toolbar, and the same splash
-# in front of it while the machine is read.
+# The toolkit's Advanced page, as closely as a file importing nothing can carry
+# it: both palettes, the retemplated controls, the thin scrollbars, the index rail
+# with its scroll spy, Group by and Sort by, the filter, and the same splash.
 #
-# It is a COPY, and it has to be one. The whole point of this file is that it
-# runs where the toolkit does not - on a machine somebody has just changed,
-# possibly badly, possibly with the folder it came from already thrown away.
-# Nothing here may import anything, so everything it needs is spelled out.
+# IT IS A COPY AND IT HAS TO BE ONE. The premise of this file is that it runs
+# where the toolkit does not - on a machine somebody has just changed, possibly
+# badly, possibly with the folder it came from already thrown away. A rollback
+# that depends on the thing under test is not a rollback.
 
 function global:Get-WDUndoThemeKey {
     <#  Whatever the caller said, reduced to 'dark' or 'light'. One place, so
@@ -3256,42 +3209,31 @@ function global:Show-WDUndoWindow {
     $tag  = @{ done = 'already back'; unknown = 'cannot tell from here' }
     $col  = @{ done = 'Ok';           unknown = 'Muted' }
 
-    # DECLARED HERE RATHER THAN BESIDE THE GROUPING IT MOSTLY SERVES, and that
-    # placement is load-bearing. $makeRow is a bare block invoked from this
-    # function's own frame, so it resolves $state at the moment it runs - and it
-    # runs in the loop below. Declared after that loop, as it was, every row
-    # would read $null.Terse, which is falsy, and the descriptions would come up
-    # showing however the option was set.
+    # DECLARED BEFORE THE ROW LOOP, and that placement is load-bearing: $makeRow
+    # resolves $state when it runs, which is in the loop below. Declared after it,
+    # every row read $null.Terse - falsy - and descriptions came up showing
+    # whatever the option said to hide.
     #
-    # Terse is Non-verbose, and it is the DEFAULT, exactly as it is in the
-    # application: the standing description is the same on every visit, which is
-    # what somebody who has read the list once reads past, and Details still
-    # carries the whole of it for the one option being asked about. There is no
-    # settings file here to remember the choice between launches, which is the
-    # one way this cannot match - a script that stands alone has nowhere to keep
-    # a preference.
+    # Terse is Non-verbose and is the DEFAULT, as in the application. The one way
+    # this cannot match: a script that stands alone has nowhere to remember the
+    # choice between launches.
     $state = @{ Group = 'category'; Sort = 'name'; Booting = $true; Terse = $true }
 
-    # The splash animates on its own thread so it cannot freeze, but a line that
-    # does not move for three seconds says the same thing a frozen one does.
-    # Building the rows is the longer half of the wait now that the machine read
-    # is cached, so it reports like the read does.
-    # ONE SCRIPTBLOCK PER ROW, AND THAT IS A COST DECISION RATHER THAN A TIDY
-    # ONE. GetNewClosure copies the LOCALS of the scope it is written in, and
-    # there are five closures on every row. Written inline in this function's
-    # body, six hundred of them each copied every local Show-WDUndoWindow has -
-    # and this function has a lot of them. Written inside a block of its own,
+    # Reports progress like the machine read does: the splash animates on its own
+    # thread, but a line that does not move for three seconds says the same thing
+    # a frozen one does.
+    #
+    # THE ROW BUILDER IS ITS OWN BLOCK, and that is a cost decision.
+    # GetNewClosure copies the LOCALS of the scope it is written in, and there are
+    # five closures per row - written inline, six hundred of them each copy every
+    # local this function has, and it has a lot. Written in a block of its own,
     # they copy that block's dozen.
     #
-    # THE BUILDER ITSELF IS A CLOSURE, once, and that is a different question
-    # from the six hundred. Everything it needs arrives as a parameter except
-    # $state, which it reads for Non-verbose - and Refresh calls this again, so
-    # a bare block would resolve that name against whoever invoked it. From a
-    # WPF handler that is this function's own live frame and works; reached
-    # through the -BuildOnly diagnostic after the function has returned it is
-    # $null, and $null.Terse is falsy, so every rebuilt row would come up
-    # showing a description the option says to hide. One dynamic module rather
-    # than six hundred.
+    # AND THE BUILDER ITSELF IS A CLOSURE, which is a different question.
+    # Everything arrives as a parameter except $state, and Refresh calls this
+    # again - a bare block would resolve $state against whoever invoked it. From a
+    # WPF handler that is this function's live frame and works; through the
+    # -BuildOnly diagnostic, after it has returned, it is $null.
     $makeRow = {
         param($O, $RefFn, $TagText, $TagInk)
         $Ref = $RefFn
@@ -3405,17 +3347,14 @@ function global:Show-WDUndoWindow {
             $dscEl = $dt
         }
 
-        # WHAT AN UNTICKED ROW MEANS, SAID ON THE ROW. Every option here arrives
-        # ticked, so clearing one is a decision - the same decision as clearing a
-        # row a preset selected on the Advanced page, and marked the same way: the
-        # name in Bad and bold. What this line adds is the half a colour cannot
-        # carry, because on that page the tick is what a run will do and on this
-        # one it is what a run will UNDO, and red on a page about putting things
-        # back could as easily read as the dangerous half.
+        # WHAT AN UNTICKED ROW MEANS, SAID ON THE ROW. Every option arrives ticked,
+        # so clearing one is an edit - marked like an edit on the Advanced page,
+        # name in Bad and bold. The words are the half a colour cannot carry: there
+        # a tick is what a run will DO, here it is what a run will UNDO, and red
+        # alone could as easily read as the dangerous half.
         #
-        # Built empty and collapsed on every row rather than only where it is
-        # needed: a row that grew its notice only if somebody remembered to build
-        # one is a rule that silently does half its job.
+        # Built empty and collapsed on EVERY row: a notice that exists only where
+        # somebody remembered to build one is a rule that does half its job.
         $skip = New-Object Windows.Controls.TextBlock
         $skip.Text = 'Option will not be reverted'
         $skip.FontSize = 12.5; $skip.TextWrapping = 'Wrap'; $skip.Margin = '0,4,0,0'
@@ -3490,18 +3429,15 @@ function global:Show-WDUndoWindow {
             $card.Add_MouseLeave({ & $refL $card 'Background' 'Flat'     }.GetNewClosure())
         }
 
-        # CLICKING THE ROW TICKS IT. A tick box is a 13px target on a row 40px
-        # tall and the whole width of a column; aiming at the box was the only
-        # way in. Two things it has to honour, both learnt on the other page: a
-        # Button marks the click handled before it bubbles, so the Details chip
-        # does not also toggle the row it sits on, and IsEnabled does not block a
-        # programmatic set, so the row has to check it or an already-back option
-        # would tick from a click on its name.
+        # CLICKING THE ROW TICKS IT. A tick box is a 13px target on a row 40px tall
+        # and a column wide. Two things it must honour: a Button marks its click
+        # handled before it bubbles, so the Details chip does not also toggle the
+        # row it sits on; and IsEnabled does not block a PROGRAMMATIC set, so the
+        # row has to test it or an already-back option ticks from a click on its
+        # name.
         #
-        # And it repaints the counts itself. The box is wired on Add_Click, which
-        # does not fire for a programmatic set, so the row does what the box's own
-        # handler would have done. Filled in by the loop that wires the boxes,
-        # since that is where the two blocks are in scope.
+        # It also repaints the counts itself - the box is wired on Add_Click, which
+        # does not fire for a programmatic set.
         $card.Add_MouseLeftButtonUp({
             if (-not $args[1].Handled -and $this.Tag.Box.IsEnabled) {
                 $this.Tag.Box.IsChecked = -not [bool]$this.Tag.Box.IsChecked
@@ -4290,19 +4226,14 @@ function global:Show-WDUndoWindow {
 
     # ---- Non-verbose ------------------------------------------------------
     #
-    # The standing description is the same on every visit, which is exactly what
-    # somebody who has read this list once is reading past - so it is off as
-    # shipped, and Details still carries the whole of it for the one option being
-    # asked about. Collapsed rather than skipped, so turning it back on does not
-    # need the page rebuilt; a row built after the tick comes up right on its own,
-    # because $makeRow asks $state.Terse for itself.
-    # A CLOSURE, NOT A BARE BLOCK, and that is the difference between working and
-    # silently doing nothing. A bare block resolves its names against whatever
-    # scope invokes it, which is fine for a WPF handler - this function is still
-    # on the stack, blocked in ShowDialog. -BuildOnly reaches it through the
-    # returned diagnostic object, by which point this frame is gone: the block
-    # then sees no $rows and no $state, sets nothing, and reports no error.
-    # Measured as "visible 0 -> 0 -> 0" with everything else about it correct.
+    # Off as shipped: the standing description is the same on every visit, and
+    # Details still carries the whole of it for the one option being asked about.
+    # COLLAPSED, NOT SKIPPED, so turning it back on needs no rebuild.
+    #
+    # A CLOSURE, NOT A BARE BLOCK. A bare block resolves against whatever scope
+    # invokes it, which is fine from a WPF handler - this function is still on the
+    # stack in ShowDialog. -BuildOnly reaches it after the frame is gone, where it
+    # sees no $rows and no $state, sets nothing, and REPORTS NO ERROR.
     $applyTerse = {
         $vis = $(if ($state.Terse) { 'Collapsed' } else { 'Visible' })
         foreach ($r in $rows) {
@@ -4354,20 +4285,17 @@ function global:Show-WDUndoWindow {
 
     # ---- Refresh ----------------------------------------------------------
     #
-    # This page is a READING of the machine, taken when the window opened, and
-    # somebody may have put something back since - in regedit, in services.msc,
-    # or with the toolkit itself open beside this. Refresh asks again.
+    # The page is a READING of the machine taken when the window opened, and
+    # somebody may have put something back since - in regedit, or with the toolkit
+    # open beside this.
     #
-    # A REBUILD, not a repaint, and that is the same answer the application's own
-    # Revert page gives: this page IS its reading, so an option's state decides
-    # whether its box takes a tick, whether its name is struck through, whether
-    # the row answers the pointer at all, and which of the three bands it is
-    # filed under. Repainting all of that in place would mean unwiring hover
-    # handlers, which WPF does not offer.
+    # A REBUILD, not a repaint: an option's state decides whether its box takes a
+    # tick, whether its name is struck through, whether the row answers the
+    # pointer, and which band it is filed under. Repainting that in place would
+    # mean unwiring hover handlers, which WPF does not offer.
     #
-    # The ticks do not survive it, and cannot: a rebuild makes new boxes. That is
-    # the honest cost of the button, and it is why the tooltip says what it does
-    # rather than only that it refreshes.
+    # The ticks cannot survive it - a rebuild makes new boxes - which is why the
+    # tooltip says so rather than only that it refreshes.
     $ui.BtnRefresh.Add_Click({
         # Paint first. The read is seconds of a blocked UI thread, so the button
         # goes dead and the line above says what is happening before any of it
@@ -4571,17 +4499,15 @@ function global:Show-WDUndoWindow {
 }
 '@
 
-# Double-clicking a .ps1 opens a text editor. That is Windows' own association
-# and nothing in a .ps1 can change it, so the rollback script shipped with an
-# instruction - "double-click it" - that was wrong on every machine.
+# Double-clicking a .ps1 opens a text editor - Windows' own association, which
+# nothing in a .ps1 can change. So the run folder's "double-click it" was wrong on
+# every machine, and the script ships with a launcher beside it.
 #
-# So it ships with a launcher beside it, exactly as the toolkit itself does.
-# Same rules as Run-WinSetupToolkit.cmd and for the same reasons: no byte order mark,
-# because cmd.exe does not strip one and the first line then reads as the
-# command "<BOM>@echo", which fails and leaves echo on for the whole file; CRLF,
-# because labels and parenthesised blocks are unreliable with bare LF; and the
-# admin probe is `reg query HKU\S-1-5-19`, because `net session` needs the
-# Server service and `openfiles` needs a flag most machines do not have.
+# Same three rules as Run-WinSetupToolkit.cmd: NO BOM (cmd.exe does not strip one,
+# so the first line reads as "<BOM>@echo", fails, and leaves echo on for the whole
+# file), CRLF (labels and parenthesised blocks are unreliable with bare LF), and
+# `reg query HKU\S-1-5-19` for the admin probe (net session needs the Server
+# service, openfiles needs a flag most machines lack).
 $script:WDUndoLauncher = @'
 @echo off
 setlocal
@@ -4844,19 +4770,14 @@ function Export-WDUndoScript {
     foreach ($o in $plan.Owners) { $null = $sb.AppendLine('    ' + (& $q $o)) }
     $null = $sb.AppendLine(')')
 
-    # WHAT EACH OPTION DID, in the past tense the window is written in.
+    # WHAT EACH OPTION DID, past-tensed. Without it the page named an option and
+    # counted its changes and never said what it was - "Office telemetry, 4
+    # changes" was all somebody deciding had to go on.
     #
-    # Without this the page names an option, counts its changes, and never says
-    # what the option was - so "Office telemetry, 4 changes" was the whole of
-    # what somebody deciding whether to put it back had to go on. The Revert page
-    # inside the application has carried the line for months; this is the same
-    # line, from the same manifest field, through the same Get-WDRevertDescription.
-    #
-    # Keyed by option and emitted once each, not per step: a hundred steps of one
-    # option would otherwise repeat one paragraph a hundred times in a file whose
-    # premise is that it can be read. Absent for a journal read back with no plan
-    # in hand, in which case the rows simply carry no description, exactly as they
-    # did before.
+    # KEYED BY OPTION AND EMITTED ONCE EACH, not per step: a hundred steps of one
+    # option would repeat one paragraph a hundred times in a file whose premise is
+    # that it can be read. Absent when the journal is read with no plan in hand,
+    # where the rows simply carry no description.
     $null = $sb.AppendLine('')
     $null = $sb.AppendLine('# What each option did, in the past tense - the same line the Revert page')
     $null = $sb.AppendLine('# shows. Empty if this script was written without the plan in hand.')
