@@ -43,24 +43,20 @@ function Get-WDPalette {
     }
 
     if ($dark) {
-        # ScrollThumb sits between Line and Muted: a bar this narrow has to be
-        # findable against the page without being the loudest thing on it, and
-        # Line - which is a hairline color, chosen to disappear - was not enough
-        # once the thumb grew from four pixels to eleven.
-        # BtnBg/BtnBorder/BtnTint and FieldBg exist because a Button, a TextBox
-        # and a ComboBox all keep the system chrome unless they are retemplated,
-        # and the system chrome is light in both palettes. The button face is
-        # lifted clear of Card so a button still reads as raised off the surface
-        # it sits on; the tint is what the pointer adds, and it is translucent
-        # rather than opaque so it composites over a button that carries a color
-        # of its own rather than replacing it.
-        # Text is a light gray, not white. Pure white on a near-black page is
-        # about 17:1, which is far past readable and into glare - the letters
-        # bloom and a long list of them is tiring to read down. #BA is ~8:1
-        # against the page, still comfortably above the 4.5:1 anybody needs, and
-        # it leaves Sub a visible step below rather than the two being separated
-        # by a shade nobody can see. Sub at #9A is ~5.7:1, which is the floor
-        # this pair can go to - a third step down would put it under.
+        # ScrollThumb sits between Line and Muted: a bar this narrow must be
+        # findable without being the loudest thing on the page, and Line is a
+        # hairline colour chosen to disappear.
+        #
+        # BtnBg/BtnBorder/BtnTint and FieldBg exist because Button, TextBox, and
+        # ComboBox all keep the SYSTEM chrome unless retemplated, and that chrome
+        # is light in both palettes. BtnTint is translucent so it composites OVER
+        # a button carrying a colour of its own rather than replacing it.
+        #
+        # Text is a light gray, NOT white. Pure white on a near-black page is
+        # ~17:1, which is past readable and into glare - the letters bloom and a
+        # long list is tiring to read down. #BA is ~8:1, and leaves Sub (#9A,
+        # ~5.7:1) a visible step below rather than a shade nobody can see. 5.7 is
+        # the floor for that pair; a third step would go under 4.5.
         @{ Dark=$true; Bg='#FF1F1F1F'; Panel='#FF2B2B2B'; Card='#FF303030'; CardSel='#FF37475A'
            Text='#FFBABABA'; Sub='#FF9A9A9A'; Line='#FF454545'; Accent='#FF4CA6FF'
            Ok='#FF5FD07F'; Warn='#FFE8B44A'; Bad='#FFF06C6C'; Muted='#FF9E9E9E'; RowHover='#FF3A3A3A'
@@ -183,23 +179,15 @@ function Show-WDMessage {
         return [string]$box::Show($Text, $Title, $Buttons, $Icon)
     }
 
-    # NOTHING IN THIS APPLICATION MAKES A NOISE. Warning played the system
-    # Exclamation and Error played Hand, on the reasoning that the two dialogs
-    # reporting a real problem are the two where the sound is the point.
+    # NOTHING IN THIS APPLICATION MAKES A NOISE. A dialog is already the loudest
+    # thing this interface can do - modal, centred over the window, with the
+    # message in it - and the sound fires in whatever room the machine is in.
     #
-    # That was already the narrow end of a decision this file made twice - it is
-    # why every informational dialog passes 'None', to keep a ding off every
-    # Details click - and the narrow end is not defensible either. A dialog is
-    # already the loudest thing this interface can do: it is modal, it is centred
-    # over the window, and it has the message in it. The sound adds nothing a
-    # reader needs and fires in whatever room the machine happens to be in.
-    #
-    # The one argument for keeping it was accessibility, and it does not hold:
-    # a system sound is not an accessibility feature, a screen reader announces
-    # the dialog and its icon on its own, and Windows' own sound scheme is a
-    # setting the person has already made elsewhere. Decoupling the glyph from
-    # the noise was the point of replacing MessageBox in the first place; this
-    # is the rest of it.
+    # The one argument for keeping it was accessibility and it does not hold: a
+    # system sound is not an accessibility feature, a screen reader announces the
+    # dialog and its icon on its own, and Windows' sound scheme is a setting the
+    # person already made. Decoupling the glyph from the noise was the POINT of
+    # replacing MessageBox; this is the rest of it.
 
     $ref = {
         param($El, [string]$Prop, [string]$Key)
@@ -2848,23 +2836,17 @@ function Show-WDWindow {
     $machineInv = $null
     if ($Scan) { $machineInv = $Scan.Inventory }
 
-    # "Is there anything left for this to do", for every item, on a runspace of
-    # its own. It is the single most expensive question the item list asks -
-    # 2,599 ms across the manifest on this machine - and it was being asked one
-    # row at a time on the UI thread, inside the build the whole deferral
-    # mechanism exists to keep short.
+    # The item list's most expensive question - 2,599 ms across the manifest -
+    # moved off the UI thread, where it was asked one row at a time inside the
+    # build the whole deferral mechanism exists to keep short.
     #
-    # An answer is a string, so nothing here has thread affinity: this is the
-    # same boundary Get-WDItemPresence already crosses, and it crosses it for
-    # the same reason. Started here rather than on the scan runspace because the
-    # main thread WAITS on that one - 2.6 seconds added there is 2.6 seconds
-    # added to the launch, where here it runs underneath the mode screen being
-    # built and read.
+    # Its OWN runspace, not the scan's, because the main thread WAITS on that one:
+    # 2.6s added there is 2.6s added to the launch, where here it runs underneath
+    # the mode screen being read.
     #
-    # A MAP THAT IS NOT READY YET IS NOT A PROBLEM. $alreadySatisfied asks the
-    # map and falls through to asking the machine, so a row built before its
-    # answer arrives is correct and merely slower - which is exactly what every
-    # row was before this. Nothing waits on it and nothing is wrong without it.
+    # A MAP THAT IS NOT READY IS NOT A PROBLEM. $alreadySatisfied asks the map and
+    # falls through to the machine, so a row built before its answer arrives is
+    # correct and merely slower. Nothing waits on it.
     $satisfiedJob = Start-WDSatisfiedScan -ModulePath $ModulePath -Categories $Categories `
                                           -Inventory $machineInv -Profile $Profile
     $satisfiedMap = $(if ($satisfiedJob) { $satisfiedJob.Map } else { @{} })
@@ -2952,23 +2934,19 @@ function Show-WDWindow {
         }
     }
 
-    # The keys, and the two derived ones. The tints are the risk colors at 20%
-    # alpha, used behind the caution and risky badges; they are derived here so
-    # they change with the palette like everything else rather than being mixed
-    # at the call site out of a hex string that has since gone stale.
-    # The inks a loaded preset can wear. They have to differ from each other or
-    # the Compare picker's buttons become indistinguishable, and from the five
-    # shipped modes' or a file would masquerade as a mode. Two forms of the same
-    # list: the keys are what everything hands to $Ref, and the hex is what
-    # $paintTheme mixes them from. There was a third copy - $presetInk, a table
-    # of literal brushes for preset BUTTONS, which kept the system chrome and so
-    # could not use the palette. The buttons are retemplated now and it is gone.
+    # The colours a loaded preset can wear. They must differ from each other or
+    # the Compare pickers become indistinguishable, and from the five shipped
+    # modes' or a file masquerades as a mode.
     #
-    # Eight, not four. Four was written when a loaded preset was a rare thing to
-    # have; Save > File now loads what it writes, so the list grows by one every
-    # time somebody keeps a selection, and the fifth file wore the first file's
-    # color. Declared up here rather than beside $loadedPresets because
-    # $paintTheme reads it and is a closure - see the capture rule.
+    # Two forms of one list: KEYS are what everything hands to $Ref, HEX is what
+    # $paintTheme mixes them from. There was a third copy - $presetInk, literal
+    # brushes for preset buttons, which kept the system chrome and so could not
+    # use the palette at all. The buttons are retemplated and it is gone.
+    #
+    # Eight, not four: Save > File loads what it writes, so the list grows by one
+    # every time somebody keeps a selection, and the fifth file wore the first
+    # file's colour. Declared up here because $paintTheme reads it and is a
+    # closure - see the capture rule.
     $LOADED_KEYS = @('L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L7', 'L8')
     $LOADED_HEX  = @('#FF8B5CD6', '#FF14919B', '#FFC9761F', '#FFB03A78',
                      '#FF3F7BD8', '#FF2E9E58', '#FFB5442F', '#FF7A6BC4')
@@ -3493,23 +3471,19 @@ function Show-WDWindow {
         Excluded = New-Object System.Collections.Generic.HashSet[string]
         EstimateSeconds = 0.0
         ReturnPage = 'PageModes'
-        # How the Advanced list is arranged: which blocks the page is divided
-        # into, and the order rows run in inside one. Two settings because they
-        # are two questions - see $GROUPS and $SORTS.
+        # How the Advanced list is arranged. Two settings because they are two
+        # questions - see $GROUPS and $SORTS.
         #
-        # Category by default. It briefly opened on Bloat rating, on the
-        # reasoning that the rating answers "why would I remove this" while the
-        # category only answers "where does this live in the manifest" - true of
-        # the question, wrong about the page. Category is the only grouping that
-        # shows all three sections, so it is the only one where the page holds
-        # everything the run will do; every other grouping is a lens onto part
-        # of it, and a lens is a thing to reach for rather than a thing to be
-        # handed. The rating is one click away and the rail says what each
-        # grouping leaves out.
+        # CATEGORY BY DEFAULT. It briefly opened on Bloat rating, on the reasoning
+        # that the rating answers "why would I remove this" - true of the question
+        # and wrong about the page. Category is the only grouping that lays out all
+        # three sections, so it is the only one where the page holds everything the
+        # run will do. Every other grouping is a lens onto part of it, and a lens
+        # is a thing to reach for rather than a thing to be handed.
         #
-        # 'sort' was the single old setting and held what is now the grouping,
-        # so it is read as one. A saved preference from the last release opens
-        # on the arrangement it was left in rather than being silently reset.
+        # 'sort' was the single old setting and held what is now the grouping, so
+        # it is read as one: a preference saved by the last release opens on the
+        # arrangement it was left in rather than being silently reset.
         Group = $(if ([string]$UiState.group) { [string]$UiState.group }
                   elseif ([string]$UiState.sort) { [string]$UiState.sort } else { 'category' })
         Sort  = $(if ([string]$UiState.sortBy) { [string]$UiState.sortBy } else { 'name' })
@@ -4344,24 +4318,18 @@ function Show-WDWindow {
     # somebody re-adds. Same seam the modal-gated actions get - the decision is
     # a function and the thing that gates it is wrapped around the outside.
     $uiStateOut = {
-        # Rebuilt from scratch each time rather than mutated: the object came
-        # from JSON, and adding members to it is how a stale shape gets written
-        # back out.
-        # No overrides. An override is an edit somebody has not saved, and
-        # closing the application is the one gesture that has always meant
-        # "never mind" everywhere else - so an unsaved edit does not outlive the
-        # window it was made in. What does outlive it is everything that was
-        # saved on purpose: a mode redefined with Save > Default is in
-        # presetDefaults, and a selection loaded from a file is in
-        # loadedPresets, and neither of those is an unsaved change.
+        # Rebuilt from scratch rather than mutated: the object came from JSON, and
+        # adding members to it is how a stale shape gets written back out.
         #
-        # It used to write them, on the reasoning that losing work is worse than
-        # keeping it - which is right for work you did not choose to discard and
-        # wrong here, because there is nothing to tell you it happened. An edit
-        # that survives a restart is indistinguishable from a mode that has
-        # always removed that item, except for a badge on a screen you may not
-        # open, and it is carried by every future run of a preset whose name
-        # still says Balanced.
+        # NO overrides PROPERTY. An override is an unsaved edit, and closing an
+        # application is the one gesture that means "never mind" everywhere else.
+        # Writing them looks kinder and is not: an edit that survives a restart is
+        # indistinguishable from a mode that has always removed that item, except
+        # for a badge on a screen you may not open - and it is then carried by
+        # every future run of a preset whose name still says Balanced.
+        #
+        # What DOES outlive the window is what was kept on purpose: presetDefaults
+        # (Save > Default) and loadedPresets (a file, by path).
         $out = [pscustomobject]@{
             theme          = [string]$state.Theme
             preset         = [string]$state.Preset
@@ -5163,22 +5131,18 @@ function Show-WDWindow {
             $acts.Margin = '0,14,0,0'
             $acts.Visibility = 'Hidden'
 
-            # Preview's own line, with Save and Reset in the right corner of it.
-            # Two columns: Auto for Preview and star for the pair, in that order,
-            # because a Grid gives an Auto column its full desired width before
-            # the star gets anything - so Preview is the one that can never be
-            # squeezed, which is the right way round for the only button here
-            # that starts a run.
+            # Preview's line, with Save and Reset in the right corner. Auto then
+            # star, in that order, because a Grid gives an Auto column its full
+            # desired width before the star gets anything - so Preview can never
+            # be squeezed, which is right for the only button here that starts a
+            # run.
             #
-            # THE PAIR IS NOT IN $acts, and that is deliberate rather than
-            # tidy. $acts is Hidden on the four cards that are not selected, and
-            # Save and Reset appear on any EDITED column whether or not it is
-            # the one selected - which is the whole reason they were moved onto
-            # the cards in the first place: keeping or dropping an edit to
-            # Aggressive used to mean selecting Aggressive first, and selecting
-            # a preset is not a neutral act on a screen whose other button
-            # previews it. Inside $acts they would have gone back to being
-            # selected-only.
+            # THE PAIR IS NOT IN $acts, and that is load-bearing. $acts is Hidden
+            # on the four unselected cards, and Save and Reset appear on any EDITED
+            # column whether or not it is selected - which is the whole reason they
+            # moved onto the cards: keeping or dropping an edit to Aggressive used
+            # to mean selecting Aggressive first, and selecting a preset is not a
+            # neutral act on a screen whose other button previews it.
             $goRow = New-Object Windows.Controls.Grid
             foreach ($cw in @(@{ V = 0; U = 'Auto' }, @{ V = 1; U = 'Star' })) {
                 $gcd = New-Object Windows.Controls.ColumnDefinition
@@ -5404,23 +5368,21 @@ function Show-WDWindow {
 
     # ==================================================== ADVANCED PAGE ====
     #
-    # Built on demand, not at startup. The application opens on the mode screen,
-    # which needs none of this: its five columns are counted off the manifest,
-    # and Preview from that screen runs the preset rather than the boxes. Three
-    # hundred rows, each with a "is this already set" probe and an icon to load,
-    # were seven of the eight seconds before the window appeared - spent laying
-    # out a page most first visits never open.
+    # BUILT ON DEMAND, NOT AT STARTUP. The application opens on the mode screen,
+    # which needs none of this - its columns are counted off the manifest, and
+    # Preview there runs the preset rather than the boxes. Three hundred rows,
+    # each with an already-set probe and an icon, were seven of the eight seconds
+    # before the window appeared, laying out a page most first visits never open.
     #
-    # The pieces stay exactly where they read best, next to the things they are
-    # about; each expensive one is added to this list instead of running, and the
-    # list runs in source order the first time anything needs the page. So the
-    # order of construction is unchanged - only when it happens.
+    # The pieces stay where they read best; each expensive one is APPENDED here
+    # instead of running, and the list runs in source order the first time
+    # anything needs the page. The order of construction is unchanged - only when.
     #
-    # Two rules for anything put in here, both of them the closure rule this file
-    # keeps re-learning. It is a closure, so it sees the locals that existed
-    # where it was written and nothing declared after it. And it must MUTATE
-    # rather than assign: $x.Add(...) reaches the outer list, $x = @(...) writes
-    # to a copy the rest of the function never sees.
+    # Two rules for anything added, both the closure rule this file keeps
+    # re-learning. It is a closure, so it sees the locals that existed where it
+    # was WRITTEN and nothing declared after it. And it must MUTATE, never assign:
+    # $x.Add(...) reaches the outer list, $x = @(...) writes to a copy nothing
+    # else ever sees.
     $advWork  = New-Object System.Collections.Generic.List[scriptblock]
     # Busy guards against re-entrancy between the two routes into the work list.
     # The pre-warm below runs off a dispatcher tick, and $ensureAdvanced pumps
@@ -7878,22 +7840,19 @@ function Show-WDWindow {
 
     # ---- what the run does whatever is ticked ------------------------------
     #
-    # Two steps are appended to every plan by Resolve-WDPlan rather than
-    # selected: closing the paths a removal comes back through, and restarting
-    # Explorer so shell changes are visible. They are real plan items - preview
-    # row, log line, journal entry - but nothing on this page leads to them,
-    # and a page that promises to show everything the run will do cannot leave
-    # them to be discovered in the preview.
+    # Resolve-WDPlan appends two steps to every plan rather than offering them:
+    # closing revival paths, and restarting Explorer. Being in the plan makes them
+    # previewable, which is one gesture away; being on this PAGE makes them
+    # findable, which is the difference between "the tool told me" and "the tool
+    # would have told me if I had pressed Preview".
     #
-    # Rows without check boxes, because there is nothing to decide. The
-    # alternative was a tick that is always on and cannot be turned off, which
-    # is a control that lies about being one.
+    # ROWS WITHOUT CHECK BOXES, because there is nothing to decide. The
+    # alternative is a tick that is always on and cannot be cleared, which is a
+    # control that lies about being one.
     #
-    # A name and a Details button, and nothing else. Both rows carried two
-    # paragraphs each - when they run and what they do - which is the same
-    # mistake the item list made before its descriptions were cut back: a name
-    # that says what the thing is does not need a paragraph saying it again,
-    # and the specifics belong behind the button every other row already has.
+    # There is a THIRD row here that is not a plan step: closing programs that are
+    # in the way, which four executors do on their own when a removal is refused.
+    # It never gets a preview row, so this block is the only place it is stated.
     $alwaysSteps = @(
         @{ Name = 'Close revival paths'
            Text  = @('WHAT THIS CHANGES',
@@ -8877,23 +8836,19 @@ function Show-WDWindow {
         $advUndo.Clear()
         & $showAdvUndo
         $want = New-WDStringSet (& $effectiveIds $name)
-        # Suspend while bulk-setting: otherwise every one of ~200 checkboxes
-        # triggers a full restyle of all ~200 rows.
-        # A row for something that is not on the machine is left unticked
-        # whatever the mode says, because it is also unclickable - and a mode
-        # that ticks a box nobody can untick has taken the decision away. The
-        # run loses nothing by it: that item would have reported "nothing to do"
-        # and cost a lookup. It is still listed, still counted by the mode
-        # columns, and still says why it is grayed.
+        # SUSPEND WHILE BULK-SETTING, or each of ~200 boxes restyles all ~200 rows.
         #
-        # A mode being applied is not somebody ticking a box, and $updateTally
-        # cannot tell the two apart from the inside. Anything that answers a
-        # *gesture* rather than a state reads this flag and records where things
-        # ended up without acting on it. Edge's extensions are the one: ticking
-        # the removal by hand should take them, and picking Aggressive should
-        # not - a mode has no business deciding about somebody's extensions, and
-        # a preset that silently ticked three extra rows would read as edited
-        # the moment it was selected.
+        # An absent row stays unticked whatever the mode says, because it is also
+        # unclickable - and a mode that ticks a box nobody can untick has taken the
+        # decision away. The run loses nothing: that item would report "nothing to
+        # do" for the price of a lookup.
+        #
+        # PresetSweep is the general seam for anything that answers a GESTURE
+        # rather than a state, which $updateTally cannot tell apart from inside.
+        # Edge's extensions are the case: ticking the removal by hand should take
+        # them, picking Aggressive should not - a mode has no business deciding
+        # about somebody's extensions, and a preset that silently ticked three
+        # extra rows would read as edited the moment it was selected.
         $state.PresetSweep = $true
         try {
             $state.Suspend = $true
@@ -8936,24 +8891,20 @@ function Show-WDWindow {
     }
     # ---- saying that the button did something ------------------------------
     #
-    # A preset switch is the largest single thing anybody can do on this page
-    # and it announces itself the least. Two hundred boxes change at once, which
-    # is too much to perceive as one event, and the badge in the far corner
-    # swaps its numbers - a static label changing while you are looking at the
-    # opposite side of the window. Watching two people who had never seen the
-    # application, both clicked a mode and then asked whether it had worked.
+    # A preset switch is the largest single thing anybody can do here and it
+    # announced itself the least: two hundred boxes change at once, which is too
+    # much to perceive as one event, and the badge swaps its numbers on the
+    # opposite side of the window. Two people who had never seen the application
+    # both clicked a mode and then asked whether it had done anything.
     #
-    # So the switch says so, in the preset's own colour, under the toolbar it
-    # was clicked in. It deliberately does NOT restate what the badge already
-    # carries: the badge says how many of how many are selected, and two places
-    # holding one fact is one place plus a way for them to disagree. What it
-    # says instead is the pair of things nothing else on the page can - how far
-    # the count MOVED, and what became of any edits, which the switch below
-    # folds into an override without a word.
-    # Built here rather than on first use, so its Tick closure is written at this
-    # function's own level and can see what it reads. Created inside
-    # $sayPresetSwitch - itself a closure - it would have been capturing that
-    # invocation's locals and nothing else.
+    # It deliberately does NOT restate the badge's count - one fact in two places
+    # is one place plus a way for them to disagree. It says the two things nothing
+    # else on the page can: how far the count MOVED, and what became of any edit,
+    # which $switchPreset otherwise folds into an override without a word.
+    #
+    # The timer is built HERE, at function scope, so its Tick closure can see what
+    # it reads. Created inside $sayPresetSwitch - itself a closure - it would
+    # capture that invocation's locals and nothing else.
     $presetNote = @{ Timer = (New-Object Windows.Threading.DispatcherTimer) }
     $presetNote.Timer.Interval = [TimeSpan]::FromSeconds(6)
     $presetNote.Timer.Add_Tick({
@@ -9731,54 +9682,45 @@ function Show-WDWindow {
         }
         # Hide a heading once everything under it is filtered away.
         #
-        # $liveGroups, not $catHeaders. $catHeaders is the category blocks only,
-        # so under every other grouping this walked a set of blocks that were
-        # not on the page and said nothing about the ones that were: searching
-        # under Bloat rating left "Data collection" and every other band
-        # standing over nothing. $liveGroups is whatever $applyOrder last laid
-        # out, whichever grouping that was, so the same loop now speaks for all
-        # of them and the Tag.Ordered test it used to need is gone with it.
-        # Decided BEFORE the blocks are measured, not after. Under Name (A-Z)
-        # the picker is a member of the block covering W, so that block asks
-        # whether it is visible while counting what is under it - and computing
-        # it afterwards left the block reading last pass's answer, which is how
-        # a heading survives one keystroke too long.
+        # $liveGroups, NOT $catHeaders - that is the category blocks only, so under
+        # every other grouping this decided the visibility of blocks that were not
+        # on the page and said nothing about the ones that were: searching under
+        # Bloat rating left every band standing over nothing. $liveGroups is
+        # whatever $applyOrder last laid out.
         #
-        # Three blocks hold no rows and so cannot be spoken for by the loop
-        # below: the browser picker in Add, and the always-done list and the
-        # run-behavior switches in Extras. A section filter still applies to
-        # them - they belong to a section - but anything that narrows by item
-        # (text, risk, category, view) has nothing to say about them, so they
-        # stand down rather than pretend.
+        # Decided BEFORE the blocks are measured. Under Name (A-Z) the picker is a
+        # member of the W block, so that block asks whether it is visible while
+        # counting what is under it - computed afterwards, it reads last pass's
+        # answer, which is how a heading survives one keystroke too long.
         #
-        # Avail is deliberately not in this list, unlike every other facet that
-        # narrows by item. It hides rows whose target is not on this machine,
-        # and none of the three blocks is a row or has a target - the browser
-        # picker is a question, not an option that could be absent - so standing
-        # them down would be answering a question nobody asked of them.
+        # THREE BLOCKS HOLD NO ROWS and so cannot be spoken for by the loop below:
+        # the browser picker in Add, and the always-done list and the run-behaviour
+        # switches in Extras. A section filter still applies, but anything that
+        # narrows by ITEM has nothing to say about them.
+        #
+        # Avail is deliberately not in this list, unlike every other item facet:
+        # none of those three blocks is a row or has a target, so standing them
+        # down would be answering something nobody asked of them.
         $narrowed = [bool]$q -or $filterSel.Risk.Count -or $filterSel.Cat.Count -or $filterSel.View.Count -or $filterSel.Bloat.Count -or $filterSel.Tier.Count
         $secOk = {
             param([string]$Key)
             (-not $filterSel.Sec.Count) -or $filterSel.Sec.Contains([string]$SEC_LABEL[$Key])
         }
-        # The Add section can be off the page entirely, in which case its picker
-        # goes with it - a browser choice under a heading that is not there would
-        # be the one Add row a bloat grouping still showed.
+        # The Add section can be off the page, and its picker goes with it - a
+        # browser choice under a heading that is not there would be the one Add row
+        # a bloat grouping still showed.
         #
-        # Two ways for that to happen, and only the first was being honoured.
-        # Bloat rating drops the Add section outright ($GROUP_OMITS). But EVERY
-        # grouping other than Category lays out no sections at all: the bands go
-        # down the Remove panel and $liveSec['add'] is zero by construction, so
-        # the Add box is open only because $showBrowser is forcing it open, and
-        # what somebody sees under Risk is an Add heading containing nothing but
-        # the browser picker while the forty real Add rows are distributed
-        # through Risky, Caution, and No risk. The picker is a choice inside a
-        # section; where the section is not laid out, neither is it.
+        # TWO WAYS FOR THAT, and only the first was honoured. Bloat rating drops Add
+        # outright ($GROUP_OMITS). But every grouping except Category lays out no
+        # sections at all - the bands go down the Remove panel and $liveSec['add']
+        # is zero by construction - so under Risk the Add box was open only because
+        # $showBrowser forced it, holding nothing but the picker while the forty
+        # real Add rows were spread through Risky, Caution, and No risk.
         #
-        # Name (A-Z) is the exception, and the only one: it does lay the picker
-        # out, under W, as a member of a letter block rather than as a section's
-        # standing question. So the picker may show while the Add BOX stays shut
-        # - which is why $addAsSec is asked twice below, once for each.
+        # Name (A-Z) is the one exception: it DOES lay the picker out, under W, as a
+        # member of a letter block rather than a section's standing question. So the
+        # picker can show while the Add BOX stays shut, which is why $addAsSec is
+        # asked twice below.
         $addOmit   = @($GROUP_OMITS[[string]$state.Group]) -contains 'add'
         $addAsSec  = [bool]$GROUP_SECTIONED[[string]$state.Group]
         $addAlpha  = ([string]$state.Group -eq 'alpha')
