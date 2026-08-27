@@ -4926,18 +4926,15 @@ function Show-WDWindow {
             $sp = New-Object Windows.Controls.DockPanel
             $sp.LastChildFill = $true
             $sp.Margin = '12,12,12,12'
-            # Hit-testable, and it takes the same click the column background
-            # does. It used to be IsHitTestVisible = $false so that clicks fell
-            # through to the Border underneath - which is a shorter way of
-            # saying the same thing right up until something inside it needs a
-            # click of its own. WPF does not descend into a subtree whose root
-            # is not hit-testable, so the Save and Reset buttons placed in here
-            # would have been drawn, hovered, and completely dead.
+            # HIT-TESTABLE, and it takes the same click the column background
+            # does. It was IsHitTestVisible = $false so clicks fell through to the
+            # Border underneath - and WPF DOES NOT DESCEND into a subtree whose
+            # root is not hit-testable, so the Save and Reset buttons in here would
+            # have drawn, hovered, and been completely dead.
             #
-            # Transparent rather than no brush: a Panel with a null Background
-            # is not itself a hit-test target, so the gaps between the text
-            # blocks would still fall through and the card would answer a click
-            # on its words and ignore one an inch below them.
+            # Transparent rather than NO brush: a Panel with a null Background is
+            # not a hit-test target either, so the gaps between the text blocks
+            # would still fall through.
             $sp.Background = [Windows.Media.Brushes]::Transparent
             $sp.Tag = $p
             # A Button marks MouseLeftButtonUp handled before it bubbles, so
@@ -5058,18 +5055,15 @@ function Show-WDWindow {
             & $Ref $chk 'Foreground' 'Muted'
             $null = $spFoot.Children.Add($chk)
 
-            # "Applied on ... Run folder at ...", when this preset has been run
-            # here and has not been touched since. Built empty on every column
-            # rather than only where a run exists, for the same reason the item
-            # rows build their Gate line unconditionally: a mode gets applied
-            # later, the grid is repainted rather than rebuilt, and a line that
-            # only exists where somebody remembered to build one is a feature
-            # that silently does half its job.
+            # "Applied on ...", when this preset has been run here and not touched
+            # since. Built empty on EVERY column, like the item rows' Gate line: a
+            # mode gets applied later and the grid is repainted rather than
+            # rebuilt, so a line that exists only where somebody remembered to
+            # build one does half its job.
             #
-            # Below the selection line rather than above the description. The
-            # descriptions are measured and raised to a common height so the
-            # bullet lists start level, and a marker on one card above that
-            # point would push its bullets down out of step with the other four.
+            # BELOW the selection line, not above the description: the descriptions
+            # are raised to a common height so the bullet lists start level, and a
+            # marker above that point would push one card's bullets out of step.
             $applied = New-Object Windows.Controls.TextBlock
             $applied.FontSize = 11; $applied.Margin = '0,6,0,0'; $applied.TextWrapping = 'Wrap'
             $applied.Visibility = 'Collapsed'
@@ -5203,21 +5197,16 @@ function Show-WDWindow {
 
     $ui.ModeGrid.Add_SizeChanged($sizeModeBars.GetNewClosure())
 
-    # An edit does not change the shape of this page - the five columns, their
-    # titles, their descriptions and their bullet lists are all read off the
-    # manifest and cannot move while the window is open. What it changes is one
+    # An edit cannot change the SHAPE of this page - the columns, titles,
+    # descriptions and bullet lists all come off the manifest. It changes one
     # cell, one bar and one line per column, which is what this repaints.
+    # Rebuilding the grid instead cost ~0.2s per box ticked in Advanced and per
+    # item handed across on Compare, laying out prose that had not changed.
     #
-    # Every preset edit used to rebuild the whole grid: about a fifth of a second
-    # to lay out five columns of prose that had not changed a character, paid for
-    # by every box ticked in Advanced and every item handed across on Compare.
-    # It was half the wait on a hand-over.
-    #
-    # Deliberately not "rebuild it, but only when the page is on screen". That
-    # trade buys the same time and pays for it in staleness: $modeCols would then
-    # hold cells that disagree with $counts for as long as somebody stays on
-    # another page, and every reader of the grid would have to know it. Nothing
-    # here is ever out of date - it is simply less work.
+    # Deliberately NOT "rebuild, but only while the page is on screen": that buys
+    # the same time and pays in staleness - $modeCols would hold cells disagreeing
+    # with $counts for as long as somebody stayed elsewhere, and every reader
+    # would have to know it. Nothing here is ever out of date, only less work.
     $repaintModeGrid = {
         foreach ($p in $shippedNames) { & $paintModeCol $p }
         # The tally line under the columns is counted too, and it is $selectPreset
@@ -5385,21 +5374,16 @@ function Show-WDWindow {
     # badge on hover - is that key plus 'Tint', which $paintTheme derives.
     $riskStyle = @{ 1 = @{ Label = 'caution'; Col = 'Warn' }; 2 = @{ Label = 'risky'; Col = 'Bad' } }
 
-    # Page order, and page order is section first. Every category carries an
-    # authored 'order' - AI at 20 through Making it stick at 98 - and sorting by
-    # name threw all of it away, so the page opened on whichever category
-    # happened to start with a letter near A. But sorting by 'order' alone is
-    # not the order the page reads either: the sections are laid out one after
-    # another, so a Remove category at 98 comes before an Add one at 91. The
-    # index rail's own test caught exactly that. Section, then order, then name
-    # as the tie-break for the two files that share one.
+    # SECTION, THEN order, THEN name. Every category carries an authored 'order',
+    # which sorting by name threw away entirely - but 'order' alone is not the
+    # page's order either, because the sections lay out one after another, so a
+    # Remove category at 98 comes before an Add one at 91.
     #
-    # foreach over the bare call, not @(Get-WDSectionNames): that function
-    # returns ,@(...) to survive being assigned, so wrapping its pipeline output
-    # in @() gives one element holding an array. Every rank then keyed on an
-    # array object, every lookup missed, every section ranked 0, and the sort
-    # quietly fell through to 'order' alone - which put a Remove category at 98
-    # after an Add one at 91 and nothing complained.
+    # foreach over the BARE call, never @(Get-WDSectionNames): that returns ,@(...)
+    # so it survives assignment, and wrapping its pipeline output gives ONE element
+    # holding an array. Every rank then keyed on an array object, every lookup
+    # missed, every section ranked 0, and the three-key sort fell through to its
+    # second key with nothing complaining.
     $secRank = @{}
     $rank = 0
     foreach ($s in (Get-WDSectionNames)) { $secRank[[string]$s] = $rank; $rank++ }
@@ -5498,21 +5482,18 @@ function Show-WDWindow {
         (($n[0..($n.Count - 2)]) -join ', ') + " and $($n[-1])"
     }
 
-    # Selecting a mode that removes Edge does not stop to ask. It says what is
-    # going to happen and where to change it, which is the same information
-    # without a decision in the way.
+    # Selecting a mode that removes Edge does not stop to ASK - it says what will
+    # happen and where to change it, which is the same information without a
+    # decision in the way.
     #
-    # Only on a machine with no other browser, which is the only version of this
-    # that carries news. There were two notices for a while, the second saying
-    # "no replacement will be installed - this machine already has Chrome". That
-    # is a dialog telling somebody who runs Chrome that they still have Chrome:
-    # nothing is about to happen to them, the row they ticked says what it does,
-    # and Edge going is exactly what they asked for. A modal that reports a
+    # ONLY ON A MACHINE WITH NO OTHER BROWSER. There were two notices, and the
+    # second said "no replacement will be installed - this machine already has
+    # Chrome": a dialog telling somebody who runs Chrome that they still have
+    # Chrome. Nothing is about to happen to them, and a modal that reports a
     # non-event teaches people to dismiss modals without reading them.
     #
-    # The remaining case is different in kind. Something *will* be installed,
-    # this is where it is said, and the alternative to saying it is a run that
-    # downloads a browser nobody mentioned.
+    # The surviving case is different in kind: something WILL be installed, and the
+    # alternative to saying so is a run that downloads a browser nobody mentioned.
     $tellBrowser = {
         if (-not $browserDefault) { return }
         Show-WDMessage (
@@ -5522,18 +5503,16 @@ function Show-WDWindow {
             'Removing Microsoft Edge', 'OK', 'None') | Out-Null
     }.GetNewClosure()
 
-    # There are two pickers for one answer - the strip under Edge removal and
-    # the standing one in the Add section - so every route in goes through
-    # $setBrowsers and every panel is repainted from the same state. Two panels
-    # each holding their own idea of the answer is how they would drift.
+    # TWO PICKERS, ONE ANSWER - the strip under Edge removal and the standing block
+    # in Add - so every route goes through $setBrowsers and every panel repaints
+    # from the same state. Two panels each holding their own idea would drift.
     #
-    # The answer is a list, not a name. Nothing about installing one browser
-    # prevents installing a second, and somebody moving off Edge often wants
-    # both a daily driver and a spare.
-    # Strips that live directly under one row, keyed by that row's id, laid out
-    # by $fillColumns and shown or hidden with the row's own tick. Three of them
-    # now: the browser picker under Edge removal, a days box under each update
-    # deferral, and the folder under the issues document.
+    # The answer is a LIST, not a name: nothing about installing one browser is a
+    # reason not to install a second, and somebody moving off Edge often wants a
+    # daily driver and a spare.
+    #
+    # $rowStrips is id -> element, laid out by $fillColumns as a SIBLING of that
+    # row rather than a child, so nothing hides it implicitly.
     $rowStrips = @{}
     # Rows whose presence on the page is a live condition rather than a fact
     # about the machine. A guard would be the natural home for this and cannot
@@ -5548,18 +5527,16 @@ function Show-WDWindow {
     $defBrowserUi = @{ Panel = $null; Refresh = $null }
     $setBrowsers = {
         param([string[]]$Names, [bool]$Remember)
-        # State and UI only. The choice reaches disk once, in $startRun, where
-        # the process is elevated - a file at the root of %ProgramData% grants
-        # Users create-but-not-modify, so rewriting it on every click threw
-        # "access denied" for anyone not running as administrator.
+        # STATE AND UI ONLY. The choice reaches disk once, from $startRun, where
+        # the process is elevated: %ProgramData%'s root grants Users create but not
+        # modify, so rewriting on every click threw access-denied unelevated.
         #
-        # Kept in catalog order rather than click order, so the two pickers and
-        # the run report always read the list the same way round.
+        # Kept in CATALOG order, not click order, so both pickers and the run report
+        # read the list the same way round.
         #
-        # A browser already on the machine is dropped rather than queued. Its
-        # button is disabled, so this can only arrive from a preference stored
-        # before it was installed - and an install that reports "already here"
-        # is a minute of the run spent saying nothing.
+        # An already-installed browser is dropped rather than queued: its button is
+        # disabled, so this can only come from a preference stored before it was
+        # installed.
         $want = @($browserNames | Where-Object { $_ -in @($Names) -and -not $browserHere.Contains([string]$_) })
         if ($Remember) { $state.BrowserPreferred = $want }
         $state.BrowserChoices = $want
@@ -6496,19 +6473,14 @@ function Show-WDWindow {
 
         $null = $panel.Children.Add($stack)
 
-        # A row with nothing to act on is inert: the box will not take a tick,
-        # the row will not answer a click, and the pointer gets no tint.
+        # A row with nothing to act on is INERT: the box refuses a tick, the row
+        # ignores a click, and the pointer gets no tint. Grayed-but-tickable was
+        # the old answer, on the reasoning that a tick only cost one lookup - true,
+        # and beside the point: everything about a live row says "this is a
+        # decision", and the hover tint is the loudest part of that.
         #
-        # It used to be grayed but tickable, on the reasoning that ticking it
-        # only cost one lookup that reported nothing to do - true, and beside
-        # the point. Everything about a live row says "this is a decision", and
-        # for these there is no decision: the thing is not here. The hover tint
-        # was the loudest part of that lie, because it is the page's own signal
-        # for "you can act on this".
-        #
-        # $applyPresetToChecks skips them too, so a mode never leaves one ticked
-        # and unreachable - which is the objection that kept them tickable, and
-        # it only holds while a preset can still select them.
+        # $applyPresetToChecks skips them too, so a mode never leaves one ticked and
+        # unreachable - which was the objection that kept them tickable.
         if ($absent) {
             $cb.IsEnabled = $false
             $panel.Cursor = 'Arrow'
@@ -6815,20 +6787,17 @@ function Show-WDWindow {
         $rowList = $GroupRows
         if ($null -eq $rowList) { $rowList = New-Object System.Collections.Generic.List[psobject] }
 
-        # ---- two buttons on the heading, and the heading itself is inert ------
+        # ---- buttons on the heading, and the heading itself is inert ----------
         #
-        # Selecting the group used to be a click on the heading, with a small
-        # "select all" hint beside it that changed wording on hover. That was one
-        # gesture on a target that now has two things it could plausibly mean:
-        # with a collapse control on the same line, clicking the name of a
-        # category is as likely to mean "fold this away" as "take all of it", and
-        # a control whose meaning has to be guessed is worse than two controls
-        # that each say what they do. So the name is now just a name - no hand
-        # cursor, no hit-test background, no handler - and both actions are
-        # buttons with labels.
+        # Selecting the group used to be a click on the heading. That stopped
+        # working the moment a collapse control joined the same line: clicking the
+        # name of a category is then as likely to mean "fold this away" as "take
+        # all of it", and a target whose meaning has to be guessed is worse than
+        # two controls that each say what they do. So the name is a NAME - no hand
+        # cursor, no hit-test background, no handler - and the actions are buttons.
         #
-        # Built after the grid and the note exist, because the collapse button
-        # has to be given both of them to hide.
+        # Built after the grid and the note, because the collapse button has to be
+        # handed both of them to hide.
         $toggle = New-Object Windows.Controls.Button
         $toggle.Content = '-'
         $toggle.Width = 24; $toggle.Padding = '0,1'; $toggle.FontSize = 13
@@ -6953,19 +6922,13 @@ function Show-WDWindow {
     $catBox = @{ Cat = $cat; Items = $null; At = 0; InCat = $null; Step = $null }
     $catStep = {
         if ($null -eq $catBox.Items) {
-            # $knownIds rather than a second call to Test-WDItemApplies, and
-            # that is worth 1.9 seconds of the deferred build on this machine.
-            # The startup pass that fills $applicable already asks that question
-            # about every item on the manifest - it is most of what "Interface
-            # built in 2.4s" is - and $knownIds is precisely its answer. Asking
-            # again per category was the same walk a second time, and the
-            # inventory arm of it is a nested loop over every installed package,
-            # which is why it was the single most expensive step in the build.
+            # $knownIds, NOT a second Test-WDItemApplies - worth 1.9s of the
+            # deferred build. The startup pass that fills $applicable already
+            # answers that for every item, and its inventory arm is a nested loop
+            # over every installed package, which is what made asking again per
+            # category the most expensive step here.
             #
-            # It also removes the possibility of the two disagreeing. The
-            # replacement browser is excluded from $knownIds at the source, for
-            # the reason it was excluded here: it is never a row of its own, it
-            # is a picker under Edge removal.
+            # It also removes the chance of the two disagreeing about what applies.
             $catBox.Items = @($catBox.Cat.items |
                               Where-Object { $knownIds.Contains([string]$_.id) } |
                               Sort-Object { [string](Get-Prop $_ 'name' $_.id) })
@@ -7112,16 +7075,14 @@ function Show-WDWindow {
 
         # --- which browser to hand the associations to ----------------------
         #
-        # "Change default browser" used to pick for itself, taking the first
-        # non-Edge browser it found. That is a guess on any machine with two,
-        # and on a machine with two it is exactly the machine where somebody
-        # cares which one wins.
+        # It used to take the first non-Edge browser it found, which is a guess on
+        # any machine with two - and a machine with two is exactly where somebody
+        # cares which wins.
         #
-        # Only browsers that are actually here, plus anything this run has
-        # queued for install - a browser about to exist is a legitimate answer,
-        # and it is the answer somebody removing Edge most likely wants. The row
-        # itself already disappears when neither list has anything in it
-        # ($rowGate), so this strip never has to render an empty question.
+        # Browsers actually here, plus anything this run has QUEUED: a browser about
+        # to exist is a legitimate answer, and the one somebody removing Edge most
+        # likely wants. $rowGate removes the row when both lists are empty, so this
+        # strip never renders an empty question.
         if ($byId.ContainsKey('set-default-browser')) {
             # Copied into this scope first. This whole block is a closure, and a
             # closure written inside it captures only what is local *here* -
@@ -7223,16 +7184,15 @@ function Show-WDWindow {
 
     # ----------------------------------------------------- the index rail ---
     #
-    # An index INTO the page, never a router. Clicking scrolls to a heading and
-    # the highlight follows the scroll; content is never swapped and nothing is
-    # ever hidden. That distinction is the whole design: this page's promise is
-    # that everything about to happen to the machine is on it, and a nav that
-    # shows one category at a time breaks that promise while looking tidier.
+    # AN INDEX INTO THE PAGE, NEVER A ROUTER. Clicking scrolls to a heading and
+    # the highlight follows the scroll; nothing is swapped and nothing is hidden.
+    # That is the whole design: this page's promise is that everything about to
+    # happen to the machine is ON it, and a nav that shows one category at a time
+    # breaks the promise while looking tidier.
     #
-    # The counts are load-bearing, not decoration. Without them this is a plain
-    # jump list, which carries the long page's cost and none of a sidebar's one
-    # real compensation - that the work in front of you looks finite and
-    # countable. With them the rail doubles as a progress map.
+    # THE COUNTS ARE LOAD-BEARING, not decoration. Without them this is a plain
+    # jump list, carrying the long page's cost and none of a sidebar's one real
+    # compensation - that the work in front of you looks finite and countable.
     $indexEntries = New-Object System.Collections.Generic.List[psobject]
     $indexSpy     = @{ Offsets = $null; Active = $null; Busy = $false }
 
@@ -7342,27 +7302,17 @@ function Show-WDWindow {
                            Panel = $sp; Label = $h; Count = $null }
     }.GetNewClosure()
 
-    # The blocks that are always on the page whatever the list is grouped by,
-    # and are not made of item rows: what the run always does, the run's own
-    # switches, and the settings for the application itself. They get cards
-    # without counts - there is nothing to count - and they are the reason the
-    # rail is a map of the page rather than a map of the list.
+    # Blocks that are on the page under every grouping and are not made of item
+    # rows. They get cards WITHOUT counts - there is nothing to count - and they
+    # are why the rail is a map of the PAGE rather than of the list.
     #
-    # Recurring was here too, as a fourth fixed card, for as long as it was a
-    # hand-built block rather than a category. It is a category now and arrives
-    # through $Groups like every other one.
-    # NeedsSection marks the one of these that is part of a section rather than
-    # part of the run. Default behaviors, Authority and App Options are all
-    # things the run does or the application is, so they belong on the page under
-    # every arrangement of the list. The browser picker is not: it is a choice
-    # about what to install, it is drawn inside the Add box, and where there is
-    # no Add section there is nothing for it to be inside. Under a grouping that
-    # lays out no sections it used to be the one thing keeping the Add box open -
-    # an "Add" heading with a single Web browser card under it, while the forty
-    # real Add rows sat scattered through Risky, Caution, and No risk - and the
-    # rail carried a dimmed, unclickable card for it, which says "this exists
-    # somewhere you cannot get to" about a control that simply is not on the
-    # page.
+    # NeedsSection marks the one that belongs to a SECTION rather than to the run.
+    # Default behaviors, Authority, and App Options are things the run does or the
+    # application is, so they are always on the page. The browser picker is a
+    # choice drawn inside the Add box, and where Add is not laid out there is
+    # nothing for it to be inside - under a sectionless grouping it was the one
+    # thing keeping the Add box open, an "Add" heading holding a single card while
+    # the forty real Add rows sat scattered through the risk bands.
     $railFixed = @(
         @{ Key = 'browser';   Name = 'Web browser'; Target = 'BrowserAddBlock'; Where = 'add-top'
            NeedsSection = $true }
@@ -7378,13 +7328,10 @@ function Show-WDWindow {
         $indexEntries.Clear()
         $indexSpy.Active = $null
 
-        # Every entry gets an identity that is not its label. It used to be the
-        # label, and two blocks with the same title were then the same entry as
-        # far as the scroll spy was concerned: under Risk there was a "Risky"
-        # card per section, and clicking one lit all three, because the offsets
-        # table had a single row under that key and the highlight loop matched
-        # on it. Letter ranges did the same across sections. Position is the one
-        # thing that is unique by construction.
+        # KEYED BY POSITION, NOT BY LABEL. Keyed by label, two blocks with the same
+        # title were one entry as far as the scroll spy was concerned - under Risk
+        # there was a "Risky" card per section, and one scroll position lit all
+        # three. Position is unique by construction.
         $add = {
             param($Entry)
             $Entry.Key = 'rail' + $indexEntries.Count
@@ -7540,22 +7487,17 @@ function Show-WDWindow {
         $indexSpy.Busy = $true
         try {
             if (-not $indexSpy.Offsets) {
-                # A page that is not on screen has no layout, so every heading
-                # transforms to Y=0 and the table reads as one category starting
-                # at the top - which is exactly what the highlight then reports,
-                # forever, because a table full of zeros is a table and nothing
-                # measures again. The page is ALWAYS built before it is shown,
-                # by the pre-warm timer and by $ensureAdvanced alike, and both
-                # end in $applyFilter, which ends here. So this is the ordinary
-                # case rather than an edge one, and the bug it caused was the
-                # rail sticking on the first category on every first visit.
+                # A PAGE THAT IS NOT ON SCREEN HAS NO LAYOUT, so every heading
+                # transforms to Y=0 - and a table of zeros is still a table, so it
+                # is cached and nothing measures again. The highlight then names
+                # the first category for the rest of the session. Not an edge case
+                # either: the page is ALWAYS built before it is shown, and both
+                # routes end in $applyFilter, which ends here.
                 #
-                # Two conditions, because they catch different halves. Collapsed
-                # covers a rebuild while the operator is on another page - the
-                # elements keep whatever they were last arranged at, which
-                # describes a layout that no longer exists. A zero height covers
-                # a page that has never been arranged at all, which is every
-                # build before the window is shown.
+                # Two conditions, catching different halves. Collapsed covers a
+                # rebuild while the operator is on another page, where the elements
+                # keep whatever they were last arranged at. Zero height covers a
+                # page that has never been arranged at all.
                 if ($ui.PageAdvanced.Visibility -ne 'Visible') { return }
                 # UpdateLayout first, because this runs from $applyFilter and
                 # the rows it collapsed have not been re-measured yet - without
@@ -7738,16 +7680,13 @@ function Show-WDWindow {
 
     # The browser picker as a member of a group, so the alphabet can hold it.
     #
-    # It is a choice rather than a tick, so it is not a row and is not in $rows;
-    # this is the smallest shim that lets $sortMembers put it in the right place
-    # and $fillColumns lay it out. Everything else on the page goes on ignoring
-    # it, which is the point - it is not in $rows, so no count, filter pass, or
-    # preset touches it.
+    # A choice rather than a tick, so it is NOT in $rows - no count, filter pass,
+    # or preset touches it. This is the smallest shim that lets $sortMembers place
+    # it and $fillColumns lay it out.
     #
-    # The box says disabled and unticked, and both are true rather than
-    # convenient: the picker is not a decision the rail counts, not something
-    # Select all can take, and not something a group Reset can put back. Every
-    # one of those asks IsEnabled, so saying so once answers all of them.
+    # Its Check reports disabled and unticked, and both are TRUE rather than
+    # convenient: the rail's denominator, Select all, and a group Reset all ask
+    # IsEnabled, so saying it once answers all three.
     $browserRow = [pscustomobject]@{
         Id       = '__browser-block'
         Panel    = $ui.BrowserAddBlock
@@ -7925,21 +7864,16 @@ function Show-WDWindow {
         # else. It also crosses the other four groups, so "Advertising and
         # nagging, in the AI category, that I have not ticked" is one gesture.
         Bloat = New-Object System.Collections.Generic.HashSet[string]
-        # The two boxes that take rows away rather than narrowing to them, and
-        # the only ones in the drop-down that do. They earn the exception: about
-        # a fifth of this list is options whose target is not here, and another
-        # slice is options no mode selects - both are drawn gray or tagged, and
-        # both are still rows of a category somebody is reading to decide
-        # something. Every other facet answers "show me only X"; these answer
-        # "stop showing me the ones I cannot use" and "stop showing me the ones
-        # nothing selects", neither of which is expressible as a positive
-        # selection over any group.
+        # The boxes that SUBTRACT rows rather than narrowing to them, and the only
+        # ones in the drop-down that do. Every other facet answers "show me only
+        # X"; these answer "stop showing me the ones I cannot use" and "stop
+        # showing me the ones nothing selects", neither of which is expressible as
+        # a positive selection over any group.
         #
-        # And they are the one group that ANDs rather than ORs, because
-        # subtraction composes that way: hiding two kinds of row hides both,
-        # where selecting two kinds shows both. That is why the two members are
-        # asked for by name below rather than through .Count, which is what this
-        # group used to do while it held a single box.
+        # THE ONE GROUP THAT ANDs RATHER THAN ORs, because subtraction composes
+        # that way: hiding two kinds of row hides both, where selecting two kinds
+        # shows both. Which is why the members are asked for BY NAME below rather
+        # than through .Count - that was enough only while this held one box.
         Avail = New-Object System.Collections.Generic.HashSet[string]
         # The rows tagged "opt-in" on the page: tier 0, which no mode selects at
         # any level. Its own group rather than a fourth box under VIEW, because
@@ -7987,21 +7921,15 @@ function Show-WDWindow {
     }.GetNewClosure()
     $filterBoxes = New-Object System.Collections.Generic.List[psobject]
 
-    # "12 of 37 selected" for whatever is on screen. Two numbers that both used
-    # to exist and never met: the count beside the filter said how many rows were
-    # visible, and the tally at the top said how many were ticked out of the
-    # whole list. Under a filter, neither answers the question being asked, which
-    # is "of the things I am looking at, how many have I taken".
+    # "12 of 37 selected" for whatever is ON SCREEN. Two numbers used to exist and
+    # never meet: the count beside the filter said how many rows were visible, the
+    # tally said how many were ticked out of the whole list, and under a filter
+    # neither answers "of the things I am looking at, how many have I taken".
     #
-    # Derived from live Panel.Visibility and Check.IsChecked rather than from
-    # $applyFilter's own tally, because that is what lets it be called from the
-    # other side too: ticking a row runs $updateTally and never $applyFilter, so
-    # a count computed only during a filter pass would freeze the moment anyone
-    # touched a checkbox.
-    # One chip per live facet, plus one for the search text, plus - when it
-    # applies - the only line on this page that can warn about a selection the
-    # filter is hiding. That last state is the dangerous one: rows stay ticked
-    # while narrowed away, so a run can carry items nobody has looked at.
+    # Derived from LIVE Panel.Visibility and Check.IsChecked, not from
+    # $applyFilter's own tally - which is what lets it be called from the other
+    # side: ticking a row runs $updateTally and never $applyFilter, so a count
+    # computed only during a filter pass freezes the moment anyone ticks a box.
     $makeChip = {
         param([string]$Label, [scriptblock]$OnDrop, [string]$Tint)
         $b = New-Object Windows.Controls.Border
@@ -8052,18 +7980,12 @@ function Show-WDWindow {
             $null = $host2.Children.Add((& $makeChip "search: $q" $drop ''))
         }
 
-        # There was one more chip here: "N selected, not shown - show them",
-        # offered whenever a filter narrowed away a row that was still ticked,
-        # and clicking it dropped every filter and switched the view to Checked
-        # only.
-        #
-        # It went because the thing it warned about is not a hazard. A filter
-        # narrows what is on screen and changes nothing about what is selected -
-        # that is what a filter is - and the footer says "12 of 37 selected
-        # (filtered)" on every pass, so the count is never claiming to speak for
-        # the whole list. What the chip added was a yellow warning that appeared
-        # the moment somebody typed three letters into the search box, on a page
-        # where yellow means risk.
+        # There was a "N selected, not shown" chip here. It went because what it
+        # warned about is not a hazard: a filter narrows what is on screen and
+        # changes nothing about what is selected, and the footer reads "12 of 37
+        # selected (filtered)" on every pass, so no count was claiming to speak
+        # for the whole list. What it added was a warning in the colour this page
+        # uses for RISK, appearing the moment somebody typed three letters.
         $host2.Visibility = $(if ($host2.Children.Count) { 'Visible' } else { 'Collapsed' })
     }.GetNewClosure()
 
@@ -9555,21 +9477,17 @@ function Show-WDWindow {
     # that point.
     $ui.BtnRefresh.Add_Click({ if ($refreshRef.Adv) { & $refreshRef.Adv } }.GetNewClosure())
 
-    # Re-lay the two columns inside each block on the page, for the blocks whose
-    # visible row count has actually moved.
+    # Re-lay each block's two columns, for the blocks whose VISIBLE row count has
+    # actually moved. $fillColumns balances on visible rows at layout time, before
+    # the filter has decided what is visible, so its break is right for the page
+    # as it stood and wrong the moment anything is hidden.
     #
-    # $fillColumns balances on visible rows, and it runs at layout time - before
-    # the filter has decided what is visible. So the break it chose is right for
-    # the page as it stood and wrong the moment anything is hidden. This is the
-    # other half of that, and the reason it is guarded on a count rather than run
-    # unconditionally is that $applyFilter fires on every keystroke in the search
-    # box and on every tick of a box: re-parenting two hundred row panels per
-    # keystroke is a layout storm for nothing. Typing three letters moves every
-    # block once and then nothing; ticking a row moves none of them.
+    # Guarded on the count rather than run unconditionally because $applyFilter
+    # fires on every keystroke and every tick: re-parenting 200 row panels per
+    # keystroke is a layout storm for nothing.
     #
-    # Reads $g.Ordered rather than re-sorting. The sort is a separate control and
-    # hiding a row does not change the order, so the list this block was last
-    # laid out from is still the right list.
+    # Reads $g.Ordered rather than re-sorting - the sort is a separate control and
+    # hiding a row does not change the order.
     $rebalanceGroups = {
         foreach ($g in $liveGroups) {
             $n = 0
@@ -9852,23 +9770,19 @@ function Show-WDWindow {
         }
 
         & $section 'SECTION' 'Sec' @($SEC_LABEL.Values) $null
-        # Five boxes, three groups, one heading. All five answer "which of these
-        # rows am I looking at" - what I have ticked, what I have changed, what
-        # no mode picks, what this machine has not got - so VIEW is where
-        # somebody looks for any of them, and two headings of one box each were
-        # two headings saying "view" in other words.
+        # A HEADING IS NOT A GROUP. Five boxes under VIEW belonging to three
+        # groups: all five answer "which of these rows am I looking at", so VIEW is
+        # where somebody looks for any of them - and two headings of one box each
+        # were two headings saying "view" in other words.
         #
-        # They stay in their own groups because a heading and a group are
-        # different things. Boxes in a group are OR-ed: Opt-in only joined to
-        # View would read "everything ticked plus everything nobody ticks", and
-        # the two Hide boxes subtract rather than selecting, so OR-ing either
-        # with anything is not a sentence at all. Apart, they AND, and "opt-in
-        # things I have not ticked that are actually here" is one gesture. The
-        # self test drives exactly that.
+        # They stay in SEPARATE groups because boxes within a group are OR-ed:
+        # Opt-in only joined to View would read "everything ticked plus everything
+        # nobody ticks", and the Hide boxes subtract, so OR-ing either with
+        # anything is not a sentence. Apart they AND, and "opt-in things I have not
+        # ticked that are actually here" is one gesture.
         #
-        # Hide opt-in sits directly under Opt-in only, which is the pair it rules
-        # out: the box that goes gray has to be the one your eye is already on,
-        # or the reason it went gray is a mystery on a list of six.
+        # Hide opt-in sits directly under Opt-in only, the pair it rules out: the
+        # box that goes gray has to be the one your eye is already on.
         & $section 'VIEW' 'View' @($CHECKED, $UNCHECKED, $CHANGED,
                                    @{ Group = 'Tier';  Name = $OPT_IN_ONLY },
                                    @{ Group = 'Avail'; Name = $HIDE_OPT_IN },
@@ -9908,20 +9822,17 @@ function Show-WDWindow {
         & $applyFilter
     }.GetNewClosure()
 
-    # What the person just did draws before the work it causes runs.
+    # WHATEVER WAS JUST DONE SHOWS NOW; THE EXPENSIVE CONSEQUENCE CATCHES UP.
     #
-    # A TextChanged handler runs synchronously inside the input event, so a
-    # 200ms filter pass over 240 rows is 200ms during which the character just
-    # typed is not on screen and the next keystroke is sitting in the queue
-    # behind it. The list is what the search box is FOR, but the letters are
-    # what the person is watching, and they were arriving in bursts.
+    # A TextChanged handler runs synchronously inside the input event, so a 200ms
+    # filter pass over 240 rows is 200ms in which the character just typed is not
+    # on screen and the next keystroke is queued behind it. The list is what a
+    # search box is FOR, but the letters are what the person is watching, and they
+    # were arriving in bursts. So the handler RESTARTS a timer and returns.
     #
-    # So the handler only restarts a timer and returns, and the work runs once
-    # the typing stops. This is the same rule the Compare hand-over button
-    # follows by painting itself before its rebuild, and the busy overlay's bar
-    # by advancing before the step it names: whatever was just done shows now,
-    # and the expensive consequence catches up. Anything bound to rapid input -
-    # a key, a drag, a wheel - belongs on one of those two shapes.
+    # Same rule as the Compare hand-over button painting itself before its
+    # rebuild, and the splash bar advancing before the step it names. Anything
+    # bound to rapid input belongs on one of those two shapes.
     $newDebounce = {
         param([int]$Ms, [scriptblock]$Work)
         # The harness sets the text and asserts on the result in the next
@@ -10016,19 +9927,15 @@ function Show-WDWindow {
         & $applyPresetToChecks $state.Preset
         $did
     }
-    # Three buttons whose labels are the answers. A MessageBox was used here
-    # first, on the reasoning that three answers is what YesNoCancel does and a
-    # bespoke window is one more thing to theme - but the three answers are
-    # "make it the default", "write it to a file", and "neither", and Yes/No
-    # cannot say either of the first two. The message then had to spend three
-    # lines explaining which button meant what, which is a dialog explaining
-    # its own controls.
+    # THREE BUTTONS WHOSE LABELS ARE THE ANSWERS. A MessageBox came first, since
+    # three answers is what YesNoCancel does - but the answers here are "make it
+    # the default", "write it to a file", and "neither", and Yes/No cannot say
+    # either of the first two. The message then spent three lines explaining which
+    # button meant what, which is a dialog explaining its own controls.
     #
-    # $Options is a list of @{ L = label; D = one line saying what it does }.
-    # Every answer but Cancel carries a description, because three one-word
-    # buttons is a quiz: "Default" and "File" are perfectly clear once you know
-    # what the dialog is for and say nothing at all before that. They read under
-    # the message, above the buttons, in the order the buttons run.
+    # $Options is @{ L = label; D = one line saying what it does }. Everything but
+    # Cancel carries a description: "Default" and "File" are clear once you know
+    # what the dialog is for and say nothing at all before that.
     $askThree = {
         param([string]$Title, [string]$Message, $Options)
         $dlg = New-Object Windows.Window
@@ -10097,21 +10004,17 @@ function Show-WDWindow {
 
     $ui.BtnSave.Add_Click({
         if ($state.NoPrompts) { return }
-        # A preset that came from a file is saved the way the mode screen saves
-        # one, because the question is the same question: which file. Default is
-        # meaningless for it - there is no shipped version of somebody's file to
-        # redefine - and this page used to offer it anyway, then write a
-        # nameless copy that the preset was not pointed at and that left the
-        # edit marks standing.
+        # BOTH SCREENS ASK THIS THROUGH ONE FUNCTION. A file-backed preset gets
+        # "the same file" or "another one": Default is meaningless for it, and this
+        # page used to offer it anyway and then write a nameless copy the preset
+        # was never pointed at, leaving the edit marks standing.
         #
-        # The pending tick-box edit is recorded first so the shared route reads
-        # it back through $effectiveIds. Not a new side effect: leaving this page
-        # does exactly this, no questions asked, so Cancel costs a moment's
-        # earliness and nothing else.
+        # The pending tick-box edit is recorded FIRST so the shared route reads it
+        # back through $effectiveIds. Not a new side effect - leaving this page
+        # does the same thing, no questions asked.
         #
-        # Reached through $editActions rather than by name: the flow is written
-        # below this line, and a closure captures its scope as it stands - the
-        # name would be $null here. The holder is declared with the mode grid.
+        # Through $editActions rather than by name: the flow is written below this
+        # line, and a closure captures its scope as it stands.
         if ($loadedPresets.Contains([string]$state.Preset)) {
             # Same file overwrites through $effectiveIds, so the pending
             # tick-box edit has to be recorded before it can be read back. Not a
@@ -10145,22 +10048,15 @@ function Show-WDWindow {
 
     # ---- Save, from the mode screen ----------------------------------------
     #
-    # The same decision as the Advanced page's Save and a different set of
-    # answers, because the thing being saved is different. Advanced saves the
-    # tick boxes; this saves the PRESET, read through $effectiveIds - which
-    # matters because the mode screen can be the only page anybody opens, and on
-    # that path the tick boxes do not exist yet.
+    # Same decision as Advanced's Save, different answers, because the thing being
+    # saved is different: Advanced saves the TICK BOXES, this saves the PRESET
+    # through $effectiveIds - which matters because the mode screen can be the only
+    # page anybody opens, and the boxes do not exist on that path.
     #
-    # A preset that came from a file gets "the same file" and "a different one"
-    # rather than "default" and "file". Default is meaningless for one - there
-    # is no shipped version of somebody's file to redefine - and File is not a
-    # choice so much as a question about which file, which is what these two
-    # answers are.
-    # $Extra is for the route that does more than write a file. Saving to a new
-    # one also loads it, selects it and puts the preset it came from back - three
-    # things the dialog before it described and this one has to confirm, or the
-    # only evidence that any of it happened is a preset list somebody has not
-    # looked at yet.
+    # $Extra is for the route that does more than write a file: saving to a new one
+    # also loads it, selects it, and resets the preset it came from. Two of those
+    # three are invisible from where the button was pressed, and the only other
+    # evidence is a preset list nobody has looked at yet.
     $savedNote = {
         param([string]$Name, [string]$Path, [int]$Count, [string]$Extra)
         if ($state.NoPrompts) { return }
@@ -10198,31 +10094,22 @@ function Show-WDWindow {
         & $selectPreset $Name
         & $savedNote $Name $Path @($sel).Count
     }
-    # Write a selection out to a file and pick up where it lands: the file is
-    # loaded as a preset of its own, selected, and the preset it came from goes
-    # back to its default. Every route that writes a NEW file ends here - a
-    # shipped mode saved to disk, a loaded preset saved to another file, from
-    # either screen.
+    # WRITING A NEW FILE IS THREE THINGS IN ONE GESTURE, and this is all of them:
+    # write it, load it as a preset of its own, select it, and reset the preset it
+    # came from. Every route that writes a file it is not already pointed at ends
+    # here, from either screen.
     #
-    # The three parts are one gesture rather than three, and that is the whole
-    # of it. Saving used to write the file and stop: the edit stayed on the
-    # preset, still marked as an edit, and the file was nowhere in the
-    # application - so the thing that had just been created was the one thing
-    # that was not in front of you, and the mode you had modified stayed
-    # modified with nothing to say the modification had been kept.
+    # Saving used to write the file and stop - the selection existed only on disk,
+    # the mode stayed marked as edited, and a message box suggested -ProfilePath.
+    # The edit had nowhere to be except somewhere the application could not see.
     #
-    # Reset last, not first. It is what makes this "the edit moved into a file"
-    # rather than "the edit was copied and also left behind"; the preset is a
-    # mode again, and the selection you built is the file you are now on.
+    # ORDER MATTERS TWICE. $registerLoaded runs before the reset, because reading
+    # the file back is what proves there is somewhere for the edit to go. And the
+    # reset runs before the selection, because it re-ticks the boxes for the preset
+    # it reset - after, it would put Advanced back on the mode being left.
     #
-    # $Selected is for the Advanced page, whose truth is the tick boxes. Null
-    # means read the preset, which is what the mode screen has to do - the boxes
-    # may not exist there yet.
-    #
-    # Through $registerLoaded rather than by filling in a $loadedPresets entry
-    # here: that function is the one place that decides what a file is called
-    # and which of its ids this machine can honor, and a file that skipped it
-    # would be the one loaded preset whose name came from somewhere else.
+    # $Selected is the caller's truer answer: Advanced passes its tick boxes, the
+    # mode screen passes null because the boxes may not exist there yet.
     $saveOutAndLoad = {
         param([string]$Name, [string]$Path, $Selected)
         $sel = $(if ($null -ne $Selected) { @($Selected) } else { @(& $effectiveIds $Name) })
