@@ -211,8 +211,9 @@ if (-not $isAdmin -and ($SelfTest -or $ListItems -or $ExportUnattend -or $SetupR
 }
 
 # --------------------------------------------------------------- modules ---
-# Order matters: WD.Persist registers handlers into WD.Custom's table,
-# WD.Discover reads Get-Prop from WD.Actions, and WD.Preflight reads it too.
+# One ordering constraint, and only one: WD.Persist registers handlers into
+# WD.Custom's table at import time, so Custom has to be in first. Everything
+# else resolves at call time, by which point all ten are loaded.
 foreach ($m in @('WD.Core', 'WD.Detect', 'WD.Actions', 'WD.Preflight', 'WD.Custom', 'WD.Persist', 'WD.Discover', 'WD.Revert', 'WD.Engine', 'WD.Unattend')) {
     Import-Module (Join-Path $modulePath "$m.psm1") -Force -DisableNameChecking
     # As soon as WD.Core is in, and not a line later: this starts the one csc

@@ -893,8 +893,9 @@ function Write-WDRunEnvironment {
     }
     # The tool sweep, if WD.Preflight is loaded. Guarded rather than assumed:
     # Core loads first and must not depend on a module that comes after it, and
-    # two paths import Core on its own - the generated rollback script, and the
-    # first-sign-in result window.
+    # the background runspaces each import their own subset. Every shipped
+    # caller does load Preflight, so a miss here means somebody wrote a new
+    # runspace and left it out - which is silent, and was, for the revert one.
     if (Get-Command Write-WDToolHealthLog -ErrorAction SilentlyContinue) {
         try { $null = Write-WDToolHealthLog } catch {
             Write-WDLog "The tool check could not run: $($_.Exception.Message)" -Level Warn

@@ -17227,7 +17227,10 @@ function Show-WDWindow {
             Sync = $state.Sync; ModulePath = $ModulePath; Ops = $ops; RunRoot = (Get-WDSession).Root
         } {
             try {
-                foreach ($m in @('WD.Core','WD.Detect','WD.Actions','WD.Custom','WD.Persist','WD.Discover','WD.Revert','WD.Engine')) {
+                # WD.Preflight is in the list because Write-WDRunEnvironment's
+                # tool sweep is Get-Command-guarded: without it a revert records
+                # no sweep and says nothing about having skipped one.
+                foreach ($m in @('WD.Core','WD.Detect','WD.Actions','WD.Preflight','WD.Custom','WD.Persist','WD.Discover','WD.Revert','WD.Engine')) {
                     Import-Module (Join-Path $ModulePath "$m.psm1") -Force -DisableNameChecking
                 }
                 $session = Initialize-WDSession -Root $RunRoot
@@ -18042,7 +18045,6 @@ function Show-WDWindow {
                 $groupCache[$Mode]
             }
             $spyL     = $spyIndex
-            $bytesL   = $rowBytes
             $setOvL   = $setOverride
             $clrOvL   = $clearOverrides
             $exclL    = $setRowExcluded
