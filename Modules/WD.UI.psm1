@@ -108,6 +108,33 @@ function Get-WDPalette {
 $script:WDDialogTheme = $null
 $script:WDDialogOwner = $null
 
+# What each background runspace imports. A runspace starts empty, so every one
+# of them has to load the toolkit for itself, and these were five bare literals
+# with no two alike - the revert one was missing WD.Preflight for its whole
+# life, which the Get-Command guard in Write-WDRunEnvironment swallowed.
+#
+# Kept minimal rather than collapsed into one list, and that is measured rather
+# than assumed: handing every runspace all nine costs the item probe 141 ms and
+# the storage walk 162 ms, in front of work that takes 2.6 s and 33-63 s
+# respectively. Cheap, but bought nothing - the fault was never the subsetting,
+# it was that nothing checked a subset was sufficient. [6] of the self test does
+# now, transitively, which is the only way to see it: the revert runspace's own
+# calls all resolved and the gap was two levels down through Initialize-WDSession.
+#
+# Add a module here, never at the use site. The keys are what [6] pairs against.
+$script:WDRunspaceModules = @{
+    # An apply, a preview, or a revert. Everything but WD.Unattend, which
+    # writes a file for another machine and is never part of a run.
+    Run     = @('WD.Core','WD.Detect','WD.Actions','WD.Preflight','WD.Custom','WD.Persist','WD.Discover','WD.Revert','WD.Engine')
+    # The startup scan. No Preflight: it builds no session, so it never reaches
+    # the tool sweep.
+    Scan    = @('WD.Core','WD.Detect','WD.Actions','WD.Custom','WD.Persist','WD.Discover','WD.Revert','WD.Engine')
+    # The already-satisfied probe, one answer per item.
+    Probe   = @('WD.Core','WD.Detect','WD.Actions','WD.Custom','WD.Persist')
+    # The drive walk behind the storage bar.
+    Storage = @('WD.Core','WD.Detect','WD.Actions','WD.Custom')
+}
+
 function Set-WDDialogHost {
     <#
         Where the themed dialogs get their brushes and their owner.
@@ -16999,6 +17026,7 @@ function Show-WDWindow {
             RunRoot = (Get-WDSession).Root; AllowDl = [bool]$ui.ChkDownloads.IsChecked; AllowOwn = [bool]$ui.ChkOwnership.IsChecked
             Accounts = @(& $accountKeys)
             PresetName = [string]$state.Preset
+            Modules = $script:WDRunspaceModules.Run
         } {
             try {
                 # Everything from here to the first item used to happen in
@@ -17008,7 +17036,7 @@ function Show-WDWindow {
                 $stage = { param([string]$t, [bool]$timed = $false)
                            $null = $Sync.Queue.Add(@{ Phase='Stage'; Text=$t; Timed=$timed }) }
                 & $stage 'Loading the toolkit...'
-                foreach ($m in @('WD.Core','WD.Detect','WD.Actions','WD.Preflight','WD.Custom','WD.Persist','WD.Discover','WD.Revert','WD.Engine')) {
+                foreach ($m in $Modules) {
                     Import-Module (Join-Path $ModulePath "$m.psm1") -Force -DisableNameChecking
                 }
                 $session = Initialize-WDSession -Root $RunRoot -Preview:$PreviewMode
@@ -17225,12 +17253,10 @@ function Show-WDWindow {
         & $enterRunPage $false 'PageRevert'
         & $newRunspace @{
             Sync = $state.Sync; ModulePath = $ModulePath; Ops = $ops; RunRoot = (Get-WDSession).Root
+            Modules = $script:WDRunspaceModules.Run
         } {
             try {
-                # WD.Preflight is in the list because Write-WDRunEnvironment's
-                # tool sweep is Get-Command-guarded: without it a revert records
-                # no sweep and says nothing about having skipped one.
-                foreach ($m in @('WD.Core','WD.Detect','WD.Actions','WD.Preflight','WD.Custom','WD.Persist','WD.Discover','WD.Revert','WD.Engine')) {
+                foreach ($m in $Modules) {
                     Import-Module (Join-Path $ModulePath "$m.psm1") -Force -DisableNameChecking
                 }
                 $session = Initialize-WDSession -Root $RunRoot
@@ -24135,10 +24161,11 @@ function Start-WDSatisfiedScan {
         $rs.SessionStateProxy.SetVariable('Inv',        $Inventory)
         $rs.SessionStateProxy.SetVariable('Prof',       $Profile)
         $rs.SessionStateProxy.SetVariable('Map',        $map)
+        $rs.SessionStateProxy.SetVariable('Modules',    $script:WDRunspaceModules.Probe)
         $ps = [powershell]::Create()
         $ps.Runspace = $rs
         $null = $ps.AddScript({
-            foreach ($m in @('WD.Core', 'WD.Detect', 'WD.Actions', 'WD.Custom', 'WD.Persist')) {
+            foreach ($m in $Modules) {
                 Import-Module (Join-Path $ModulePath "$m.psm1") -Force -DisableNameChecking
             }
             foreach ($it in $Items) {
@@ -24203,12 +24230,13 @@ function Start-WDStartupScan {
     $rs.SessionStateProxy.SetVariable('ModulePath',   $ModulePath)
     $rs.SessionStateProxy.SetVariable('ManifestPath', $ManifestPath)
     $rs.SessionStateProxy.SetVariable('DoScan',       (-not $NoScan))
+    $rs.SessionStateProxy.SetVariable('Modules',      $script:WDRunspaceModules.Scan)
 
     $ps = [powershell]::Create()
     $ps.Runspace = $rs
     $null = $ps.AddScript({
         try {
-            foreach ($m in @('WD.Core','WD.Detect','WD.Actions','WD.Custom','WD.Persist','WD.Discover','WD.Revert','WD.Engine')) {
+            foreach ($m in $Modules) {
                 Import-Module (Join-Path $ModulePath "$m.psm1") -Force -DisableNameChecking
             }
             # The machine profile, first and published straight away. It is six
@@ -24352,12 +24380,13 @@ function Start-WDStorageScan {
     $rs.SessionStateProxy.SetVariable('Sync',       $sync)
     $rs.SessionStateProxy.SetVariable('ModulePath', $ModulePath)
     $rs.SessionStateProxy.SetVariable('Cached',     $Cached)
+    $rs.SessionStateProxy.SetVariable('Modules',    $script:WDRunspaceModules.Storage)
 
     $ps = [powershell]::Create()
     $ps.Runspace = $rs
     $null = $ps.AddScript({
         try {
-            foreach ($m in @('WD.Core', 'WD.Detect', 'WD.Actions', 'WD.Custom')) {
+            foreach ($m in $Modules) {
                 Import-Module (Join-Path $ModulePath "$m.psm1") -Force -DisableNameChecking
             }
             $cap = Get-WDDiskCapacity

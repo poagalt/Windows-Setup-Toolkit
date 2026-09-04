@@ -2865,6 +2865,109 @@ if ($SelfTest) {
         $failures += @($themeBad | Sort-Object -Unique).Count
     }
 
+    # ---- what each background runspace imports ------------------------------
+    # A runspace starts empty, so each one imports the toolkit for itself from a
+    # named list in $script:WDRunspaceModules. The property that has to hold is
+    # TRANSITIVE and cannot be eyeballed: the revert runspace omitted
+    # WD.Preflight for its whole life while every call it makes itself resolved,
+    # because the gap was two levels down through Initialize-WDSession, behind
+    # the Get-Command guard in Write-WDRunEnvironment - which swallowed it, so
+    # every revert silently recorded no tool sweep.
+    $listBad = @()
+    try {
+        $modDefs = @{}; $modCalls = @{}; $modGuarded = @{}
+        foreach ($f in @(Get-ChildItem -Path (Join-Path $modulePath '*.psm1'))) {
+            $mn = [IO.Path]::GetFileNameWithoutExtension($f.Name)
+            $ma = [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$null)
+            foreach ($fn in $ma.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+                $modDefs[$fn.Name] = $mn
+                $inner = @{}
+                foreach ($c in $fn.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+                    $cn = $c.GetCommandName(); if ($cn) { $inner[$cn] = 1 }
+                }
+                $modCalls[$fn.Name] = @($inner.Keys)
+                foreach ($g in [regex]::Matches($fn.Extent.Text, 'Get-Command\s+([A-Za-z][\w-]*)')) { $modGuarded[$g.Groups[1].Value] = 1 }
+            }
+        }
+        $uiPath = Join-Path $modulePath 'WD.UI.psm1'
+        $uiAst  = [System.Management.Automation.Language.Parser]::ParseFile($uiPath, [ref]$null, [ref]$null)
+        $uiText = Get-Content -LiteralPath $uiPath -Raw
+        # Read out of the source, not off the loaded module: WD.UI is not
+        # imported yet on this path, and a static check should not need it.
+        $lists = @{}
+        foreach ($asn in $uiAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true)) {
+            if ($asn.Left.Extent.Text -ne '$script:WDRunspaceModules') { continue }
+            $ht = $asn.Right.Find({ param($n) $n -is [System.Management.Automation.Language.HashtableAst] }, $true)
+            foreach ($pair in $ht.KeyValuePairs) {
+                $lists[[string]$pair.Item1.Extent.Text.Trim("'", '"')] =
+                    @($pair.Item2.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value })
+            }
+        }
+        if (-not $lists.Count) { throw 'found no $script:WDRunspaceModules table to read' }
+        # A runspace body is the scriptblock carrying the import loop; its list
+        # is the nearest reference to the table above it.
+        $bodies = @()
+        foreach ($sb in $uiAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.ScriptBlockExpressionAst] }, $true)) {
+            if ($sb.Extent.Text -notmatch 'foreach \(\$m in \$Modules\)') { continue }
+            $nested = @($sb.FindAll({ param($n) $n -is [System.Management.Automation.Language.ScriptBlockExpressionAst] -and $n.Extent.Text -match 'foreach \(\$m in \$Modules\)' }, $true) |
+                        Where-Object { $_.Extent.StartOffset -gt $sb.Extent.StartOffset })
+            if ($nested.Count) { continue }
+            $keyHits = [regex]::Matches($uiText.Substring(0, $sb.Extent.StartOffset), '\$script:WDRunspaceModules\.(\w+)')
+            if (-not $keyHits.Count) { $listBad += "a runspace at line $($sb.Extent.StartLineNumber) imports `$Modules but names no list"; continue }
+            $bodies += [pscustomobject]@{ Key = $keyHits[$keyHits.Count - 1].Groups[1].Value; Sb = $sb }
+        }
+        foreach ($b in $bodies) {
+            if (-not $lists.ContainsKey($b.Key)) { $listBad += "line $($b.Sb.Extent.StartLineNumber) names list '$($b.Key)', which the table does not define"; continue }
+            $imported = $lists[$b.Key]
+            $seen = @{}; $queue = New-Object System.Collections.Generic.Queue[string]
+            foreach ($c in $b.Sb.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+                $cn = $c.GetCommandName(); if ($cn -and $modDefs.ContainsKey($cn)) { $queue.Enqueue($cn) }
+            }
+            while ($queue.Count) {
+                $n = $queue.Dequeue()
+                if ($seen.ContainsKey($n)) { continue }
+                $seen[$n] = 1
+                if ($modDefs[$n] -notin $imported -and -not $modGuarded.ContainsKey($n)) {
+                    $listBad += ("'{0}' (line {1}) reaches {2} in {3}, which it does not import" -f $b.Key, $b.Sb.Extent.StartLineNumber, $n, $modDefs[$n])
+                }
+                foreach ($c in $modCalls[$n]) { if ($modDefs.ContainsKey($c) -and -not $seen.ContainsKey($c)) { $queue.Enqueue($c) } }
+            }
+        }
+        # And the one ordering constraint there is. WD.Persist calls
+        # Register-WDHandler into WD.Custom's table at import time, so Custom has
+        # to be in first. Nothing else here is order-dependent - every other
+        # cross-module call resolves when it runs.
+        $ownList = @()
+        $selfAst = [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref]$null, [ref]$null)
+        foreach ($fe in $selfAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.ForEachStatementAst] }, $true)) {
+            if ($fe.Condition.Extent.Text -notmatch "'WD\.Core'") { continue }
+            $ownList = @($fe.Condition.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value })
+            break
+        }
+        if (-not $ownList.Count) { $listBad += 'could not find this script own module import list' }
+        else {
+            if ($ownList.IndexOf('WD.Custom') -lt 0 -or $ownList.IndexOf('WD.Persist') -lt 0) {
+                $listBad += 'the import list is missing WD.Custom or WD.Persist'
+            } elseif ($ownList.IndexOf('WD.Custom') -gt $ownList.IndexOf('WD.Persist')) {
+                $listBad += 'WD.Persist is imported before WD.Custom, so its Register-WDHandler calls have no table to write into'
+            }
+            foreach ($k in @($lists.Keys)) {
+                foreach ($m in $lists[$k]) {
+                    if ($m -notin $ownList) { $listBad += "list '$k' names $m, which this script never imports" }
+                }
+            }
+        }
+        if (-not $listBad.Count) {
+            Write-Host ("  OK      module lists {0} runspace(s) against {1} named list(s), every reachable function imported or guarded" -f $bodies.Count, $lists.Count)
+        }
+    } catch {
+        $listBad += "the module list sweep could not run: $($_.Exception.Message)"
+    }
+    if ($listBad.Count) {
+        foreach ($b in @($listBad | Sort-Object -Unique)) { Write-Host "  MODULES $b" -ForegroundColor Red }
+        $failures += @($listBad | Sort-Object -Unique).Count
+    }
+
     Write-Host "`n[7] Interface" -ForegroundColor Cyan
     Import-Module (Join-Path $modulePath 'WD.UI.psm1') -Force -DisableNameChecking
 
