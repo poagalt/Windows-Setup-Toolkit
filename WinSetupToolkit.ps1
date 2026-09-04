@@ -3019,6 +3019,24 @@ if ($SelfTest) {
             $null = $dangle.Add($nm)
         }
         foreach ($nm in $dangle) { $refsBad += "the harness reads `$$nm and neither unpacks nor assigns it" }
+        # And every field names something the frame actually has. A field of
+        # `foo = $foo` where the frame has no $foo passes silently as $null,
+        # which the two set comparisons above cannot see. Parameters come from
+        # Body.ParamBlock, NOT from FunctionDefinitionAst.Parameters - that is
+        # null for `function f { param(...) }`, and reading it instead reports
+        # every one of Show-WDWindow's thirteen parameters as a ghost field.
+        $swFn = @($uiAstR.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Show-WDWindow' }, $true))
+        if ($swFn.Count) {
+            $frameHas = & $nameSet @()
+            if ($swFn[0].Body.ParamBlock) {
+                foreach ($pa in $swFn[0].Body.ParamBlock.Parameters) { $null = $frameHas.Add($pa.Name.VariablePath.UserPath) }
+            }
+            foreach ($a in $swFn[0].FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true)) {
+                if ($a.Left -is $varAst) { $null = $frameHas.Add($a.Left.VariablePath.UserPath) }
+            }
+            foreach ($fe in $swFn[0].FindAll({ param($n) $n -is [System.Management.Automation.Language.ForEachStatementAst] }, $true)) { $null = $frameHas.Add($fe.Variable.VariablePath.UserPath) }
+            foreach ($nm in $supplied) { if (-not $frameHas.Contains($nm)) { $refsBad += "`$refs passes $nm and Show-WDWindow has no such local" } }
+        }
         if (-not $refsBad.Count) {
             Write-Host ("  OK      harness    {0} name(s) in -Refs, passed and unpacked, nothing dangling" -f $unpacked.Count)
         }
