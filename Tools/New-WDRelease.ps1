@@ -83,7 +83,8 @@ Set-Content -LiteralPath (Join-Path $payload 'profile_saves\.gitkeep') -Value ''
 # Cheap, and the one check worth making here: a .cmd with LF endings launches
 # nothing, and a module without a BOM is read as ANSI by PowerShell 5.1.
 $problems = @()
-foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $payload 'Modules') -Filter '*.psm1') +
+foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $payload 'Modules') -File |
+                 Where-Object { $_.Extension -in @('.psm1', '.ps1') }) +
                 @(Get-Item (Join-Path $payload 'WinSetupToolkit.ps1'))) {
     $b = [IO.File]::ReadAllBytes($f.FullName)
     if (-not ($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF)) {

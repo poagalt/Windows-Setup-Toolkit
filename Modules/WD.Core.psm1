@@ -769,8 +769,10 @@ function Get-WDRunEnvironment {
 
     # Which code is actually running. "It worked on my machine" is unanswerable
     # without this, and the modules are edited constantly.
+    # .ps1 too, or the rollback window - 3,087 lines of the generated script -
+    # is the one part of the build this cannot account for.
     $modules = & $g {
-        @(Get-ChildItem (Join-Path $PSScriptRoot '*.psm1') -ErrorAction Stop | ForEach-Object {
+        @(Get-ChildItem (Join-Path $PSScriptRoot '*.ps*1') -ErrorAction Stop | ForEach-Object {
             [ordered]@{
                 name  = $_.Name
                 bytes = $_.Length

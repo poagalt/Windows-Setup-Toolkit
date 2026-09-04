@@ -2661,7 +2661,13 @@ if ($SelfTest) {
     # throw out of a WPF handler closes the window - which is how a rail card
     # that threw on hover shipped. Decidable from source, so decided here.
     Write-Host "`n[6] Closure captures" -ForegroundColor Cyan
-    $srcFiles = @(Get-ChildItem -Path (Join-Path $modulePath '*.psm1') | ForEach-Object { $_.FullName }) + @($PSCommandPath)
+    # .ps1 as well as .psm1, which is what puts the rollback window's 3,087
+    # lines under these checks. It used to be a here-string in WD.Revert, so
+    # every sweep below stopped at the quotation mark - in the one file whose
+    # own notes say the closure rule has already cost the most.
+    $srcFiles = @(Get-ChildItem -Path $modulePath -File |
+                  Where-Object { $_.Extension -in @('.psm1', '.ps1') } |
+                  ForEach-Object { $_.FullName }) + @($PSCommandPath)
     $sbAst    = [System.Management.Automation.Language.ScriptBlockAst]
     $varAst   = [System.Management.Automation.Language.VariableExpressionAst]
     # Names that are always there, whatever scope the closure copied. Matched
@@ -2875,6 +2881,9 @@ if ($SelfTest) {
     # every revert silently recorded no tool sweep.
     $listBad = @()
     try {
+        # .psm1 only, deliberately: a runspace imports modules, and the
+        # rollback window beside them is text for the generated script rather
+        # than anything a runspace can load.
         $modDefs = @{}; $modCalls = @{}; $modGuarded = @{}
         foreach ($f in @(Get-ChildItem -Path (Join-Path $modulePath '*.psm1'))) {
             $mn = [IO.Path]::GetFileNameWithoutExtension($f.Name)
