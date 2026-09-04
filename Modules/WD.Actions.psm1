@@ -20,15 +20,9 @@
 #>
 
 # Deliberately no StrictMode here: manifest objects come from JSON with many
-# optional fields, and Get-Prop is the disciplined way to read them.
-
-function Get-Prop {
-    param($Object, [string]$Name, $Default = $null)
-    if ($null -eq $Object) { return $Default }
-    $p = $Object.PSObject.Properties[$Name]
-    if ($null -eq $p -or $null -eq $p.Value) { return $Default }
-    $p.Value
-}
+# optional fields, and Get-Prop - in WD.Core - is the disciplined way to read
+# them. It lived here until every module turned out to call it, WD.Core
+# included, which made the foundation depend on the executors.
 
 function Test-WDElevationError {
     <#
@@ -2441,7 +2435,7 @@ function Get-WDItemRevertRoutes {
     $routes.ToArray()
 }
 
-Export-ModuleMember -Function Invoke-WD*, Get-WDInstalledPrograms, Get-Prop, Resolve-WDSilentUninstall,
+Export-ModuleMember -Function Invoke-WD*, Get-WDInstalledPrograms, Resolve-WDSilentUninstall,
                               Get-WDItemRevertRoutes, Format-WDHivePath, Get-WDItemConsoles,
                               Test-WDRegistryActionSatisfied, Test-WDRegistryValueSet,
                               Test-WDServiceActionSatisfied,

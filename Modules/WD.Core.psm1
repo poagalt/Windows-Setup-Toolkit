@@ -16,6 +16,19 @@
 
 $script:Session = $null
 
+# The one way this toolkit reads a property that may not be there, and the
+# reason StrictMode can be off: it collapses a null object, a missing property,
+# and a present-but-null value into one default. 376 call sites in eleven
+# modules, this one included - which is why it is here and not in WD.Actions,
+# where it used to be and where WD.Core had to reach forward to find it.
+function Get-Prop {
+    param($Object, [string]$Name, $Default = $null)
+    if ($null -eq $Object) { return $Default }
+    $p = $Object.PSObject.Properties[$Name]
+    if ($null -eq $p -or $null -eq $p.Value) { return $Default }
+    $p.Value
+}
+
 # Status vocabulary shared by every executor. Anything not in this list is a bug.
 # Three of the nine are worth spelling out:
 #
@@ -2415,4 +2428,4 @@ function Export-WDRunFolder {
     [pscustomobject]@{ Path = $dir; Files = @($copied | ForEach-Object { $_.Name }) }
 }
 
-Export-ModuleMember -Function *-WD*, Get-WDSession, Test-WDAdmin, ConvertTo-WDRegParts
+Export-ModuleMember -Function *-WD*, Get-WDSession, Test-WDAdmin, ConvertTo-WDRegParts, Get-Prop
