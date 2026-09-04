@@ -234,7 +234,10 @@ $drv = Compare-Collection 'Third-party drivers' (Get-Field $b 'drivers') (Get-Fi
 $vol = Compare-Collection 'Volumes' (Get-Field $b 'volumes') (Get-Field $a 'volumes') `
             -Key 'drive' -Watch @('freeGb', 'freePct')
 
-$pth = Compare-Collection 'Watched paths' (Get-Field $b 'paths') (Get-Field $a 'paths') `
+# Reported as a section but not summarised: paths are not an inventory, so
+# there is no count worth a Totals line. Discarded rather than assigned, or the
+# summary object lands on the pipeline and joins this script's own output.
+$null = Compare-Collection 'Watched paths' (Get-Field $b 'paths') (Get-Field $a 'paths') `
             -Key 'path' -Watch @('exists', 'files', 'bytes')
 
 # --------------------------------------------- the manifest's own targets ----
@@ -249,7 +252,6 @@ foreach ($r in @(Get-Field $a 'registryManifestTargets')) {
     $aReg["$(Get-Field $r 'path')|$(Get-Field $r 'name')"] = $r
 }
 $regMoved   = New-Object System.Collections.Generic.List[object]
-$regWanted  = New-Object System.Collections.Generic.List[object]
 foreach ($k in ($bReg.Keys | Sort-Object)) {
     if (-not $aReg.ContainsKey($k)) { continue }
     $bv = Format-Value (Get-Field $bReg[$k] 'current')
