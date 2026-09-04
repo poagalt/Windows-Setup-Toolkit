@@ -2977,6 +2977,59 @@ if ($SelfTest) {
         $failures += @($listBad | Sort-Object -Unique).Count
     }
 
+    # ---- the harness's own interface ----------------------------------------
+    #
+    # Invoke-WDInteractionTest takes Show-WDWindow's frame as -Refs, and that
+    # object IS the contract - it replaced 117 aliases in one case-insensitive
+    # scope, which is a shape that had a duplicate in it and whose own comment
+    # demanded grepping before every addition. Three things have to hold, and
+    # none of them can be seen by running the harness: a name it reads and
+    # nobody passes is $null, and $null in an assertion reads as a failure of
+    # the thing being asserted rather than of the harness.
+    $refsBad = @()
+    try {
+        $tPath = Join-Path $modulePath 'WD.UITest.psm1'
+        $tAst  = [System.Management.Automation.Language.Parser]::ParseFile($tPath, [ref]$null, [ref]$null)
+        $hFn   = @($tAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-WDInteractionTest' }, $true))
+        if (-not $hFn.Count) { throw 'WD.UITest.psm1 defines no Invoke-WDInteractionTest' }
+        $unpacked = & $nameSet @()
+        foreach ($mm in [regex]::Matches($hFn[0].Extent.Text, '\$Refs\.([A-Za-z_][A-Za-z0-9_]*)')) { $null = $unpacked.Add($mm.Groups[1].Value) }
+        $uiAstR   = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $modulePath 'WD.UI.psm1'), [ref]$null, [ref]$null)
+        $supplied = & $nameSet @()
+        foreach ($asn in $uiAstR.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true)) {
+            if ($asn.Left.Extent.Text -ne '$refs') { continue }
+            $ht = $asn.Right.Find({ param($n) $n -is [System.Management.Automation.Language.HashtableAst] }, $true)
+            if ($ht) { foreach ($pair in $ht.KeyValuePairs) { $null = $supplied.Add([string]$pair.Item1.Extent.Text) } }
+        }
+        if (-not $supplied.Count) { throw 'Show-WDWindow builds no $refs object' }
+        foreach ($nm in $unpacked) { if (-not $supplied.Contains($nm)) { $refsBad += "the harness unpacks `$Refs.$nm and Show-WDWindow does not pass it" } }
+        foreach ($nm in $supplied) { if (-not $unpacked.Contains($nm))  { $refsBad += "Show-WDWindow passes $nm and the harness never unpacks it" } }
+        # And the list is COMPLETE: nothing the harness reads is left dangling.
+        $prov = & $nameSet @()
+        foreach ($a in $hFn[0].FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true)) {
+            if ($a.Left -is $varAst) { $null = $prov.Add($a.Left.VariablePath.UserPath) }
+        }
+        foreach ($fe in $hFn[0].FindAll({ param($n) $n -is [System.Management.Automation.Language.ForEachStatementAst] }, $true)) { $null = $prov.Add($fe.Variable.VariablePath.UserPath) }
+        foreach ($pa in $hFn[0].FindAll({ param($n) $n -is [System.Management.Automation.Language.ParameterAst] }, $true)) { $null = $prov.Add($pa.Name.VariablePath.UserPath) }
+        $dangle = & $nameSet @()
+        foreach ($v in $hFn[0].FindAll({ param($n) $n -is $varAst }, $true)) {
+            $nm = $v.VariablePath.UserPath
+            if ($nm -match ':' -or $v.VariablePath.IsGlobal -or $v.VariablePath.IsScript) { continue }
+            if ($auto.Contains($nm) -or $prov.Contains($nm)) { continue }
+            $null = $dangle.Add($nm)
+        }
+        foreach ($nm in $dangle) { $refsBad += "the harness reads `$$nm and neither unpacks nor assigns it" }
+        if (-not $refsBad.Count) {
+            Write-Host ("  OK      harness    {0} name(s) in -Refs, passed and unpacked, nothing dangling" -f $unpacked.Count)
+        }
+    } catch {
+        $refsBad += "the harness interface sweep could not run: $($_.Exception.Message)"
+    }
+    if ($refsBad.Count) {
+        foreach ($b in @($refsBad | Sort-Object -Unique)) { Write-Host "  REFS    $b" -ForegroundColor Red }
+        $failures += @($refsBad | Sort-Object -Unique).Count
+    }
+
     Write-Host "`n[7] Interface" -ForegroundColor Cyan
     Import-Module (Join-Path $modulePath 'WD.UI.psm1') -Force -DisableNameChecking
 
