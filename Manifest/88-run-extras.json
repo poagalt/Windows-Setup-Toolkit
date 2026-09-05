@@ -22,7 +22,7 @@
         {
           "id": "rollback-script",
           "settingsPath": "Nothing to undo - it only writes a script file. Delete the file if you do not want it.",
-          "symptoms": ["rollback script", "undo script", "how do i undo this", "where is the rollback", "undo-windebloat"],
+          "symptoms": ["rollback script", "undo script", "how do i undo this", "where is the rollback", "undo-winsetuptoolkit"],
           "name": "Generate rollback script",
           "desc": "Writes Undo-WinSetupToolkit.ps1 from this run's journal, so every registry value and service start-type it changed can be put back in one step. It goes in the run folder left on your desktop. Changes nothing on the machine.",
           "risk": 0, "tier": 1, "default": true, "order": 9995,
@@ -45,7 +45,7 @@
         {
           "id": "issues-doc",
           "settingsPath": "Nothing to undo - it only writes a text file. Delete the file if you do not want it.",
-          "symptoms": ["issues document", "common issues file", "where is the issues file", "lookup file", "windebloat text file"],
+          "symptoms": ["issues document", "common issues file", "where is the issues file", "lookup file", "winsetuptoolkit text file"],
           "name": "Generate common issues document",
           "desc": "Writes a text file listing everything this run could plausibly be blamed for later: the phrases you would search for, and how to undo each option on its own. It goes in the run folder left on your desktop, beside the rollback script. Changes nothing on the machine.",
           "risk": 0, "tier": 1, "default": true, "order": 9990,

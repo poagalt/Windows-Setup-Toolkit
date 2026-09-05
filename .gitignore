@@ -3,12 +3,15 @@
 profile_saves/
 *.log
 
-# "Save what this did" writes wherever the operator points it, and the repo
-# root is where it lands when the toolkit is being run out of a working copy.
-What-WinSetupToolkit-did-run-*.txt
-What-WinDebloat-did-run-*.txt
-What-WinSetupToolkit-did-run-*.md
-What-WinDebloat-did-run-*.md
+# The run write-up, when it is saved into a working copy. The first two are
+# what a run generates today; every glob here named a scheme this project had
+# already stopped using, so the CURRENT name was the one thing not covered.
+# The wildcards keep the artefacts of older runs ignored - those are still on
+# disk under names nothing generates any more.
+What-this-run-did.md
+What this run did.md
+What-*-did-run-*.txt
+What-*-did-run-*.md
 
 # Internal audit history. Part 1 is a list of defects that have all been
 # fixed, so publishing it reads as a list of current ones.
