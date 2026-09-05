@@ -1,39 +1,9 @@
-﻿<#
-    Windows Setup answer files.
-
-    An autounattend.xml at the root of the installation medium is read by Setup
-    automatically. It answers every question Setup asks and can run commands at
-    defined points, which means most of what this toolkit does afterwards can be
-    done before the machine ever reaches a desktop - and a few things can ONLY be
-    done there. Skipping the Microsoft account requirement is one. Deprovisioning
-    an app so it was never staged for any account is another: there is no later
-    moment at which "never installed" is still available.
-
-    What this file does NOT do is run the toolkit. The generated answer file is
-    self-contained - registry values and app deprovisioning inlined, nothing
-    copied onto the medium, nothing to go stale. Anything needing a network or a
-    signed-in user (winget installs, vendor uninstallers) cannot be expressed
-    that way and is reported as left out rather than quietly dropped.
-
-    Nothing here touches the current machine. The output is a file.
-#>
-
-Set-StrictMode -Version Latest
-
-# Where the answer file can act, and what each pass is for. Kept as data because
-# the ordering below reads as arbitrary otherwise.
-#
-#   windowsPE    Setup itself: language, disk, image, product key. The hardware
-#                requirement bypasses have to land here, before Setup checks.
-#   specialize   First boot of the installed OS, before any user exists. The
-#                right place for machine policy and for deprovisioning.
-#   oobeSystem   The out-of-box experience: the account, the privacy questions.
+﻿Set-StrictMode -Version Latest
 
 $script:WDUnattendNs = 'urn:schemas-microsoft-com:unattend'
 
-# reg.exe type names, keyed by the manifest's PowerShell kind. The manifest is
-# authored against Set-ItemProperty -Type, and reg.exe does not accept those
-# names, so a table rather than a guess.
+# The manifest is authored against Set-ItemProperty -Type, and reg.exe will not
+# take those names.
 $script:WDRegKinds = @{
     'DWord'        = 'REG_DWORD'
     'QWord'        = 'REG_QWORD'
@@ -43,92 +13,63 @@ $script:WDRegKinds = @{
     'MultiString'  = 'REG_MULTI_SZ'
 }
 
-# The temporary mount point for the default user's hive. Anything the manifest
-# scopes to a user has to go here rather than to HKCU: during specialize there
-# is no logged-on user, and writing the default profile is what makes every
-# account created later inherit the setting - which is strictly better than what
-# the toolkit can do afterwards, where it can only reach accounts that exist.
+# Per-user values go here, not HKCU: during specialize nobody is signed in, and
+# writing the default profile is what makes every account created later inherit
+# the setting.
 $script:WDDefaultHiveMount = 'HKU\WDDEFAULT'
 $script:WDDefaultHiveFile  = 'C:\Users\Default\NTUSER.DAT'
 
 function New-WDUnattendOptions {
-    <#
-        The form's answers, defaulted to what the Standard shape means: the
-        bypasses, a local account, region and keyboard, every privacy question
-        answered off. The controls the Full shape adds are all present and all
-        inert until set, so one object covers both and there is no second code
-        path that only runs when somebody ticks the advanced box.
-
-        DiskLayout defaults to 'none', and that is deliberate and load-bearing.
-        A DiskConfiguration block wipes the target drive with no prompt and no
-        confirmation, on whatever machine the medium is booted on. Setup asking
-        where to install is a cheap price for that not happening by accident.
-    #>
     [pscustomobject]@{
-        # --- identity -----------------------------------------------------
         ComputerName    = ''            # empty lets Windows generate one
         Organization    = ''
         Owner           = ''
 
-        # --- the local account, which is also the MSA bypass ---------------
         AccountName     = 'User'
         AccountPassword = ''
         AccountGroup    = 'Administrators'
         AccountHint     = 'No hint set'
         AutoLogon       = $false
-        # How many times, when it is on. Windows counts down and stops, which is
-        # what makes "sign in for me once so the first-logon work can run" a
-        # different and much safer answer from "never ask for a password again".
+        # Windows decrements this at each automatic sign-in and stops, which
+        # makes "once, so the first-logon work can run" a different answer from
+        # "never ask again".
         AutoLogonCount  = 1
-        # Further accounts, for a machine somebody else also uses. A list rather
-        # than a fixed second slot: there was exactly one, which made "a family
-        # machine" a thing the form could not express, and the emitter below was
-        # already a loop. Each entry is @{ Name; Password; Group }; an entry
-        # with no name is dropped.
+        # Each entry is @{ Name; Password; Group }; an entry with no name is
+        # dropped.
         ExtraAccounts   = @()
-        # The built-in Administrator. Empty leaves it disabled, which is what
-        # Windows does and what almost everybody should keep.
+        # Empty leaves it disabled, which is what Windows does.
         AdminPassword   = ''
 
-        # --- region -------------------------------------------------------
         UILanguage      = 'en-US'
         SystemLocale    = 'en-US'
         UserLocale      = 'en-US'
-        # Not written to the file - the file gets the three answers above, which
-        # is all Windows knows about. This is the form's own answer to "should
-        # the two below follow the one above", and it lives here because the
-        # page reads and writes every control it builds through this object, and
-        # a control that is exempt from that is a control that can be forgotten.
+        # Not written to the file - it is the form's own answer to whether the
+        # two locales follow the display language.
         SyncLocales     = $true
         InputLocale     = '0409:00000409'
         TimeZone        = ''            # empty leaves Setup's own default
 
-        # --- edition ------------------------------------------------------
         ProductKey      = ''            # empty emits no key at all
         ImageName       = ''            # e.g. 'Windows 11 Pro'
         ImageIndex      = 0             # 0 means "use the name, or ask"
         AcceptEula      = $true
 
-        # --- the three bypasses -------------------------------------------
         BypassMicrosoftAccount = $true
         BypassInternet         = $true
         BypassHardwareChecks   = $true
 
-        # --- privacy ------------------------------------------------------
         PrivacyOff             = $true
         ApplyToDefaultProfile  = $true
-        # 24H2 silently turns device encryption on where the machine qualifies,
-        # and the key goes to whatever account signs in - on a local account
-        # that is nowhere anybody can reach, which is how a firmware update
-        # costs somebody a disk. Deliberately the reverse of Windows' default.
+        # Deliberately the reverse of Windows' default: 24H2 turns device
+        # encryption on where the machine qualifies and sends the key to
+        # whatever account signs in, which on a local account is nowhere anybody
+        # can reach.
         NoDeviceEncryption     = $true
 
-        # --- the machine's own behavior ----------------------------------
         NetworkLocation = 'Home'        # Home | Work | Other
         HideWireless    = $true
         EnableRdp       = $false
 
-        # --- Full only. Disks are off unless deliberately turned on. -------
         DiskLayout      = 'none'        # none | wipe-gpt | wipe-mbr
         DiskId          = 0
         EfiSizeMb       = 300
@@ -139,47 +80,18 @@ function New-WDUnattendOptions {
         ExtraSpecialize = @()
         ExtraFirstLogon = @()
 
-        # --- run the toolkit on the finished machine ----------------------
-        # RunToolkit is the on/off and the only thing that decides whether any of
-        # this is emitted; RunPreset is only "which one". They were one control
-        # with '' meaning off, which forced the list's first entry to be "do not".
-        # 'profile' runs the saved selection named by RunProfileFile.
+        # RunToolkit is the on/off and decides whether any of this is emitted;
+        # RunPreset is only which one. 'profile' runs the selection named by
+        # RunProfileFile.
         RunToolkit      = $false
         RunPreset       = 'Balanced'
         RunProfileFile  = ''
 
-        # --- payload ------------------------------------------------------
         IncludeDebloat  = $true
     }
 }
 
 function Get-WDUnattendRunCommands {
-    <#
-        What makes the finished machine debloat itself: one specialize command
-        and the SetupComplete.cmd it leaves behind.
-
-        Two passes rather than one, for two reasons easy to miss:
-
-          - THE STICK'S DRIVE LETTER IS NOT KNOWABLE. Not always D:, and not the
-            same letter in specialize as in Windows PE. So the copy step searches
-            every drive for a marker file.
-          - THE STICK MAY BE GONE by the time the run happens - people pull it
-            the moment Setup reboots. So the toolkit is copied to disk during
-            specialize, while the medium is certainly attached, and run from
-            there. C:\Windows\Setup\Scripts survives the reboot between passes.
-
-        SetupComplete.cmd, NOT FirstLogonCommands. Setup runs it as Local System
-        after Setup finishes and before the logon screen: no sign-in, no account
-        context, no UAC - so the run does not need the created account to be an
-        administrator, and nothing appears while somebody is using their new
-        machine. The trade is that session 0 has no desktop; see -SetupRun for
-        the report it writes instead.
-
-        -Console IS NOT OPTIONAL. Without it the script takes the GUI branch,
-        where -Apply only OPENS the window - so the old FirstLogonCommands entry
-        waited for somebody to press Preview, and in session 0 would have waited
-        forever behind an invisible window.
-    #>
     param($Options)
 
     $dest = 'C:\Windows\Setup\Scripts\WinSetupToolkit'
@@ -192,11 +104,8 @@ function Get-WDUnattendRunCommands {
         $args2 = "-Console -Apply -SetupRun -Preset $([string]$Options.RunPreset)"
     }
 
-    # The guard is the whole of the safety here. SetupComplete.cmd runs before
-    # anybody can see it, so anything that goes wrong goes wrong invisibly - and
-    # the one failure that is certain to happen sometimes is the copy step not
-    # having found the medium. A missing script must be a no-op, not an error
-    # dialog nobody is there to dismiss.
+    # SetupComplete.cmd runs before anybody can see it, so a missing script has
+    # to be a no-op rather than an error dialog nobody is there to dismiss.
     $cmd = @(
         '@echo off'
         'rem Written by the Windows Setup Toolkit answer file. Windows Setup runs'
@@ -210,10 +119,8 @@ function Get-WDUnattendRunCommands {
         'exit /b 0'
     ) -join "`r`n"
 
-    # Base64 rather than an escaped here-string: this text has to survive being
-    # an attribute value inside XML inside a command line, and every layer of
-    # that has its own quoting rules. The same answer the Wi-Fi profile needed,
-    # for the same reason.
+    # Base64 rather than escaping: this has to survive being an attribute value
+    # inside XML inside a command line.
     $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($cmd))
     $copy = "`$d=Get-PSDrive -PSProvider FileSystem|Where-Object{Test-Path (Join-Path `$_.Root 'WinSetupToolkit\WinSetupToolkit.ps1')}|Select-Object -First 1;" +
             "if(`$d){Copy-Item (Join-Path `$d.Root 'WinSetupToolkit') '$dest' -Recurse -Force};" +
@@ -225,22 +132,14 @@ function Get-WDUnattendRunCommands {
 }
 
 function ConvertTo-WDXmlText {
-    <#
-        Escapes the three characters that cannot appear in element text. Not
-        quotes: these all go in element content, never in an attribute, and
-        escaping quotes there produces &quot; in a command line where the shell
-        then sees six characters instead of one.
-    #>
+    # Element text only, so quotes are deliberately not escaped - &quot; in a
+    # command line is six characters to the shell.
     param([string]$Text)
     if ($null -eq $Text) { return '' }
     $Text.Replace('&', '&amp;').Replace('<', '&lt;').Replace('>', '&gt;')
 }
 
 function ConvertTo-WDRegData {
-    <#
-        A manifest value as reg.exe would take it. Binary is the awkward one -
-        the manifest may carry a byte array, and reg.exe wants unbroken hex.
-    #>
     param($Value, [string]$Kind)
 
     if ($Kind -eq 'Binary') {
@@ -258,10 +157,6 @@ function ConvertTo-WDRegData {
 }
 
 function New-WDUnattendPayloadShell {
-    <#
-        An empty payload with every list present. One definition, so adding a
-        payload kind cannot leave the no-items path throwing under StrictMode.
-    #>
     [pscustomobject]@{
         Registry = @(); Appx = @(); Service = @(); Task = @()
         Feature  = @(); Capability = @(); Skipped = @()
@@ -269,17 +164,8 @@ function New-WDUnattendPayloadShell {
 }
 
 function Get-WDUnattendPayload {
-    <#
-        Splits manifest items into what an answer file can carry and what it
-        cannot. All three exclusions are REPORTED, not dropped - a generator that
-        silently halves the plan is worse than one that refuses:
-
-          - needs a network or a signed-in user (winget, vendor uninstallers)
-          - is a script handler: arbitrary PowerShell, nothing to inline
-          - carries guards. A guard asks about the machine, and at the moment
-            this file is written that machine does not exist - emitting anyway
-            would apply a Dell-only fix to a ThinkPad.
-    #>
+    # What cannot be carried is reported rather than dropped: a generator that
+    # silently halves the plan is worse than one that refuses.
     param([Parameter(Mandatory)]$Items)
 
     $reg     = New-Object System.Collections.Generic.List[psobject]
@@ -395,22 +281,14 @@ function Get-WDUnattendPayload {
 }
 
 function New-WDUnattendCommands {
-    <#
-        The specialize-pass command list, in the order it has to run.
-
-        The default user's hive is loaded once around every per-user write and
-        unloaded once at the end, rather than per value. reg.exe will not unload
-        a hive something still holds open, and a load/unload pair per value is
-        several hundred opportunities for one of them to fail and strand the
-        mount.
-    #>
+    # The default user's hive is loaded once around every per-user write and
+    # unloaded at the end, not per value.
     param($Options, $Payload)
 
     $cmds = New-Object System.Collections.Generic.List[string]
 
-    # The network requirement. BypassNRO is read by OOBE when it decides
-    # whether to insist on a connection; it has to exist before OOBE starts,
-    # which is what makes specialize the right pass rather than oobeSystem.
+    # BypassNRO has to exist before OOBE starts, which is what makes specialize
+    # the right pass rather than oobeSystem.
     if ($Options.BypassInternet) {
         $cmds.Add('reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v BypassNRO /t REG_DWORD /d 1 /f')
     }
@@ -430,24 +308,21 @@ function New-WDUnattendCommands {
         )) { $cmds.Add($c) }
     }
 
-    # Device encryption, before anything else has a chance to start it. The
-    # policy is read at first boot; setting it afterwards leaves a disk that is
-    # already encrypting.
+    # Before anything can start encrypting: the policy is read at first boot,
+    # and setting it later leaves a disk already under way.
     if ($Options.NoDeviceEncryption) {
         $cmds.Add('reg add "HKLM\SYSTEM\CurrentControlSet\Control\BitLocker" /v PreventDeviceEncryption /t REG_DWORD /d 1 /f')
     }
 
     if ($Options.EnableRdp) {
         $cmds.Add('reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f')
-        # The rule group, not a port: Windows owns the port and the group is
+        # The rule group, not a port - Windows owns the port, and the group is
         # what the Settings toggle enables.
         $cmds.Add('cmd /c netsh advfirewall firewall set rule group="remote desktop" new enable=Yes ^& exit /b 0')
     }
 
-    # A profile written to disk and imported, not `netsh wlan connect` alone:
-    # connect needs a profile to exist, and `add profile user=all` is what makes
-    # it the machine's rather than one account's. Base64 because it is XML inside
-    # XML inside a command line.
+    # connect needs a profile to exist, and "add profile user=all" is what makes
+    # it the machine's rather than one account's.
     if ($Options.WifiSsid) {
         $ssid = ConvertTo-WDXmlText $Options.WifiSsid
         $hex  = (([System.Text.Encoding]::UTF8.GetBytes([string]$Options.WifiSsid) |
@@ -471,9 +346,6 @@ function New-WDUnattendCommands {
                 "<MSM><security><authEncryption><authentication>$auth</authentication>" +
                 "<encryption>$cipher</encryption><useOneX>false</useOneX></authEncryption>$sec</security></MSM>" +
                 '</WLANProfile>'
-        # Through a file rather than a here-string on the command line: the
-        # profile is XML inside XML inside a command line, and every layer of
-        # quoting is a place for it to come apart.
         $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($prof))
         $ps  = "`$p='C:\Windows\Temp\wd-wifi.xml';" +
                "[IO.File]::WriteAllBytes(`$p,[Convert]::FromBase64String('$b64'));" +
@@ -483,18 +355,15 @@ function New-WDUnattendCommands {
         $cmds.Add("powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `"$ps`"")
     }
 
-    # Anything the operator typed for this pass, before the payload: these are
-    # theirs and the payload is ours.
+    # The operator's own commands before the payload: these are theirs.
     foreach ($c in @($Options.ExtraSpecialize)) { if ($c) { $cmds.Add([string]$c) } }
 
-    # The toolkit's own copy step, if the file is to run a preset afterwards.
     if ([bool]$Options.RunToolkit -and [string]$Options.RunPreset) {
         $cmds.Add((Get-WDUnattendRunCommands -Options $Options).Specialize)
     }
 
     if (-not $Options.IncludeDebloat) { return $cmds.ToArray() }
 
-    # Machine-scoped manifest values go straight in.
     $perUser = New-Object System.Collections.Generic.List[psobject]
     foreach ($r in @($Payload.Registry)) {
         if ($r.Scope -ieq 'machine') {
@@ -513,10 +382,9 @@ function New-WDUnattendCommands {
         $cmds.Add("reg unload $($script:WDDefaultHiveMount)")
     }
 
-    # Wrapped in cmd /c ... ^& exit /b 0 so a service or task absent from this
-    # particular image cannot fail the pass. Matters more here than in a normal
-    # run: the file is written against a machine nobody has seen, so "not
-    # present" is the expected case rather than an error.
+    # Wrapped so a service or task absent from this image cannot fail the pass.
+    # The file is written against a machine nobody has seen, so "not present" is
+    # the expected case.
     foreach ($s in @($Payload.Service)) {
         $start = switch -Regex ([string]$s.StartupType) {
             'Disabled'  { 'disabled'; break }
@@ -543,12 +411,9 @@ function New-WDUnattendCommands {
         }
     }
 
-    # DISM against the RUNNING image, not the offlineServicing pass: that runs
-    # before the machine's own servicing stack is live, where a wrong feature
-    # name fails the whole install rather than one line of it.
-    #
-    # /NoRestart on every one, or DISM returns 3010 and Setup treats a reboot
-    # request mid-specialize as a reason to start over.
+    # Against the running image, not offlineServicing: there a wrong feature
+    # name fails the whole install rather than one line. /NoRestart everywhere,
+    # or DISM returns 3010 and Setup reads a reboot request as failure.
     foreach ($f in @($Payload.Feature)) {
         $verb = $(if ($f.Enable) { '/Enable-Feature /All' } else { '/Disable-Feature' })
         $cmds.Add("cmd /c dism.exe /online $verb /FeatureName:$($f.Name) /NoRestart /Quiet ^& exit /b 0")
@@ -558,9 +423,8 @@ function New-WDUnattendCommands {
         $cmds.Add("cmd /c dism.exe /online $verb /CapabilityName:$($c.Name) /NoRestart /Quiet ^& exit /b 0")
     }
 
-    # Deprovisioning. One command for the lot, because a RunSynchronousCommand
-    # per package would put a hundred PowerShell startups in the specialize pass
-    # and each one costs about a second.
+    # One command for the lot: a RunSynchronousCommand per package would put a
+    # hundred PowerShell startups in the specialize pass.
     if (@($Payload.Appx).Count) {
         $list = (@($Payload.Appx) | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ','
         $ps = "`$p=@($list);`$all=Get-AppxProvisionedPackage -Online;" +
@@ -573,18 +437,14 @@ function New-WDUnattendCommands {
 }
 
 function New-WDRegCommand {
-    <#
-        One manifest value as a reg.exe line. The path is quoted and the data is
-        not: a quoted /d swallows the quotes into the value, which is how a
-        REG_SZ ends up with literal quote marks in it.
-    #>
+    # The path is quoted and the data is not - a quoted /d swallows the quotes
+    # into the value.
     param($Entry, [string]$Root)
 
     $path = $Entry.Path
     # 'machine' and 'user' entries carry a full path with its own hive prefix;
-    # per-hive entries are relative and get the root prepended. Same rule the
-    # live executor follows, deliberately - two different path conventions is
-    # how the answer file and the run would come to disagree.
+    # per-hive entries are relative. Same rule as the live executor, so the two
+    # cannot disagree.
     if ($Entry.Scope -ieq 'allusers' -or $Entry.Scope -ieq 'user') {
         $path = ($path -replace '^(HKCU:|HKEY_CURRENT_USER)\\?', '')
         $path = "$Root\$($path.TrimStart('\'))"
@@ -602,20 +462,14 @@ function New-WDRegCommand {
 }
 
 function New-WDUnattendXml {
-    <#
-        Assembles the document. Emitted for amd64 only: an arm64 machine needs
-        its own component blocks and shipping both doubles the file to serve a
-        case nobody generating this has yet had. Worth revisiting, and worth
-        being explicit about rather than letting somebody discover it.
-    #>
+    # amd64 only: arm64 needs its own component blocks, and shipping both
+    # doubles the file for a case nobody has had yet.
     param(
         [Parameter(Mandatory)]$Options,
         $Payload
     )
-    # Every list the command builder reads has to exist here. Set-StrictMode
-    # turns a missing one into a throw rather than a silent empty, which is what
-    # caught this - adding a payload kind and forgetting this line is otherwise
-    # a crash that only happens on the path with no items.
+    # Every list the command builder reads has to exist, or StrictMode turns a
+    # missing one into a throw on the no-items path.
     if (-not $Payload) { $Payload = New-WDUnattendPayloadShell }
 
     $arch = 'amd64'
@@ -625,7 +479,6 @@ function New-WDUnattendXml {
     & $add '<?xml version="1.0" encoding="utf-8"?>'
     & $add "<unattend xmlns=`"$($script:WDUnattendNs)`">"
 
-    # ---------------------------------------------------------------- windowsPE
     & $add '  <settings pass="windowsPE">'
     & $add "    <component name=`"Microsoft-Windows-International-Core-WinPE`" processorArchitecture=`"$arch`" publicKeyToken=`"31bf3856ad364e35`" language=`"neutral`" versionScope=`"nonSxS`">"
     & $add "      <SetupUILanguage><UILanguage>$(ConvertTo-WDXmlText $Options.UILanguage)</UILanguage></SetupUILanguage>"
@@ -636,9 +489,8 @@ function New-WDUnattendXml {
     & $add '    </component>'
     & $add "    <component name=`"Microsoft-Windows-Setup`" processorArchitecture=`"$arch`" publicKeyToken=`"31bf3856ad364e35`" language=`"neutral`" versionScope=`"nonSxS`">"
 
-    # The hardware requirement bypasses. These run inside Setup, before it
-    # checks, which is the only moment they can be written - by the time the
-    # installed OS boots the check has already refused.
+    # These run inside Setup, before it checks - by the time the installed OS
+    # boots, the check has already refused.
     if ($Options.BypassHardwareChecks) {
         & $add '      <RunSynchronous>'
         $n = 1
@@ -656,8 +508,7 @@ function New-WDUnattendXml {
         & $add '      </RunSynchronous>'
     }
 
-    # Disks. Absent unless somebody deliberately turned this on - see the note
-    # on New-WDUnattendOptions.
+    # Absent unless deliberately turned on.
     if ($Options.DiskLayout -ne 'none') {
         $gpt = ($Options.DiskLayout -eq 'wipe-gpt')
         & $add '      <DiskConfiguration>'
@@ -667,11 +518,9 @@ function New-WDUnattendXml {
         & $add '          <WillWipeDisk>true</WillWipeDisk>'
         & $add '          <CreatePartitions>'
         if ($gpt) {
-            # The EFI system partition. 300 MB is Microsoft's own recommendation
-            # and 100 MB is the old minimum; some firmware updates and some
-            # multi-boot setups want the room, so it is a field rather than a
-            # constant. Clamped, because a 20 MB ESP produces an install that
-            # fails halfway through with nothing readable to say why.
+            # 300 MB is Microsoft's recommendation and 100 MB the old minimum.
+            # Clamped: a 20 MB ESP fails halfway through the install with
+            # nothing readable to say why.
             $efi = [int]$Options.EfiSizeMb
             if ($efi -lt 100)  { $efi = 100 }
             if ($efi -gt 2048) { $efi = 2048 }
@@ -696,8 +545,8 @@ function New-WDUnattendXml {
         & $add '      </DiskConfiguration>'
         & $add '      <ImageInstall>'
         & $add '        <OSImage>'
-        # Index beats name when both are given: an index is unambiguous and a
-        # name has to match the medium's wording exactly.
+        # Index beats name: an index is unambiguous, a name has to match the
+        # medium's wording exactly.
         if ([int]$Options.ImageIndex -gt 0) {
             & $add '          <InstallFrom>'
             & $add '            <MetaData wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">'
@@ -715,16 +564,13 @@ function New-WDUnattendXml {
         }
         $part = $(if ($gpt) { 3 } else { 2 })
         & $add "          <InstallTo><DiskID>$([int]$Options.DiskId)</DiskID><PartitionID>$part</PartitionID></InstallTo>"
-        # No "create a recovery partition" switch, deliberately: Setup only makes
-        # one when IT chooses the layout, and a DiskConfiguration block naming
-        # partitions is the operator choosing instead - WinRE lands in
-        # C:\Recovery either way. A control that cannot affect its own file is
-        # the same defect the Wi-Fi fields shipped with.
+        # No "create a recovery partition" switch: Setup only makes one when it
+        # chooses the layout itself, and WinRE lands in C:\Recovery either way.
         & $add '        </OSImage>'
         & $add '      </ImageInstall>'
     } elseif ($Options.ImageName -or [int]$Options.ImageIndex -gt 0) {
         # No disk block, but still name the edition so Setup does not stop to
-        # ask which one when the medium carries several.
+        # ask when the medium carries several.
         & $add '      <ImageInstall>'
         & $add '        <OSImage>'
         & $add '          <InstallFrom>'
@@ -742,8 +588,8 @@ function New-WDUnattendXml {
     if ($Options.ProductKey) {
         & $add "        <ProductKey><Key>$(ConvertTo-WDXmlText $Options.ProductKey)</Key></ProductKey>"
     } else {
-        # An empty key element is what tells Setup to stop asking on an edition
-        # that activates digitally. Omitting the element entirely makes it ask.
+        # An empty key element tells Setup to stop asking on an edition that
+        # activates digitally; omitting it entirely makes it ask.
         & $add '        <ProductKey><Key /></ProductKey>'
     }
     if ($Options.Organization) { & $add "        <Organization>$(ConvertTo-WDXmlText $Options.Organization)</Organization>" }
@@ -752,7 +598,6 @@ function New-WDUnattendXml {
     & $add '    </component>'
     & $add '  </settings>'
 
-    # --------------------------------------------------------------- specialize
     & $add '  <settings pass="specialize">'
     & $add "    <component name=`"Microsoft-Windows-Shell-Setup`" processorArchitecture=`"$arch`" publicKeyToken=`"31bf3856ad364e35`" language=`"neutral`" versionScope=`"nonSxS`">"
     if ($Options.ComputerName) { & $add "      <ComputerName>$(ConvertTo-WDXmlText $Options.ComputerName)</ComputerName>" }
@@ -776,7 +621,6 @@ function New-WDUnattendXml {
     }
     & $add '  </settings>'
 
-    # -------------------------------------------------------------- oobeSystem
     & $add '  <settings pass="oobeSystem">'
     & $add "    <component name=`"Microsoft-Windows-International-Core`" processorArchitecture=`"$arch`" publicKeyToken=`"31bf3856ad364e35`" language=`"neutral`" versionScope=`"nonSxS`">"
     & $add "      <InputLocale>$(ConvertTo-WDXmlText $Options.InputLocale)</InputLocale>"
@@ -792,9 +636,9 @@ function New-WDUnattendXml {
     if ($Options.BypassMicrosoftAccount) {
         & $add '        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>'
     }
-    # 3 is "do not turn on automatic updates or Windows Defender express
-    # settings", which is what answers the privacy page rather than skipping it
-    # with the defaults left on.
+    # 3 is "do not turn on automatic updates or Defender express settings",
+    # which answers the privacy page rather than skipping it with the defaults
+    # left on.
     & $add "        <ProtectYourPC>$(if ($Options.PrivacyOff) { 3 } else { 1 })</ProtectYourPC>"
     $netLoc = [string]$Options.NetworkLocation
     if ($netLoc -notin @('Home','Work','Other')) { $netLoc = 'Home' }
@@ -802,8 +646,8 @@ function New-WDUnattendXml {
     & $add '      </OOBE>'
 
     # A defined local account is the real Microsoft-account bypass: OOBE skips
-    # account creation altogether when one already exists, so there is no screen
-    # left to insist on a sign-in.
+    # account creation when one exists, so no screen is left to insist on a
+    # sign-in.
     $accounts = @()
     if ($Options.AccountName) {
         $accounts += [pscustomobject]@{ Name = $Options.AccountName; Password = $Options.AccountPassword; Group = $Options.AccountGroup }
@@ -833,9 +677,8 @@ function New-WDUnattendXml {
                 & $add "            <Group>$(ConvertTo-WDXmlText $acc.Group)</Group>"
                 & $add '            <Password>'
                 & $add "              <Value>$(ConvertTo-WDXmlText $acc.Password)</Value>"
-                # Plain text, and said out loud rather than hidden: the
-                # alternative is base64, which is not encryption and reads as
-                # though it were.
+                # Plain text, said out loud: the alternative is base64, which is
+                # not encryption and reads as though it were.
                 & $add '              <PlainText>true</PlainText>'
                 & $add '            </Password>'
                 & $add '          </LocalAccount>'
@@ -845,10 +688,6 @@ function New-WDUnattendXml {
         & $add '      </UserAccounts>'
     }
 
-    # Signing in without being asked. Counted rather than endless: Windows
-    # decrements LogonCount at each automatic sign-in and stops when it runs
-    # out, which is what makes "once, so the first-logon work can run" a
-    # different answer from "never ask for a password again".
     if ($Options.AutoLogon -and $Options.AccountName) {
         $n = [int]$Options.AutoLogonCount
         if ($n -lt 1) { $n = 1 }
@@ -870,10 +709,8 @@ function New-WDUnattendXml {
         $first.Add('reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" /v Enabled /t REG_DWORD /d 0 /f')
     }
     foreach ($c in @($Options.ExtraFirstLogon)) { if ($c) { $first.Add([string]$c) } }
-    # The toolkit run was the last entry here and is not any more: it happens in
-    # SetupComplete.cmd, before anybody signs in. See Get-WDUnattendRunCommands.
-    # What is left in this pass is what genuinely belongs to a user session -
-    # the per-user registry writes above, and whatever the operator typed.
+    # The toolkit run happens in SetupComplete.cmd before anybody signs in - see
+    # Get-WDUnattendRunCommands. What is left here belongs to a user session.
 
     if ($first.Count) {
         & $add '      <FirstLogonCommands>'
@@ -896,12 +733,6 @@ function New-WDUnattendXml {
 }
 
 function Test-WDUnattendXml {
-    <#
-        Parses what was generated and checks the promises the form makes are
-        actually in the file. A generator that emits well-formed XML saying the
-        wrong thing is the failure mode worth catching, so this asserts content
-        rather than just that it parsed.
-    #>
     param([Parameter(Mandatory)][string]$Xml, $Options)
 
     $problems = New-Object System.Collections.Generic.List[string]
@@ -935,28 +766,25 @@ function Test-WDUnattendXml {
         if ($Options.PrivacyOff -and $Xml -notmatch 'AllowTelemetry') {
             $problems.Add('data collection was to be turned off and no telemetry policy was written')
         }
-        # The one that matters most, asserted from the other direction: a file
-        # that wipes a disk nobody asked it to wipe is the worst thing this
-        # generator could produce.
+        # Asserted from the other direction: a file that wipes a disk nobody
+        # asked it to wipe is the worst thing this can produce.
         if ($Options.DiskLayout -eq 'none' -and $Xml -match '<WillWipeDisk>') {
             $problems.Add('disks were to be left alone and the file wipes one')
         }
-        # Every field that reaches the file has to be checked from here, or the
-        # form grows a control that collects an answer nothing acts on - which
-        # is what the Wi-Fi fields did for their whole first life.
+        # Every field that reaches the file is checked here, or the form grows a
+        # control that collects an answer nothing acts on.
         if ($Options.WifiSsid -and $Xml -notmatch 'wlan add profile') {
             $problems.Add('a Wi-Fi network was given and no profile is written')
         }
-        # RunToolkit as well as RunPreset. RunPreset now holds a mode whether or
-        # not the section is switched on - it is "which one", not "whether" -
-        # so checking it alone reported every default file as broken.
+        # RunToolkit as well as RunPreset: RunPreset holds a mode whether or not
+        # the section is on, so checking it alone reports every default file as
+        # broken.
         if ([bool]$Options.RunToolkit -and [string]$Options.RunPreset -and $Xml -notmatch 'WinSetupToolkit\.ps1') {
             $problems.Add('the toolkit was to run after Setup and nothing runs it')
         }
-        # The copy step and the thing that runs it are two halves and either can
-        # be dropped by an edit to the other. The .cmd body is base64 inside the
-        # specialize command, so this asserts on the path it is written to
-        # rather than on its contents.
+        # The copy step and the thing that runs it are two halves, either
+        # droppable by an edit to the other. Asserted on the path because the
+        # body is base64.
         if ([bool]$Options.RunToolkit -and [string]$Options.RunPreset -and $Xml -notmatch 'SetupComplete\.cmd') {
             $problems.Add('the toolkit was to run after Setup and no SetupComplete.cmd is written')
         }
@@ -975,8 +803,8 @@ function Test-WDUnattendXml {
         }
     }
 
-    # Order elements have to be unique and contiguous within each block, or
-    # Setup skips commands without saying which.
+    # Order elements must be unique and contiguous within each block, or Setup
+    # skips commands without saying which.
     foreach ($node in @($doc.GetElementsByTagName('RunSynchronous')) + @($doc.GetElementsByTagName('FirstLogonCommands'))) {
         $orders = @($node.ChildNodes | ForEach-Object { [int]$_.Order })
         if ($orders.Count -ne (@($orders | Sort-Object -Unique)).Count) {
@@ -988,11 +816,8 @@ function Test-WDUnattendXml {
 }
 
 function Export-WDUnattend {
-    <#
-        Writes the file. UTF-8 without a BOM: Windows Setup reads the answer
-        file itself, and a BOM in front of the XML declaration is the one thing
-        it will not forgive.
-    #>
+    # UTF-8 with no BOM: Setup reads this itself, and a BOM in front of the XML
+    # declaration is the one thing it will not forgive.
     param(
         [Parameter(Mandatory)][string]$Path,
         [Parameter(Mandatory)]$Options,

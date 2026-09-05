@@ -1,21 +1,11 @@
-﻿<#
-    WD.Detect - everything the engine needs to know about the machine it woke
-    up on. Nothing in this module writes; it only reports.
+﻿$script:Profile = $null
 
-    The whole toolkit is portable across brands because this is the only place
-    that knows what brand it is. Manifest entries declare guards like
-    "oem:lenovo" or "chassis:laptop" and the engine asks Test-WDGuard.
-#>
+# GetSystemMetrics comes from [WD.Native], compiled once by WD.Core. No Add-Type
+# here - it would put a compiler run on the launch path.
 
-$script:Profile = $null
-
-# GetSystemMetrics lives in [WD.Native], compiled once by WD.Core. Do not
-# Add-Type here: that puts a compiler run on the launch path.
-
-# Chassis types that mean "portable" per the SMBIOS spec.
+# SMBIOS chassis types that mean "portable".
 $script:PortableChassis = @(8, 9, 10, 11, 12, 14, 18, 21, 30, 31, 32)
 
-# Normalizes the wild variety of strings vendors put in SMBIOS.
 $script:VendorMap = [ordered]@{
     'hp|hewlett'                 = 'hp'
     'dell'                       = 'dell'
@@ -51,7 +41,6 @@ function Get-WDSystemProfile {
     try { $bat = Get-CimInstance Win32_Battery          -ErrorAction Stop } catch { }
     try { $gpu = @(Get-CimInstance Win32_VideoController -ErrorAction Stop) } catch { }
 
-    # How full the system drive is - drives the diskfull guard.
     $sysDrive = [string]$env:SystemDrive
     if (-not $sysDrive) { $sysDrive = 'C:' }
     $diskTotal = 0L; $diskFree = 0L; $diskUsed = 0
@@ -79,7 +68,7 @@ function Get-WDSystemProfile {
     foreach ($c in $chassisTypes) {
         if ($script:PortableChassis -contains [int]$c) { $isPortable = $true; break }
     }
-    # Virtual machines report chassis 1 but a battery is still the better tell.
+    # VMs report chassis 1, so a battery is the better tell.
     if (-not $isPortable -and $bat) { $isPortable = $true }
 
     # SM_DIGITIZER = 94; low byte non-zero means an integrated digitiser.
@@ -112,8 +101,6 @@ function Get-WDSystemProfile {
         Architecture    = $env:PROCESSOR_ARCHITECTURE
         Manufacturer    = $manufacturer
         Vendor          = $vendor
-        # SMBIOS gives things like "LENOVO"; this is the form to put in front of
-        # a person.
         VendorLabel     = $(
             $labels = @{ hp='HP'; dell='Dell'; lenovo='Lenovo'; asus='ASUS'; acer='Acer'
                          msi='MSI'; samsung='Samsung'; razer='Razer'; framework='Framework'
@@ -150,20 +137,6 @@ function Get-WDSystemProfile {
 }
 
 function Import-WDSystemProfile {
-    <#
-        Seeds this runspace's cache with a profile that was read somewhere else.
-
-        The startup scan runs on a runspace of its own and reads the profile
-        there because it needs one; handing that answer back is what stops the
-        main thread spending another second on the same six CIM queries. The
-        cache matters as much as the variable does - plenty of functions here
-        take -Profile optionally and call Get-WDSystemProfile when it is absent,
-        and every one of those would otherwise pay for the read again, on the UI
-        thread, at whatever moment it happened to be called.
-
-        Refuses anything that is not a profile rather than caching a wrong
-        answer: a bad seed here would be believed by everything downstream.
-    #>
     param($Profile)
     if (-not $Profile -or -not $Profile.PSObject.Properties['Build']) { return $null }
     $script:Profile = $Profile
@@ -183,15 +156,9 @@ function Test-WDPowerToys {
 }
 
 function Test-WDCopilotKey {
-    <#
-        Returns Present / Absent / Unknown.
-
-        There is no single authoritative flag for "this keyboard has a Copilot
-        key". Windows only surfaces its own customization UI when one exists,
-        so the presence of those settings keys is the best proxy we have. On
-        Unknown we let the caller proceed - the remap is inert on a machine
-        with no such key, so a false positive costs nothing.
-    #>
+    # Present / Absent / Unknown. No authoritative flag exists, so the presence
+    # of Windows' own customization keys is the proxy. Unknown proceeds: the
+    # remap is inert without the key.
     $probes = @(
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Shell\Copilot\CopilotKey',
         'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Copilot\CopilotKey',
@@ -201,8 +168,7 @@ function Test-WDCopilotKey {
         if (Test-Path -LiteralPath $p) { return 'Present' }
     }
 
-    # Secondary signal: Copilot keys only shipped on hardware built from 2024,
-    # so anything older almost certainly does not have one.
+    # Copilot keys only shipped on hardware built from 2024.
     try {
         $bios = Get-CimInstance Win32_BIOS -ErrorAction Stop
         if ($bios.ReleaseDate -and $bios.ReleaseDate -lt (Get-Date '2024-01-01')) { return 'Absent' }
@@ -212,21 +178,6 @@ function Test-WDCopilotKey {
 }
 
 function Test-WDGuard {
-    <#
-        Evaluates a manifest guard expression against the current machine.
-
-        Supported forms, all case-insensitive:
-            oem:lenovo            vendor match (comma-separated list allowed)
-            chassis:laptop        laptop | desktop
-            edition:enterprise    enterprise | home | pro
-            build:>=26100         numeric comparison on the OS build
-            gpu:nvidia            a GPU from that vendor is present
-            touch                 an integrated digitiser is present
-            battery               a battery is present
-            vm                    running in a virtual machine
-            winget                winget is on PATH
-        Prefix any guard with ! to negate it. All guards in the list must pass.
-    #>
     param(
         [string[]]$Guards,
         $Profile
@@ -270,8 +221,8 @@ function Test-WDGuard {
                     }
                 } else { $true }
             }
-            # diskfull:70 - system drive at least 70% used. An unreadable drive
-            # reads as 0% and so fails the guard, which is the safe way round.
+            # An unreadable drive reads as 0% and fails the guard, which is the
+            # safe way round.
             'diskfull' {
                 if ($val -match '^\d+$') { [int]$Profile.DiskUsedPercent -ge [int]$val } else { $true }
             }
@@ -291,20 +242,6 @@ function Test-WDGuard {
 }
 
 function Get-WDGuardFailure {
-    <#
-        Which guard in a list this machine fails, said in words somebody who has
-        never read the manifest can act on. Empty when they all pass.
-
-        Test-WDGuard answers yes or no, which is all a filter needs. This is for
-        the one place that has to explain itself: a selection loaded from a file
-        drops the options this machine cannot run, and "12 of 48 apply here" is
-        a number somebody is entitled to see the reasoning behind - especially
-        when the reason is "that file was saved on a Lenovo".
-
-        Evaluated one guard at a time through Test-WDGuard rather than
-        re-implementing the comparisons, so the two can never disagree about
-        which guard failed.
-    #>
     param([string[]]$Guards, $Profile)
 
     if (-not $Guards -or $Guards.Count -eq 0) { return '' }
@@ -322,8 +259,8 @@ function Get-WDGuardFailure {
             $parts = $g.Split(':', 2)
             $key = $parts[0]; $val = $parts[1]
         }
-        # Two phrasings per guard: what a passing machine looks like, and what
-        # this one is. The negated form swaps which of the two is the complaint.
+        # $wants is what a passing machine looks like, $here is what this one
+        # is. Negation swaps which of the two is the complaint.
         $wants = switch ($key.ToLower()) {
             'oem'      { "machines made by $val" }
             'chassis'  { "$($val.ToLower())s" }
@@ -357,36 +294,16 @@ $script:UserHiveCache = $null
 function Clear-WDUserHiveCache { $script:UserHiveCache = $null }
 
 function Use-WDUserHiveDrive {
-    <#
-        HKU: is not one of PowerShell's default drives, and New-PSDrive without
-        a scope creates it in the CALLER'S scope - so a drive made inside a
-        function is gone the moment that function returns, taking every
-        'HKU:\<sid>' path it just handed back with it. The paths outlive the
-        drive, reach Join-Path in the registry executor, and throw
-        DriveNotFoundException there: 42 of the 135 items in a Balanced run,
-        every one of them an allusers write, on an elevated machine.
-
-        The failure names neither the drive's scope nor the function that made
-        it, which is why it read as a permissions problem. Global, once, and
-        guarded, so every per-account path resolves for the life of the process.
-    #>
+    # Global scope, or the drive dies when this function returns while the
+    # HKU:\<sid> paths it handed out live on.
     if (Get-PSDrive -Name HKU -ErrorAction SilentlyContinue) { return $true }
     $null = New-PSDrive -PSProvider Registry -Name HKU -Root HKEY_USERS -Scope Global -ErrorAction SilentlyContinue
     [bool](Get-PSDrive -Name HKU -ErrorAction SilentlyContinue)
 }
 
 function Get-WDUserHives {
-    <#
-        Every loaded user hive plus the default profile, so per-user tweaks can
-        be applied to accounts that exist now and to accounts made later.
-        Returns PS-drive style roots under a process-wide HKU: drive.
-
-        Cached for the life of the process, because a hive cannot be loaded or
-        unloaded in the middle of a run without somebody signing in or out, and
-        this was being walked once per per-user action - about seventy HKU
-        enumerations in a full run, all returning the same answer.
-        Clear-WDUserHiveCache exists for the self test, which fabricates hives.
-    #>
+    # Cached: a hive cannot load or unload mid-run without somebody signing in
+    # or out, and this was walked ~70 times per run.
     if ($null -ne $script:UserHiveCache) { return $script:UserHiveCache }
     $null = Use-WDUserHiveDrive
 
@@ -395,7 +312,7 @@ function Get-WDUserHives {
 
     foreach ($sub in (Get-ChildItem 'HKU:\' -ErrorAction SilentlyContinue)) {
         $sid = Split-Path $sub.Name -Leaf
-        # Real user SIDs only - skip machine, service and _Classes shadows.
+        # Real user SIDs only - skip machine, service, and _Classes shadows.
         if ($sid -notmatch '^S-1-5-21-[\d\-]+$') { continue }
         if ($sid -eq [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) { continue }
         $hives.Add([pscustomobject]@{ Name = $sid; Path = "HKU:\$sid"; Mounted = $false })
@@ -407,22 +324,10 @@ function Get-WDUserHives {
 $script:FUTURE_ACCOUNT = 'DefaultProfile'
 
 function Get-WDUserAccounts {
-    <#
-        The accounts a run can reach, in a form a person can tick.
-
-        Each entry's Key matches what Get-WDUserHives calls that hive, so the
-        interface and the executor are naming the same thing - a list of
-        display names that had to be mapped back to SIDs somewhere in between
-        is how the wrong account gets written to.
-
-        Two limits worth knowing, both reported rather than hidden. Only
-        *loaded* hives can be reached, so an account nobody has signed into
-        since the last boot is not on this list and never was - that is a
-        pre-existing property of writing to another user's registry, not
-        something this choice introduced. And the last entry is not an account
-        at all: it is the default profile, which is what accounts created later
-        inherit from.
-    #>
+    # Key matches what Get-WDUserHives calls the hive, so nothing has to map
+    # display names back to SIDs.
+    # Only loaded hives are reachable, and the last entry is the default profile
+    # rather than an account.
     $out = New-Object System.Collections.Generic.List[psobject]
     $me  = [Security.Principal.WindowsIdentity]::GetCurrent()
     $out.Add([pscustomobject]@{
@@ -454,16 +359,9 @@ function Get-WDUserAccounts {
 }
 
 function Get-WDContextAccounts {
-    <#
-        The account selection off a run context, read as a property rather than
-        through Get-Prop.
-
-        Get-Prop cannot return an empty list. Its result leaves the function
-        through the pipeline, the pipeline unrolls an empty array to nothing at
-        all, and the caller gets $null - which here means the exact opposite of
-        what was asked for: "no accounts" would come back as "every account" and
-        write to every hive on the machine. Property access does not unroll.
-    #>
+    # Read as a property, never through Get-Prop: that returns through the
+    # pipeline, which unrolls an empty list to $null - and $null here means
+    # every account.
     param($Context)
     if (-not $Context) { return $null }
     $p = $Context.PSObject.Properties['Accounts']
@@ -472,12 +370,8 @@ function Get-WDContextAccounts {
 }
 
 function Select-WDAccountHives {
-    <#
-        Narrows a hive list to the accounts a run was told to touch. A $null
-        selection means every account, which is what the command line, the
-        re-apply guards and every release before this one do - so the filter has
-        to be opt-in or a saved plan would quietly start doing less.
-    #>
+    # $null means every account, which is what the command line and the re-apply
+    # guards pass.
     param($Hives, $Default, [string[]]$Accounts)
 
     $roots = @($Hives)
@@ -491,12 +385,13 @@ function Select-WDAccountHives {
 }
 
 function Mount-WDDefaultHive {
-    <#  Loads C:\Users\Default\NTUSER.DAT so new accounts inherit our settings.  #>
+    # Loads C:\Users\Default\NTUSER.DAT so accounts made later inherit these
+    # settings.
     $dat = Join-Path $env:SystemDrive 'Users\Default\NTUSER.DAT'
     if (-not (Test-Path -LiteralPath $dat)) { return $null }
 
-    # Both streams are redirected: unelevated, reg.exe prints its refusal to the
-    # console and that looks like a crash. Null return means "unavailable".
+    # Both streams redirected: unelevated, reg.exe prints its refusal to the
+    # console and that reads as a crash.
     $key = 'WD_DEFAULT'
     $out = [IO.Path]::GetTempFileName()
     $err = [IO.Path]::GetTempFileName()
@@ -504,8 +399,8 @@ function Mount-WDDefaultHive {
         $p = Start-Process reg.exe -ArgumentList @('load', "HKU\$key", "`"$dat`"") `
                            -NoNewWindow -Wait -PassThru -RedirectStandardOutput $out -RedirectStandardError $err -EA SilentlyContinue
         if ($p -and $p.ExitCode -eq 0) {
-            # Make HKU: before handing out a path that uses it. reg.exe loads
-            # under HKEY_USERS; that does not create the PS drive.
+            # reg.exe loads under HKEY_USERS, which does not create the PS
+            # drive.
             $null = Use-WDUserHiveDrive
             return [pscustomobject]@{ Name = 'DefaultProfile'; Path = "HKU:\$key"; Mounted = $true; HiveKey = $key }
         }
@@ -517,23 +412,10 @@ function Mount-WDDefaultHive {
 }
 
 function Dismount-WDDefaultHive {
-    <#
-        Unmount the default profile, and make sure it actually went.
-
-        A hive with an open key handle will not unload, and this run has just
-        written every scope:allusers value into it through PowerShell's registry
-        provider - which keeps those handles alive until they are collected. One
-        collect and no check was not enough: on a real machine the mount survived
-        the run and was still there days later, with nothing anywhere saying so.
-
-        Three things the first version was missing. The PSDrive is removed first,
-        which is what actually releases the provider's handles - collecting alone
-        leaves them. It retries, because the first attempt can lose a race with
-        the finalizer thread. And it VERIFIES, so a failure is reported instead
-        of being indistinguishable from success: a stranded mount rides along in
-        every later boot, and the rollback script cannot load its own copy while
-        somebody else's is in the way.
-    #>
+    # Remove the PSDrive first - that is what releases the provider's key
+    # handles; collecting alone leaves them and the hive will not unload.
+    # Retries and then verifies: a stranded mount rides along in every later
+    # boot and blocks the rollback script's own load.
     param($Hive)
     if (-not $Hive -or -not $Hive.Mounted) { return }
 

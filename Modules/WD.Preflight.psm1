@@ -1,43 +1,12 @@
-﻿<#
-    WD.Preflight - is each tool this toolkit stands on actually working?
-
-    Almost everything here wraps something Windows provides: DISM, the
-    deployment stack, winget, the Task Scheduler, the SCM, VSS. When one of them
-    refuses - and a pending restart makes DISM refuse EVERY servicing operation
-    - the items depending on it fail one at a time and the report reads as thirty
-    unrelated problems rather than one cause. So the cause is found once, up
-    front, and named.
-
-    Three rules:
-
-      1. Never throw. This is on the path to every apply. A check that cannot
-         answer returns Unknown, which is a real state and not a failure.
-      2. Fast. The whole sweep is under two seconds. The one slow probe - opening
-         a DISM servicing session - is behind -Deep, because the cheap proxy for
-         it (a pending restart) is the actual cause in real life.
-      3. Say what to DO. Reason and Fix are separate fields, and the self test
-         fails an Unavailable carrying no Fix.
-
-    States: Ok, Degraded (works, less than fully), Unavailable (will not work),
-    Unknown (could not be determined - usually the probe needs elevation).
-    Unknown ranks BELOW Unavailable: a thing known broken outranks a thing
-    nobody could ask about.
-#>
-
-Set-StrictMode -Off
+﻿Set-StrictMode -Off
 
 $script:WDToolHealth = $null
 
-# Ordering for display and for "what is the worst thing here". Unknown sits
-# below Unavailable deliberately: a thing that is known broken outranks a thing
-# nobody could ask about.
+# Unknown ranks below Unavailable on purpose: a thing known broken outranks a
+# thing nobody could ask about.
 $script:WDToolRank = @{ 'Ok' = 0; 'Degraded' = 1; 'Unknown' = 2; 'Unavailable' = 3 }
 
 function New-WDToolResult {
-    <#  Uniform shape for a check, mirroring New-WDResult's role in the
-        executors. Affects/Handlers/Scope are what let a broken tool be turned
-        into a count of the items in front of the operator that it will
-        actually break.  #>
     param(
         [Parameter(Mandatory)][string]$Id,
         [Parameter(Mandatory)][string]$Name,
@@ -48,10 +17,9 @@ function New-WDToolResult {
         [string[]]$Affects  = @(),
         [string[]]$Handlers = @(),
         [string]$Scope    = '',
-        # True when this check speaks for the run's safety rather than for a
-        # class of action - the restore point, the Recycle Bin, the journal.
-        # Those break the way BACK rather than the way forward, so they are
-        # reported even when nothing in the plan depends on them.
+        # A safety check speaks for the way back - restore point, Recycle Bin,
+        # journal - so it is reported even when nothing in the plan depends on
+        # it.
         [switch]$Safety
     )
     [pscustomobject]@{
@@ -72,17 +40,6 @@ function New-WDToolResult {
 }
 
 function Test-WDToolHealth {
-    <#
-        Runs every check and returns the results, worst first.
-
-        Cached for the life of the process, because three surfaces ask for this
-        - the log at session start, the confirmation before an apply, and the
-        run page - and none of them should pay for it twice. -Refresh is what
-        the run itself uses after a restart-adjacent step.
-
-        -Deep adds the probes that cost real time: opening a DISM servicing
-        session, and asking winget for its sources. Off by default.
-    #>
     [CmdletBinding()]
     param([switch]$Refresh, [switch]$Deep)
 
@@ -93,8 +50,8 @@ function Test-WDToolHealth {
     $elevated = $false
     try { $elevated = Test-WDAdmin } catch { }
 
-    # Every check goes through here so that one which throws cannot take the
-    # sweep down, and so each one is timed.
+    # One wrapper so a check that throws cannot take the sweep down, and so each
+    # is timed.
     $run = {
         param([string]$Id, [scriptblock]$Body)
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -108,13 +65,11 @@ function Test-WDToolHealth {
         if ($r) { $r.Ms = [int]$sw.ElapsedMilliseconds; $results.Add($r) }
     }
 
-    # A pending restart is read once and used by three checks.
+    # Read once; three checks want it.
     $rebootCbs = $false; $rebootWu = $false
     try { $rebootCbs = Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending' } catch { }
     try { $rebootWu  = Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired' } catch { }
     $rebootPending = ($rebootCbs -or $rebootWu)
-
-    # ---------------------------------------------------------- privilege ---
 
     & $run 'elevation' {
         if ($elevated) {
@@ -127,8 +82,6 @@ function Test-WDToolHealth {
         }
     }
 
-    # ---------------------------------------------------- the servicing stack ---
-
     & $run 'dism' {
         $mod = $null
         try { $mod = @(Get-Module -ListAvailable -Name Dism -ErrorAction Stop).Count } catch { }
@@ -138,9 +91,8 @@ function Test-WDToolHealth {
                 -Fix 'This is unusual and usually means a damaged install. sfc /scannow is the place to start.' `
                 -Affects @('feature','capability')
         }
-        # THE case, and the reason this whole module exists. DISM refuses every
-        # servicing operation while a restart is outstanding, and each affected
-        # item then fails on its own with a bare 0x800f0conflict-style code.
+        # DISM refuses every servicing operation while a restart is outstanding,
+        # and each affected item then fails on its own with a bare HRESULT.
         if ($rebootPending) {
             return New-WDToolResult -Id 'dism' -Name 'Windows features and capabilities (DISM)' -State Unavailable `
                 -Reason 'A restart is already pending, and DISM refuses every servicing operation until it is done.' `
@@ -153,7 +105,7 @@ function Test-WDToolHealth {
                 -Reason 'DISM cannot be asked anything without administrator rights.' `
                 -Fix 'Re-run elevated.' -Affects @('feature','capability')
         }
-        # TrustedInstaller is the service that actually performs the work.
+        # TrustedInstaller is the service that does the work.
         $ti = $null
         try { $ti = Get-Service TrustedInstaller -ErrorAction Stop } catch { }
         if ($ti -and $ti.StartType -eq 'Disabled') {
@@ -163,8 +115,8 @@ function Test-WDToolHealth {
                 -Affects @('feature','capability')
         }
         if ($Deep) {
-            # The only probe that proves it. Slow, because it opens a real
-            # servicing session, which is exactly why it is not the default.
+            # The only probe that proves it, and it opens a real servicing
+            # session - hence -Deep rather than the default.
             try {
                 $null = Get-WindowsOptionalFeature -Online -FeatureName 'NetFx3' -ErrorAction Stop
             } catch {
@@ -178,18 +130,9 @@ function Test-WDToolHealth {
     }
 
     & $run 'component-store' {
-        # Cheap corruption and mid-servicing markers - not a substitute for
-        # /ScanHealth, which takes minutes and has no business on this path.
-        #
-        # COUNT, NEVER TEST FOR EXISTENCE. SessionsPending is present and EMPTY
+        # Count, never test for existence: SessionsPending is present and empty
         # on a settled machine, so keying on the key reports every healthy
         # install as degraded.
-        #
-        # And count only INCOMPLETE sessions. A finished session is left behind
-        # under this key with Complete=1, so a bare subkey count tells somebody
-        # to restart and goes on telling them after they have. A check whose
-        # advice cannot satisfy it is worse than no check. Absent Complete counts
-        # as outstanding.
         $sessions = 0
         $packages = 0
         try {
@@ -213,8 +156,6 @@ function Test-WDToolHealth {
         New-WDToolResult -Id 'component-store' -Name 'Component store' -State Ok
     }
 
-    # ------------------------------------------------ the deployment stack ---
-
     & $run 'appx' {
         $svc = $null
         try { $svc = Get-Service AppXSvc -ErrorAction Stop } catch { }
@@ -237,10 +178,8 @@ function Test-WDToolHealth {
     }
 
     & $run 'appx-provisioned' {
-        # The half that makes a removal STICK. Without it a package comes back
-        # for the next account that signs in, which is the single most
-        # confusing outcome this toolkit can produce - it looks like the
-        # removal silently undid itself weeks later.
+        # Deprovisioning is the half that makes a removal stick; without it the
+        # package returns for the next account that signs in.
         if (-not $elevated) {
             return New-WDToolResult -Id 'appx-provisioned' -Name 'Permanent Store app removal (deprovisioning)' -State Unavailable `
                 -Reason 'Provisioned packages cannot be listed without administrator rights, so removals will come back for new accounts.' `
@@ -256,8 +195,6 @@ function Test-WDToolHealth {
         }
         New-WDToolResult -Id 'appx-provisioned' -Name 'Permanent Store app removal (deprovisioning)' -State Ok
     }
-
-    # ---------------------------------------------------------- installers ---
 
     & $run 'winget' {
         $cmd = $null
@@ -306,8 +243,6 @@ function Test-WDToolHealth {
         New-WDToolResult -Id 'network' -Name 'Internet access' -State Ok
     }
 
-    # ------------------------------------------------- scheduler and the SCM ---
-
     & $run 'task-scheduler' {
         $svc = $null
         try { $svc = Get-Service Schedule -ErrorAction Stop } catch { }
@@ -342,10 +277,6 @@ function Test-WDToolHealth {
     }
 
     & $run 'wmi' {
-        # A broken CIM repository is rare and catastrophic: the machine profile,
-        # the service list, the process sweeps and the uninstall detection all
-        # go through it, so the failure looks like the toolkit having lost its
-        # mind rather than like one subsystem being down.
         try { $null = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).BuildNumber }
         catch {
             return New-WDToolResult -Id 'wmi' -Name 'Windows management (WMI/CIM)' -State Unavailable `
@@ -357,10 +288,8 @@ function Test-WDToolHealth {
         New-WDToolResult -Id 'wmi' -Name 'Windows management (WMI/CIM)' -State Ok
     }
 
-    # ----------------------------------------------------------- registry ---
-
     & $run 'user-hives' {
-        # Only matters for scope:allusers writes, which is the one scope with a
+        # Speaks only for scope:allusers writes, the one scope with a
         # per-account answer.
         try { $null = @(Get-ChildItem 'Registry::HKEY_USERS' -ErrorAction Stop).Count }
         catch {
@@ -380,9 +309,8 @@ function Test-WDToolHealth {
     }
 
     & $run 'managed' {
-        # A managed machine is not broken, but a policy this toolkit writes can
-        # be silently overwritten at the next policy refresh, and "it came back
-        # on its own" then has no explanation anywhere.
+        # Degraded, not Unavailable: a managed machine works, but a policy this
+        # writes can be overwritten at the next refresh.
         $domain = $false; $mdm = 0
         try { $domain = [bool](Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).PartOfDomain } catch { }
         try {
@@ -412,9 +340,9 @@ function Test-WDToolHealth {
     }
 
     & $run 'associations' {
-        # UCPD is a kernel filter driver that refuses writes to the http,
-        # https, and .pdf UserChoice keys from a denylist that includes
-        # powershell.exe, even as SYSTEM. Nothing gets past it.
+        # UCPD is a kernel filter driver that refuses writes to the http, https,
+        # and .pdf UserChoice keys from a denylist including powershell.exe,
+        # even as SYSTEM.
         $ucpd = $null
         try { $ucpd = Get-Service UCPD -ErrorAction Stop } catch { }
         if ($ucpd -and $ucpd.Status -eq 'Running') {
@@ -443,8 +371,6 @@ function Test-WDToolHealth {
         }
         New-WDToolResult -Id 'edge-removal' -Name 'Edge removal' -State Ok -Handlers @('RemoveEdge')
     }
-
-    # ------------------------------------------------------- the way back ---
 
     & $run 'system-restore' {
         $disabled = $null
@@ -479,9 +405,8 @@ function Test-WDToolHealth {
     }
 
     & $run 'recycle-bin' {
-        # Anything promising reversibility for a deleted file depends on this,
-        # and FOF_ALLOWUNDO is a REQUEST - a volume with no bin deletes
-        # permanently and still reports success.
+        # FOF_ALLOWUNDO is a request: a volume with no bin deletes permanently
+        # and still reports success.
         $ok = $null
         try { if (Get-Command Test-WDRecycleAvailable -ErrorAction SilentlyContinue) { $ok = Test-WDRecycleAvailable -Path $env:SystemDrive } } catch { }
         if ($null -eq $ok) {
@@ -498,8 +423,6 @@ function Test-WDToolHealth {
     }
 
     & $run 'journal' {
-        # If the run folder cannot be written there is no journal, no rollback
-        # script, and no trace - the run would proceed and be unrecoverable.
         $root = $null
         try { $s = Get-WDSession; if ($s) { $root = $s.RunDir } } catch { }
         if (-not $root) { $root = Join-Path $env:ProgramData 'WinSetupToolkit' }
@@ -515,8 +438,6 @@ function Test-WDToolHealth {
         }
         New-WDToolResult -Id 'journal' -Name 'Undo journal and logs' -State Ok -Safety
     }
-
-    # ------------------------------------------------------- the machine ---
 
     & $run 'disk-space' {
         $free = $null
@@ -582,9 +503,6 @@ function Test-WDToolHealth {
     }
 
     & $run 'command-tools' {
-        # The external binaries several handlers shell out to. Missing ones are
-        # rare, but a stripped or previously-debloated image is exactly the
-        # machine somebody points this at.
         $need = [ordered]@{
             'reg.exe'      = @('registry')
             'sc.exe'       = @('service')
@@ -630,10 +548,9 @@ function Test-WDToolHealth {
     }
 
     & $run 'single-instance' {
-        # The worst outcome in this whole file. Two runs interleaving read each
-        # other's changes as the "previous value" for their own journals, and
-        # both rollbacks then restore the wrong thing - silently, and only
-        # discovered by somebody trying to undo.
+        # Two runs interleaving read each other's changes as the "previous
+        # value" for their own journals, and both rollbacks then restore the
+        # wrong thing.
         $others = @()
         try {
             $others = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Stop |
@@ -653,7 +570,6 @@ function Test-WDToolHealth {
 }
 
 function Get-WDToolHealthSummary {
-    <#  Counts and a single sentence, for a header or a log line.  #>
     param($Health)
     if (-not $Health) { $Health = Test-WDToolHealth }
     $bad  = @($Health | Where-Object { $_.State -eq 'Unavailable' })
@@ -681,15 +597,6 @@ function Get-WDToolHealthSummary {
 }
 
 function Get-WDHealthImpact {
-    <#
-        Which items in a plan a broken tool will actually break.
-
-        This is the half that makes the whole thing worth having. "DISM is
-        unavailable" is a fact about the machine; "DISM is unavailable, and 6
-        of the 118 options you have selected need it" is a decision somebody
-        can make. Without the count, a warning about a subsystem nothing in
-        this run touches is noise, and noise is how warnings get ignored.
-    #>
     param(
         [Parameter(Mandatory)]$Plan,
         $Health
@@ -705,10 +612,9 @@ function Get-WDHealthImpact {
             foreach ($a in @($item.Actions)) {
                 $type = [string](Get-Prop $a 'type' '')
                 if ($h.Affects -and $h.Affects -contains $type) {
-                    # A scoped check only speaks for actions in that scope -
-                    # the other-accounts hive check has nothing to say about
-                    # an HKLM policy write, and 45 of the registry actions in
-                    # the manifest are exactly that.
+                    # A scoped check speaks only for actions in that scope - the
+                    # other-accounts hive check has nothing to say about an HKLM
+                    # policy write.
                     if ($h.Scope) {
                         $scope = [string](Get-Prop $a 'scope' 'machine')
                         if ($scope -ine $h.Scope) { continue }
@@ -722,8 +628,7 @@ function Get-WDHealthImpact {
             }
             if ($match) { $hit.Add($item) }
         }
-        # A safety check is reported whether or not the plan names it: those
-        # break the way BACK, and every run has one of those.
+        # Safety checks report whether or not the plan names them.
         if ($hit.Count -or $h.Safety) {
             $out.Add([pscustomobject]@{
                 Health = $h
@@ -732,28 +637,13 @@ function Get-WDHealthImpact {
             })
         }
     }
-    # NOT ",@(...)". Every caller wraps this in @() - the console, the pre-apply
-    # dialog, the run page, and the self test - and `@(f)` where f returns
-    # `,@(...)` is one element holding the whole array. That is the trap this
-    # codebase has a section about, and it bit here exactly as written up:
-    # $imp.Count read the array's own Count, $imp[0].Health member-enumerated
-    # into four health objects, and the formatter printed all four states mashed
-    # into a single line. The comma is right when the caller assigns; here
-    # nobody does.
+    # Not ",@(...)": every caller wraps this in @(), and @() around a
+    # comma-returned array is one element holding the whole thing.
     @($out | Sort-Object -Property @{ Expression = { $_.Health.Rank }; Descending = $true },
                                    @{ Expression = 'Count'; Descending = $true })
 }
 
 function Format-WDToolHealthText {
-    <#
-        The block a person reads, used by the console, the pre-apply
-        confirmation, and the run page. One formatter, so those three cannot
-        drift into describing the machine differently.
-
-        -Impact turns it from "what is broken" into "what is broken that
-        matters to this run", which is the version worth interrupting somebody
-        with.
-    #>
     param(
         $Health,
         $Impact,
@@ -802,9 +692,6 @@ function Format-WDToolHealthText {
 }
 
 function Write-WDToolHealthLog {
-    <#  Puts the sweep into the run log and the trace. Called from
-        Write-WDRunEnvironment, so every run records it whether or not anybody
-        was looking at a screen.  #>
     param([switch]$Deep)
     $health = $null
     try { $health = Test-WDToolHealth -Refresh -Deep:$Deep } catch { return $null }
