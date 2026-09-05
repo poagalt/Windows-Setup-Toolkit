@@ -138,6 +138,12 @@ if (-not $Run) {
     Write-Host ''
     Write-Host '  Or re-run this with -Run to launch it straight away.'
     Write-Host ''
+    # Not done for you: a Start menu entry is a change to this machine, and the
+    # line above promises there have been none. Offered here because a program
+    # nothing links to is one nobody can find again.
+    Write-Host '  To put it in the Start menu, with its own icon and identity:' -ForegroundColor Cyan
+    Write-Host "    $root\Tools\Install-WDShortcut.ps1"
+    Write-Host ''
     return
 }
 
