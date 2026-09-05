@@ -468,6 +468,228 @@ function Get-WDMachineIdentity {
     $script:MachineIdentity
 }
 
+# ------------------------------------------------------- program identity ---
+#
+# ONE STRING, BECAUSE TWO WOULD DISAGREE IN SILENCE. Windows groups a taskbar
+# button by AppUserModelID and matches that id against the Start menu shortcut
+# carrying the same one. Both halves have to say it: the process announces it
+# (Set-WDTaskbarIdentity) and the shortcut is stamped with it
+# (Set-WDShellShortcut). Written as two literals they agree until somebody edits
+# one, and then pinning, jump lists and the toast identity come apart with
+# nothing on screen to say why - the same "a list kept in two places is one list
+# plus a bug" argument as the two service lists.
+#
+# NOT the mutex name below, which shares the stem and must never move: that one
+# is written into rollback scripts already on disk. This is only what the shell
+# is told, so it costs nothing to read from one place.
+$script:WDAppId = 'WinSetupToolkit.Toolkit'
+
+function Get-WDAppUserModelId {
+    <#  The AppUserModelID this program tells the shell it is.  #>
+    $script:WDAppId
+}
+
+# IShellLink plus IPropertyStore, because WScript.Shell cannot reach the second
+# and the second is the whole point - see Set-WDShellShortcut. Compiled by its
+# own first caller like WDPriv and WDDisk, never at import: every Add-Type is a
+# csc run, and nothing on the launch path writes a shortcut.
+$script:WDShellLinkSource = @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+namespace WD {
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ShortcutPropertyKey {
+        public Guid fmtid; public uint pid;
+        public ShortcutPropertyKey(Guid g, uint p) { fmtid = g; pid = p; }
+    }
+
+    // Only ever holds a VT_LPWSTR here. Declared wide enough for the real
+    // 16-byte union so the marshaller lays the pointer at the right offset.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ShortcutPropVariant {
+        public ushort vt;
+        public ushort r1, r2, r3;
+        public IntPtr p;
+        public IntPtr p2;
+    }
+
+    [ComImport, Guid("000214F9-0000-0000-C000-000000000046")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IShellLinkW {
+        void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder f, int c, IntPtr fd, uint fl);
+        void GetIDList(out IntPtr ppidl);
+        void SetIDList(IntPtr pidl);
+        void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder n, int c);
+        void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string n);
+        void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder d, int c);
+        void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string d);
+        void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder a, int c);
+        void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string a);
+        void GetHotkey(out ushort w);
+        void SetHotkey(ushort w);
+        void GetShowCmd(out int c);
+        void SetShowCmd(int c);
+        void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder p, int c, out int i);
+        void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string p, int i);
+        void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string p, uint r);
+        void Resolve(IntPtr hwnd, uint fl);
+        void SetPath([MarshalAs(UnmanagedType.LPWStr)] string p);
+    }
+
+    [ComImport, Guid("0000010b-0000-0000-C000-000000000046")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IPersistFile {
+        void GetClassID(out Guid c);
+        [PreserveSig] int IsDirty();
+        void Load([MarshalAs(UnmanagedType.LPWStr)] string f, uint m);
+        void Save([MarshalAs(UnmanagedType.LPWStr)] string f, [MarshalAs(UnmanagedType.Bool)] bool remember);
+        void SaveCompleted([MarshalAs(UnmanagedType.LPWStr)] string f);
+        void GetCurFile([Out, MarshalAs(UnmanagedType.LPWStr)] out string f);
+    }
+
+    [ComImport, Guid("886d8eeb-8cf2-4446-8d02-cdba1dbdcf99")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IPropertyStore {
+        void GetCount(out uint c);
+        void GetAt(uint i, out ShortcutPropertyKey k);
+        void GetValue(ref ShortcutPropertyKey k, out ShortcutPropVariant v);
+        void SetValue(ref ShortcutPropertyKey k, ref ShortcutPropVariant v);
+        void Commit();
+    }
+
+    [ComImport, Guid("00021401-0000-0000-C000-000000000046")]
+    public class ShellLinkObject { }
+
+    public static class ShellLink {
+        [DllImport("ole32.dll")] static extern void CoTaskMemFree(IntPtr p);
+        [DllImport("shell32.dll")] static extern void SHChangeNotify(int e, uint f, IntPtr a, IntPtr b);
+
+        // PKEY_AppUserModel_ID
+        static readonly Guid AppUserModel = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3");
+
+        public static void Write(string lnk, string target, string args, string workdir,
+                                 string icon, int iconIndex, string desc, string aumid) {
+            IShellLinkW sl = (IShellLinkW)new ShellLinkObject();
+            try {
+                sl.SetPath(target);
+                if (args    != null) sl.SetArguments(args);
+                if (workdir != null) sl.SetWorkingDirectory(workdir);
+                if (desc    != null) sl.SetDescription(desc);
+                if (icon    != null) sl.SetIconLocation(icon, iconIndex);
+
+                if (aumid != null) {
+                    IPropertyStore ps = (IPropertyStore)sl;
+                    ShortcutPropertyKey key = new ShortcutPropertyKey(AppUserModel, 5);
+                    ShortcutPropVariant pv = new ShortcutPropVariant();
+                    pv.vt = 31; // VT_LPWSTR
+                    pv.p  = Marshal.StringToCoTaskMemUni(aumid);
+                    // We allocated it, so we free it. PropVariantClear lives in
+                    // ole32 rather than propsys and is not needed for a string
+                    // whose memory never left this method.
+                    try { ps.SetValue(ref key, ref pv); ps.Commit(); }
+                    finally { CoTaskMemFree(pv.p); }
+                }
+
+                ((IPersistFile)sl).Save(lnk, true);
+            } finally {
+                Marshal.FinalReleaseComObject(sl);
+            }
+            // Explorer caches an icon by path and never looks again on its own.
+            SHChangeNotify(0x08000000, 0, IntPtr.Zero, IntPtr.Zero);
+        }
+
+        public static string ReadAppId(string lnk) {
+            IShellLinkW sl = (IShellLinkW)new ShellLinkObject();
+            try {
+                ((IPersistFile)sl).Load(lnk, 0);
+                IPropertyStore ps = (IPropertyStore)sl;
+                ShortcutPropertyKey key = new ShortcutPropertyKey(AppUserModel, 5);
+                ShortcutPropVariant pv;
+                ps.GetValue(ref key, out pv);
+                string s = (pv.vt == 31 && pv.p != IntPtr.Zero) ? Marshal.PtrToStringUni(pv.p) : null;
+                if (pv.p != IntPtr.Zero) CoTaskMemFree(pv.p);
+                return s;
+            } finally {
+                Marshal.FinalReleaseComObject(sl);
+            }
+        }
+    }
+}
+'@
+
+function Use-WDShellLink {
+    <#  True once WD.ShellLink is available. Best effort, like every other
+        lazy native helper here.  #>
+    if (-not ('WD.ShellLink' -as [type])) {
+        try { Add-Type -ErrorAction SilentlyContinue -TypeDefinition $script:WDShellLinkSource } catch { }
+    }
+    [bool]('WD.ShellLink' -as [type])
+}
+
+function Set-WDShellShortcut {
+    <#
+        Writes a .lnk, stamped with an AppUserModelID.
+
+        THE STAMP IS WHY THIS IS NOT WScript.Shell. A shortcut's AUMID lives in
+        its property store, which the scripting object cannot reach at all, and
+        without it the shell has no way to connect a running window to this
+        shortcut. What that costs is not cosmetic: the taskbar button falls back
+        to whatever it can derive from the host executable - which is how a WPF
+        window hosted by powershell.exe comes to wear PowerShell's icon however
+        carefully Window.Icon was set.
+
+        Stamped, the shortcut becomes the program's registered identity, so the
+        icon, the pin, the jump list and a toast notifier all resolve to the
+        same application.
+
+        THROWS, unlike most of this module. Every caller is somebody who asked
+        for a shortcut in as many words, and a helper that quietly writes
+        nothing would leave them looking for it in the Start menu.
+
+        IconPath must not sit under %USERPROFILE%\AppData: the shell does not
+        expand that when it draws an icon, and every icon in such a folder comes
+        out blank. See Tools\Write-WDIconFile.ps1, which chose the repo root for
+        that reason.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Target,
+        [string]$Arguments        = '',
+        [string]$WorkingDirectory = '',
+        [string]$IconPath         = '',
+        [int]   $IconIndex        = 0,
+        [string]$Description      = '',
+        [string]$AppUserModelId   = ''
+    )
+    if (-not (Use-WDShellLink)) {
+        throw 'Could not build the shortcut helper, so no shortcut was written.'
+    }
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+        $null = New-Item -ItemType Directory -Force -Path $dir
+    }
+    # Empty strings mean "leave it alone" to the caller and have to reach the
+    # interop as null, or SetIconLocation('') writes an icon path of nothing and
+    # the shortcut draws blank - which is the bug this whole file is about.
+    $nz = { param($s) if ([string]::IsNullOrEmpty($s)) { $null } else { $s } }
+    [WD.ShellLink]::Write($Path, $Target,
+                          (& $nz $Arguments), (& $nz $WorkingDirectory),
+                          (& $nz $IconPath), $IconIndex,
+                          (& $nz $Description), (& $nz $AppUserModelId))
+}
+
+function Get-WDShortcutAppUserModelId {
+    <#  The AUMID stamped on a .lnk, or null. Exists so a caller can verify a
+        shortcut rather than trust the write - the stamp is invisible in
+        Explorer's own property sheet, so nothing else can answer for it.  #>
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Use-WDShellLink)) { return $null }
+    try { [WD.ShellLink]::ReadAppId($Path) } catch { $null }
+}
+
 # ---------------------------------------------------------- one at a time ---
 #
 # THE NAME IS SHARED WITH THE GENERATED ROLLBACK SCRIPT ON PURPOSE, so the two

@@ -1082,14 +1082,22 @@ function Set-WDTaskbarIdentity {
         shortcut's icon. The window icon is never consulted.
 
         An explicit id nothing has a shortcut for leaves the shell nothing to
-        match, so it falls back to the window icon.
+        match, so it falls back to the window icon - which is correct, and is
+        what a machine with no shortcut installed gets. Where one HAS been
+        installed, Tools\Install-WDShortcut.ps1 stamps it with this same id and
+        the shell resolves the button to that shortcut instead: same icon, and
+        the pin and jump list attach to this application rather than to the host.
+
+        THE ID COMES FROM WD.Core so the two halves cannot disagree - a shortcut
+        stamped with one string and a process announcing another is two identities
+        that look like one. See the identity note there.
 
         MUST RUN BEFORE THE FIRST WINDOW EXISTS - after that the button keeps what
         it was given. Best effort; a taskbar icon is not worth failing a launch
         over. Does not disturb the guard notice's toast, which passes its own
         AUMID to CreateToastNotifier explicitly.
     #>
-    param([string]$Id = 'WinSetupToolkit.Toolkit')
+    param([string]$Id = (Get-WDAppUserModelId))
     if ($script:WDAumidSet) { return }
     $script:WDAumidSet = $true
     try {
