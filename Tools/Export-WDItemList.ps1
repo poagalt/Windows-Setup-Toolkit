@@ -1,23 +1,4 @@
-﻿<#
-    Publishes the whole removal list as one self-contained HTML page.
-
-    The point is that somebody can decide whether to trust this without running
-    it, and without reading PowerShell. Everything on the page is generated from
-    the manifest and from Get-WDItemMechanics - the same function the Details
-    panel uses - so it cannot describe something the tool does not do. An
-    authored marketing page about what the tool removes is a second copy of the
-    list, and the copy is what goes stale.
-
-    One file, no assets, no network. Search and the filters are a few lines of
-    inline script so the page works from a file:// URL, out of a release zip, or
-    served from GitHub Pages.
-
-    Imports the modules read-only and touches nothing: it reads the manifest and
-    formats it. It does NOT read the machine - no presence checks, no "already
-    applied" - because this page describes the toolkit rather than any one
-    computer, and a page whose contents depended on whoever generated it would
-    be worthless as a reference.
-#>
+﻿# Publishes the whole removal list as one self-contained HTML page.
 [CmdletBinding()]
 param(
     [string]$OutFile = '',
@@ -47,7 +28,6 @@ function Get-Esc {
     $Text.Replace('&', '&amp;').Replace('<', '&lt;').Replace('>', '&gt;').Replace('"', '&quot;')
 }
 
-# --- collect, so the counts in the header are of what actually got rendered --
 $rows  = New-Object System.Collections.Generic.List[psobject]
 foreach ($cat in $cats) {
     foreach ($item in @($cat.items)) {

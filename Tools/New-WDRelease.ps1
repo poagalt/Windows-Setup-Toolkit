@@ -1,26 +1,4 @@
-﻿<#
-    Builds the release artefact and everything that has to agree with it.
-
-    Three outputs, and the second two are derived from the first so they cannot
-    disagree about the bytes:
-
-      WinSetupToolkit-<version>.zip   what people download
-      SHA256SUMS.txt                  the hash, so a download can be checked
-      winget\*.yaml                   the package manifest, which embeds the
-                                      same hash and the release URL
-
-    THE ZIP UNPACKS TO A FOLDER NAMED WinSetupToolkit, not to the current
-    directory. That is not tidiness: the answer file generator copies "the
-    WinSetupToolkit folder" off the installation medium by that exact name
-    (WD.Unattend's specialize command), so a zip that scattered its contents
-    would break the auto-debloat-after-setup path for anybody who unpacked it
-    onto a stick.
-
-    Imports nothing from the toolkit, for the same reason the snapshot tools do
-    not: a build script that depends on the thing it is packaging cannot be
-    trusted to package a broken one.
-#>
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory)][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version,
     [string]$Repo   = 'poagalt/Windows-Setup-Toolkit',
@@ -30,9 +8,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# RESOLVED HERE, NOT IN THE PARAM DEFAULTS: $PSScriptRoot is empty when a param
-# block's defaults are evaluated under `powershell -File`, and the failure names
-# neither the variable nor the reason.
+# Resolved here, not in the param defaults: $PSScriptRoot is empty when a param
+# block's defaults are evaluated under "powershell -File".
 $here = $PSScriptRoot
 if (-not $here) { $here = Split-Path -Parent $MyInvocation.MyCommand.Path }
 if (-not $Source) { $Source = Split-Path -Parent $here }
@@ -40,9 +17,9 @@ if (-not $OutDir) { $OutDir = Join-Path $Source 'dist' }
 $name = 'WinSetupToolkit'
 $tag  = "v$Version"
 
-# What ships. Named explicitly rather than as an exclude list: a new internal
+# What ships, named explicitly rather than as an exclude list: a new internal
 # document should not become a public one because nobody remembered to exclude
-# it, which is the failure mode an exclude list has.
+# it.
 $include = @(
     'WinSetupToolkit.ps1'
     'Run-WinSetupToolkit.cmd'
@@ -57,7 +34,6 @@ $include = @(
 
 Write-Host "Building $name $Version" -ForegroundColor Cyan
 
-# --- assemble under a folder of the right name ------------------------------
 $staging = Join-Path ([IO.Path]::GetTempPath()) ("wst-build-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 $payload = Join-Path $staging $name
 $null = New-Item -ItemType Directory -Force -Path $payload
@@ -73,15 +49,14 @@ if ($missing.Count) {
     throw "Not in the source tree: $($missing -join ', ')"
 }
 
-# profile_saves has to EXIST and be EMPTY. The unattend path writes a chosen
-# selection into it and reads it back on the target machine, so the folder is
-# part of the layout - but shipping somebody's saved selections is not.
+# profile_saves has to exist and be empty: the unattend path writes a chosen
+# selection into it, so the folder is part of the layout - but shipping
+# somebody's saved selections is not.
 $null = New-Item -ItemType Directory -Force -Path (Join-Path $payload 'profile_saves')
 Set-Content -LiteralPath (Join-Path $payload 'profile_saves\.gitkeep') -Value '' -Encoding ASCII
 
-# --- refuse to ship a tree that does not pass its own gate ------------------
-# Cheap, and the one check worth making here: a .cmd with LF endings launches
-# nothing, and a module without a BOM is read as ANSI by PowerShell 5.1.
+# A .cmd with LF endings launches nothing, and a module without a BOM is read as
+# ANSI by PowerShell 5.1.
 $problems = @()
 foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $payload 'Modules') -File |
                  Where-Object { $_.Extension -in @('.psm1', '.ps1') }) +
@@ -109,17 +84,14 @@ if ($problems.Count) {
 }
 Write-Host "  payload checks passed" -ForegroundColor Green
 
-# --- the zip ----------------------------------------------------------------
 $null = New-Item -ItemType Directory -Force -Path $OutDir
 $zip  = Join-Path $OutDir "$name-$Version.zip"
 if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-# ENTRY BY ENTRY, WITH FORWARD SLASHES. NOT CreateFromDirectory: on .NET
-# Framework that writes Path.DirectorySeparatorChar - a BACKSLASH on Windows -
-# and the zip spec requires forward slashes (APPNOTE 4.4.17.1). Explorer and
-# Expand-Archive cope; 7-Zip and unzip on macOS or Linux read the whole path as
-# one filename and unpack a flat folder of unusable names.
+# Entry by entry, with forward slashes. Not CreateFromDirectory: on .NET
+# Framework that writes a backslash on Windows, and the zip spec requires
+# forward slashes.
 $archive = [IO.Compression.ZipFile]::Open($zip, 'Create')
 try {
     foreach ($file in @(Get-ChildItem -LiteralPath $staging -Recurse -File -Force)) {
@@ -149,16 +121,13 @@ $size = [Math]::Round((Get-Item $zip).Length / 1MB, 2)
 Write-Host ("  {0}  {1} MB" -f (Split-Path -Leaf $zip), $size) -ForegroundColor Green
 Write-Host "  SHA256 $hash"
 
-# --- SHA256SUMS, in the format sha256sum -c reads ---------------------------
 $sums = Join-Path $OutDir 'SHA256SUMS.txt'
 Set-Content -LiteralPath $sums -Encoding ASCII -Value @(
     "$($hash.ToLowerInvariant())  $name-$Version.zip"
 )
 
-# --- the winget manifest ----------------------------------------------------
 # Three files, which is what winget's 1.6 schema requires. The installer type is
-# 'zip' with a nested portable, because this is a folder of scripts rather than
-# an installer - so winget unpacks it and puts the launcher on the path.
+# 'zip' with a nested portable, because this is a folder of scripts.
 $url  = "https://github.com/$Repo/releases/download/$tag/$name-$Version.zip"
 $pkg  = 'Poag.WindowsSetupToolkit'
 $wing = Join-Path $OutDir 'winget'

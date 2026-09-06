@@ -1,27 +1,4 @@
-﻿<#
-    Writes the application icon to WinSetupToolkit.ico, beside the launcher.
-
-    This adds no artwork. The icon is already generated - New-WDIconBytes
-    composes it from the four marks in Assets\, and Get-WDAppIconBytes is what
-    the window itself wears. All this does is put those same bytes on disk,
-    because a shortcut's IconLocation needs a path, and nothing in Explorer or
-    the Start menu can see an icon a running process built for itself.
-
-    The file belongs in the repo rather than somewhere central for two reasons:
-    the folder can then be copied to another machine and still have its icon,
-    and an icon kept anywhere else goes stale the moment the marks change with
-    nothing to notice.
-
-    Do not put it under %LOCALAPPDATA% or anywhere below %USERPROFILE%\AppData.
-    A shortcut records its icon path as an environment-variable string, and the
-    shell does not resolve %USERPROFILE%\AppData\... when it draws icons - every
-    icon in such a folder comes out blank, including known-good ones.
-
-        .\Tools\Write-WDIconFile.ps1                     # -> .\WinSetupToolkit.ico
-        .\Tools\Write-WDIconFile.ps1 -Path C:\some\where.ico
-        .\Tools\Write-WDIconFile.ps1 -Theme light
-#>
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$Path,
     [ValidateSet('', 'dark', 'light')]

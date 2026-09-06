@@ -1,31 +1,12 @@
-﻿<#
-    A full picture of this machine, written to disk, for comparing before and
-    after a run.
-
-    DELIBERATELY SELF-CONTAINED. It imports none of the toolkit's modules and
-    calls none of its functions. The whole point of an after-snapshot is that it
-    is taken on a machine somebody has just changed, possibly badly, and a
-    diagnostic that depends on the thing under test is no diagnostic at all.
-    The only file it reads from the repo is the manifest, and it degrades to a
-    smaller registry sweep if that cannot be parsed.
-
-    Every section is independent and wrapped. One that throws records the
-    exception and the run carries on - a snapshot missing its service list is
-    worth far more than no snapshot.
-
-    Run it elevated. Unelevated works and is marked as degraded in the output,
-    but roughly a fifth of what matters here needs administrator rights, and
-    "the value is absent" and "I was not allowed to read the value" are
-    different facts that must not collapse into one.
-
-        .\Tools\Get-WDSystemSnapshot.ps1 -Label before
-        .\Tools\Get-WDSystemSnapshot.ps1 -Label after
-        .\Tools\Compare-WDSnapshot.ps1 -Before <dir> -After <dir>
-#>
+﻿# A full picture of this machine, written to disk, for comparing before and
+# after a run. Imports none of the toolkit's modules: the point of an
+# after-snapshot is that it is taken on a machine somebody has just changed.
+# Both snapshots must be taken at the same privilege level, or "absent" and "not
+# allowed to read it" collapse into one answer.
 [CmdletBinding()]
 param(
-    # Where the snapshot folder is created. Defaults beside the toolkit's own
-    # data, so before and after land together and survive a reboot.
+    # Defaults beside the toolkit's own data, so before and after land together
+    # and survive a reboot.
     [string]$OutputRoot = (Join-Path $env:ProgramData 'WinSetupToolkit\snapshots'),
 
     # Goes in the folder name and into the file, so two snapshots can be told
@@ -33,7 +14,7 @@ param(
     [string]$Label = 'snapshot',
 
     # Skips the DISM feature and capability enumerations, which are most of the
-    # runtime. Everything else is seconds.
+    # runtime.
     [switch]$SkipSlow,
 
     # Adds .reg exports of the policy trees. Bulky, and the one form that can
@@ -45,8 +26,6 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference    = 'SilentlyContinue'
-
-# ---------------------------------------------------------------- plumbing ---
 
 $stamp   = Get-Date -Format 'yyyyMMdd-HHmmss'
 $safeLbl = ($Label -replace '[^A-Za-z0-9._-]', '-')
@@ -64,9 +43,9 @@ function Write-Note {
 }
 
 function Invoke-Section {
-    <#  Run one capture. Records what it produced, how long it took, and the
-        full exception if it failed - type and message, because "Exception"
-        with a sentence is not enough to act on afterwards.  #>
+    # Records what it produced, how long it took, and the full exception if it
+    # failed - type and message, because "Exception" with a sentence is not
+    # enough to act on.
     param([string]$Name, [scriptblock]$Body)
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $value = $null
@@ -98,9 +77,8 @@ function Invoke-Section {
 }
 
 function Get-RegValues {
-    <#  Every value under one key, as a flat map, or $null if the key is not
-        there. Distinguishing "no key", "no values", and "refused" is the whole
-        reason this is not a one-liner.  #>
+    # Distinguishing "no key", "no values", and "refused" is the whole reason
+    # this is not a one-liner.
     param([string]$Path)
     try {
         if (-not (Test-Path -LiteralPath $Path)) { return $null }
@@ -123,8 +101,8 @@ function Get-RegValues {
 }
 
 function Get-OneRegValue {
-    <#  Three-valued on purpose: the object carries 'present' separately from
-        'value', so an absent value and a zero are never confused in a diff.  #>
+    # Three-valued on purpose: 'present' is carried separately from 'value', so
+    # an absent value and a zero are never confused in a diff.
     param([string]$Path, [string]$Name)
     try {
         if (-not (Test-Path -LiteralPath $Path)) {
@@ -156,8 +134,6 @@ if (-not $isAdmin) {
     Write-Note '  NOT ELEVATED - services, tasks, Defender, and BitLocker will be partial.' 'Yellow'
 }
 Write-Note ''
-
-# =============================================================== identity ====
 
 Invoke-Section 'meta' {
     [ordered]@{
@@ -192,10 +168,8 @@ Invoke-Section 'os' {
         osLanguage     = $os.OSLanguage
         systemDrive    = $os.SystemDrive
         windowsDir     = $os.WindowsDirectory
-        # Safe mode changes what a run can even do - most services are not
-        # running and DISM refuses outright - so it is recorded rather than
-        # assumed. BootupState is the readable half; the SafeBoot key is what
-        # is actually consulted on the next boot.
+        # Safe mode changes what a run can do at all - most services are not
+        # running and DISM refuses outright.
         bootupState    = $os.BootupState
         safeBootOption = (Get-OneRegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\SafeBoot\Option' 'OptionValue').value
         timeZone       = (Get-TimeZone -ErrorAction SilentlyContinue).Id
@@ -244,21 +218,17 @@ Invoke-Section 'volumes' {
             fs        = $_.FileSystem
             sizeGb    = [Math]::Round($_.Size / 1GB, 2)
             freeGb    = [Math]::Round($_.FreeSpace / 1GB, 2)
-            # The number a pre-flight would gate on, recorded so a run that
-            # ran out of room afterwards can be shown to have been short before.
+            # The number a pre-flight would gate on, so a run that ran out of
+            # room can be shown to have been short before it started.
             freePct   = if ($_.Size) { [Math]::Round(100 * $_.FreeSpace / $_.Size, 1) } else { $null }
         }
     })
 }
 
-# ================================================================ software ===
-
 Invoke-Section 'appxPackages' {
-    # -AllUsers throws a TERMINATING access-denied unelevated, so -ErrorAction
+    # -AllUsers throws a terminating access-denied unelevated, so -ErrorAction
     # SilentlyContinue does not save it and the section comes back empty rather
-    # than partial. Falling back to this user's own packages is worth doing,
-    # but the two lists are not comparable - one is every account's packages
-    # and the other is one account's - so which was used is recorded, and the
+    # than partial. Which enumeration was used is recorded, because the
     # comparison refuses to diff across a change of scope.
     $scope = 'allusers'
     $pkgs = $null
@@ -318,8 +288,8 @@ Invoke-Section 'programs' {
                 publisher       = [string]$p.Publisher
                 installLocation = [string]$p.InstallLocation
                 uninstallString = [string]$p.UninstallString
-                # Both of these decide whether the GUI would have offered it,
-                # so a row that disappears between snapshots can be explained.
+                # Both decide whether the GUI would have offered it, so a row
+                # that disappears between snapshots can be explained.
                 systemComponent = [int]$p.SystemComponent
                 parentDisplay   = [string]$p.ParentDisplayName
                 estimatedSizeKb = [int]$p.EstimatedSize
@@ -350,9 +320,9 @@ Invoke-Section 'services' {
 }
 
 Invoke-Section 'scheduledTasks' {
-    # The COM route rather than Get-ScheduledTask: it is an order of magnitude
-    # faster over a few hundred tasks, and it works when the CIM provider is
-    # unhappy, which is one of the states this snapshot exists to record.
+    # The COM route rather than Get-ScheduledTask: an order of magnitude faster
+    # over a few hundred tasks, and it works when the CIM provider is unhappy -
+    # which is one of the states this exists to record.
     $out = New-Object System.Collections.Generic.List[object]
     $svc = New-Object -ComObject Schedule.Service
     $svc.Connect()
@@ -393,7 +363,7 @@ Invoke-Section 'capabilities' {
 
 Invoke-Section 'drivers' {
     # Third-party driver packages. A vendor uninstall that takes a driver with
-    # it is the failure mode nobody expects and nobody can reconstruct later.
+    # it is the failure nobody expects and nobody can reconstruct later.
     $out = New-Object System.Collections.Generic.List[object]
     $raw = & pnputil.exe /enum-drivers 2>&1 | Out-String
     foreach ($blk in ($raw -split "(?m)^\s*$") ) {
@@ -414,20 +384,15 @@ Invoke-Section 'drivers' {
     $out
 }
 
-# ================================================================ registry ===
-
 Invoke-Section 'registryManifestTargets' {
-    <#  Every registry value the manifest could write, read as it is now.
-
-        This is the single most useful section for a before-and-after: it is
-        exactly the set of values a run can move, so a diff over it is a
-        complete account of the registry side of what happened - including the
-        writes that were supposed to happen and did not.  #>
+    # Every registry value the manifest could write, read as it is now. The most
+    # useful section for a before-and-after: it covers the writes that were
+    # supposed to happen and did not.
     $manifestDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'Manifest'
     if (-not (Test-Path -LiteralPath $manifestDir)) { return @('__no_manifest__') }
 
     # Which hives an 'allusers' action would reach. Loaded hives only, which is
-    # the same limit the toolkit itself has.
+    # the same limit the toolkit has.
     $userRoots = New-Object System.Collections.Generic.List[object]
     $userRoots.Add([pscustomobject]@{ name = 'HKCU'; path = 'HKCU:' })
     foreach ($sid in (Get-ChildItem 'Registry::HKEY_USERS' -ErrorAction SilentlyContinue)) {
@@ -484,8 +449,8 @@ Invoke-Section 'registryManifestTargets' {
 
 Invoke-Section 'registryTrees' {
     # Whole keys rather than named values, for the trees where what matters is
-    # which values EXIST. A policy key gains and loses names; a per-value list
-    # written in advance can only ever report on the ones somebody thought of.
+    # which values exist. A per-value list can only report on the ones somebody
+    # thought of.
     $trees = @(
         'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate',
         'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU',
@@ -536,8 +501,6 @@ Invoke-Section 'startup' {
     [ordered]@{ registry = $map; folders = $files }
 }
 
-# ================================================================ security ===
-
 Invoke-Section 'defender' {
     $st = $null; $pr = $null
     try {
@@ -566,10 +529,8 @@ Invoke-Section 'defender' {
 }
 
 Invoke-Section 'protection' {
-    # System Protection and the restore points, which are the toolkit's own
-    # safety net and are absent on most OEM images. If this reads zero before a
-    # run, the rollback script is the only way back and that has to be known
-    # in advance rather than discovered.
+    # System Protection and the restore points, absent on most OEM images. Zero
+    # before a run means the rollback script is the only way back.
     $points = @()
     try {
         $points = @(Get-ComputerRestorePoint -ErrorAction Stop | ForEach-Object {
@@ -594,9 +555,8 @@ Invoke-Section 'protection' {
         restoreCount   = @($points | Where-Object { $_ -is [System.Collections.IDictionary] }).Count
         shadowStorage  = $shadow
         disableSR      = (Get-OneRegValue $srKey 'DisableSR')
-        # The value the toolkit sets to 0 to defeat the 24-hour throttle, and
-        # is supposed to put back. Recorded on both sides precisely so that
-        # can be checked rather than trusted.
+        # The value the toolkit sets to 0 to defeat the 24-hour throttle and is
+        # supposed to put back. Recorded on both sides so that can be checked.
         createFreq     = (Get-OneRegValue $srKey 'SystemRestorePointCreationFrequency')
         rpSessionInt   = (Get-OneRegValue $srKey 'RPSessionInterval')
         rpLifeInterval = (Get-OneRegValue $srKey 'RPLifeInterval')
@@ -639,12 +599,9 @@ Invoke-Section 'uac' {
     }
 }
 
-# ================================================================= system ====
-
 Invoke-Section 'pendingReboot' {
-    # Every indicator, separately, rather than one boolean. Which one is set
-    # says what put it there, and DISM refuses to work at all while some of
-    # these are outstanding.
+    # Every indicator separately rather than one boolean: which one is set says
+    # what put it there.
     $cbs = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending'
     $wu  = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'
     $ren = Get-OneRegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' 'PendingFileRenameOperations'
@@ -652,8 +609,8 @@ Invoke-Section 'pendingReboot' {
         cbsRebootPending   = (Test-Path -LiteralPath $cbs)
         wuRebootRequired   = (Test-Path -LiteralPath $wu)
         pendingFileRenames = $ren.present
-        # The actual list, because the toolkit itself queues deletions here
-        # through MOVEFILE_DELAY_UNTIL_REBOOT and this is the only record of it.
+        # The actual list, because the toolkit queues deletions here through
+        # MOVEFILE_DELAY_UNTIL_REBOOT and this is the only record of it.
         pendingRenameCount = if ($ren.present -and $ren.value) { @([string]$ren.value -split '\|').Count } else { 0 }
         pendingRenameData  = if ($ren.present) { [string]$ren.value } else { $null }
         computerRename     = (Get-OneRegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName' 'ComputerName').value
@@ -671,7 +628,7 @@ Invoke-Section 'power' {
 
 Invoke-Section 'network' {
     # try/catch is a statement in 5.1, not an expression, so these cannot be
-    # written inline in the hashtable the way an @(...) subexpression can.
+    # written inline in the hashtable.
     $hostsPath = "$env:SystemRoot\System32\drivers\etc\hosts"
     $hostsHash = $null
     $hostsLines = @()
@@ -694,19 +651,8 @@ Invoke-Section 'network' {
 }
 
 Invoke-Section 'associations' {
-    # What opens a web link and the common document types. The default browser
-    # is the one association a run can break outright, and UserChoice is where
-    # the answer actually lives.
-    #
-    # THE PROGID ALONE CANNOT ANSWER THIS. An association breaks in two ways:
-    # the ProgID changes, or the ProgID stays exactly as it was and the program
-    # behind it is deleted. The second is the one a debloat run causes, and
-    # recording only the ProgID makes it invisible - a run that removed Edge
-    # left .svg and .xml still reading 'MSEdgeHTM' at both ends and the
-    # comparison duly reported no change, on the run that orphaned them.
-    #
-    # So the resolution is part of the recorded value. An orphaning then shows
-    # up as an ordinary value change and the existing NOTABLE rule fires.
+    # The default browser is the one association a run can break outright, and
+    # UserChoice is where the answer lives.
     $resolves = {
         param([string]$ProgId)
         if (-not $ProgId) { return $null }
@@ -741,8 +687,8 @@ Invoke-Section 'shellState' {
     $adv = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
     [ordered]@{
         advanced      = (Get-RegValues $adv)
-        # A blob rather than a value, and the one the toolkit edits a single
-        # bit of. Recorded whole so an edit to the wrong byte is visible.
+        # A blob rather than a value, and the toolkit edits a single bit of it.
+        # Recorded whole so an edit to the wrong byte is visible.
         stuckRects    = (Get-OneRegValue 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3' 'Settings').value
         desktopIcons  = (Get-RegValues 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel')
         explorerRunning = @(Get-Process explorer -ErrorAction SilentlyContinue).Count
@@ -792,10 +738,8 @@ Invoke-Section 'paths' {
 }
 
 Invoke-Section 'eventBaseline' {
-    # A count of errors and warnings per source over the last week, so an
-    # after-snapshot can be diffed for sources that are NEW or newly noisy.
-    # This is the section that answers "something is broken and I do not know
-    # what" when nothing in the run's own report looks wrong.
+    # Errors and warnings per source over the last week, so an after-snapshot
+    # can be diffed for sources that are new or newly noisy.
     $since = (Get-Date).AddDays(-7)
     $out = [ordered]@{}
     foreach ($log in @('System', 'Application')) {
@@ -828,28 +772,26 @@ Invoke-Section 'environment' {
     }
 }
 
-# ================================================================== output ===
-
 $overall.Stop()
 
 $snap['__diagnostics__'] = [ordered]@{
     totalMs  = [int]$overall.ElapsedMilliseconds
     sections = $timings
     problems = $problems
-    # Which enumeration the package list actually came from. Comparing an
-    # all-users list against a current-user one reads as hundreds of packages
-    # having been removed, so the comparison checks this before diffing.
+    # Comparing an all-users list against a current-user one reads as hundreds
+    # of packages having been removed, so the comparison checks this before
+    # diffing.
     appxScope = $script:appxScope
 }
 
-# The whole thing, machine-readable. Depth matters: registryTrees is a map of
-# maps of maps and the default depth of 2 silently renders the inner ones as
-# type names, which looks like data until somebody tries to diff it.
+# Depth matters: registryTrees is a map of maps of maps, and the default depth
+# of 2 renders the inner ones as type names, which looks like data until
+# somebody tries to diff it.
 $jsonPath = Join-Path $outDir 'snapshot.json'
 $snap | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $jsonPath -Encoding UTF8
 
-# Flat files for the big collections, because reading a 12MB JSON in a text
-# editor to answer "is Cortana still installed" is not a thing anybody does.
+# Flat files for the big collections: reading a 12MB JSON in a text editor to
+# answer "is Cortana still installed" is not a thing anybody does.
 function Export-Table {
     param([string]$Name, $Rows)
     if (-not $Rows) { return }
@@ -880,8 +822,8 @@ if ($IncludeRegExport) {
     }
 }
 
-# The readable summary. Deliberately short - it is the page somebody looks at
-# to confirm the snapshot is sane, not the data itself.
+# Deliberately short - the page somebody looks at to confirm the snapshot is
+# sane, not the data itself.
 $sum = New-Object System.Collections.Generic.List[string]
 $sum.Add("Windows Setup Toolkit system snapshot")
 $sum.Add("Label      : $Label")

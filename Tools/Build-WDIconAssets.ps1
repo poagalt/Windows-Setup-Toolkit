@@ -1,43 +1,5 @@
-﻿<#
-    Rebuilds Assets\*.png from the vendors' own vector art.
-
-    Assets\ is the only binary in this repo, and the reason it is tolerable is
-    that nothing in it is hand-made: every one of the four marks comes out of
-    an SVG published by, or of, its vendor, and this script is the whole path
-    from that SVG to the PNG the icon draws. The files are binary because a
-    logo cannot be reconstructed from a description; they are not binary
-    because anybody drew them.
-
-    The three steps that matter, and why:
-
-    - **Trim.** Each source carries a different amount of empty canvas, so
-      placed raw they would be four marks at four apparent sizes. The ink box
-      comes from the renderer rather than from the path data, because getBBox
-      is the only thing that knows where a curve actually ends. Aspect is
-      preserved throughout - OneDrive is half again as wide as it is tall and
-      squaring it gives a cloud nobody recognises.
-
-    - **Crop.** McAfee publishes the shield and the word as one lockup. Only
-      the two shield halves are wanted, so the rest is removed before the
-      render rather than cropped out of it.
-
-    - **Resample.** Rendered at four times the final long edge and taken down
-      in one WPF pass. WPF composites premultiplied; System.Drawing's bicubic
-      does not, and interpolating the RGB of transparent pixels - black, out
-      of the renderer - puts a dark rim on every edge.
-
-    Long edge is 1024, not the 512 it was: oversampling only helps if the
-    downstream scaling is good enough to spend it, and this one is not. Measured
-    against a 2048px reference, 512 misses by ~4 RMS at every frame size and 1024
-    by ~2.3. 2048 halves it again for 2.3 MB, which is where this stops.
-
-    Needs Chrome and the network - nothing else here does, which is why this is a
-    tool you run when a mark changes rather than part of a build.
-
-        .\Tools\Build-WDIconAssets.ps1                  # straight into Assets\
-        .\Tools\Build-WDIconAssets.ps1 -OutDir .\tmp    # somewhere to look first
-        .\Tools\Build-WDIconAssets.ps1 -Long 2048
-#>
+﻿# Rebuilds Assets\*.png from the vendors' own vector art. Needs Chrome and the
+# network, so it is run when a mark changes rather than on any launch path.
 [CmdletBinding()]
 param(
     [string]$OutDir,
@@ -66,12 +28,12 @@ if (-not $ChromePath) { throw 'No Chrome or Edge found. Pass -ChromePath.' }
 
 Add-Type -AssemblyName PresentationCore, PresentationFramework, WindowsBase, System.Drawing
 
-# Wikimedia refuses an anonymous agent, and answers 429 rather than 403 - which
+# Wikimedia refuses an anonymous agent and answers 429 rather than 403, which
 # reads as rate limiting and sends you off adding sleeps that do not help.
 $UA = 'WinSetupToolkit-icon-asset-build/1.0 (+https://github.com/poagalt/Windows-Setup-Toolkit)'
 
-# Each mark, where it comes from, and which elements of it are the mark. Keep
-# is for sources that publish more than the mark in one file.
+# Each mark, where it comes from, and which elements of it are the mark. Keep is
+# for sources that publish more than the mark in one file.
 $marks = @(
     @{ Key  = 'edge'
        Url  = 'https://upload.wikimedia.org/wikipedia/commons/9/98/Microsoft_Edge_logo_%282019%29.svg'
@@ -120,12 +82,9 @@ function Get-SvgBody {
 }
 
 function Measure-Ink {
-    <#  The union of the drawable boxes, in the source's own user units.
-
-        Screen rects mapped back through the viewBox rather than getBBox:
-        getBBox is local to the element and ignores every transform above it,
-        and three of these four files put their geometry inside a scaled
-        group, where the local numbers are meaningless.  #>
+    # Screen rects mapped back through the viewBox rather than getBBox: getBBox
+    # is local to the element and ignores every transform above it, and three of
+    # these four put their geometry inside a scaled group.
     param([string]$SvgPath, [string[]]$Keep)
     $body = Get-SvgBody $SvgPath
     $keepJson = 'null'

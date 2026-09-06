@@ -1,17 +1,7 @@
-﻿<#
-    Difference between two snapshots from Get-WDSystemSnapshot.ps1.
-
-    Also self-contained, and for the same reason.
-
-    The output is in two halves and the order is deliberate. NOTABLE comes
-    first: the handful of changes that usually mean something went wrong,
-    picked out by rule rather than left for somebody to spot in nine hundred
-    lines of diff. Everything else follows, in full, because the whole point
-    of a snapshot pair is that nothing is summarised away.
-
-        .\Tools\Compare-WDSnapshot.ps1 -Before <dir-or-json> -After <dir-or-json>
-        .\Tools\Compare-WDSnapshot.ps1 -Before <dir> -After <dir> -Full
-#>
+﻿# Difference between two snapshots from Get-WDSystemSnapshot.ps1. Imports
+# nothing: a diagnostic that depends on the thing under test is no diagnostic.
+# Both snapshots must be taken at the same privilege level - unelevated,
+# "absent" and "not allowed to read it" collapse into one answer.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Before,
@@ -57,10 +47,9 @@ function Add-Head {
 }
 
 function Get-Field {
-    <#  ConvertFrom-Json hands back PSCustomObjects, which have no ContainsKey
-        and throw nothing at all for a missing property - they return $null,
-        which is indistinguishable from a property that is present and null.
-        This asks the property bag instead.  #>
+    # ConvertFrom-Json hands back PSCustomObjects, which have no ContainsKey and
+    # return $null for a missing property - indistinguishable from one that is
+    # present and null.
     param($Obj, [string]$Name)
     if ($null -eq $Obj) { return $null }
     if ($Obj -is [System.Collections.IDictionary]) {
@@ -81,17 +70,8 @@ function Format-Value {
     [string]$V
 }
 
-# ------------------------------------------------------- collection differ ---
-
 function Compare-Collection {
-    <#
-        Diff two lists of records by an identity field.
-
-        Returns added / removed / changed, where changed carries the per-field
-        before and after. Fields to watch are named rather than compared
-        wholesale, because half of these records carry a timestamp or a process
-        id that differs on every capture and would drown the real changes.
-    #>
+    # Diff two lists of records by an identity field.
     param(
         [string]$Title,
         $BeforeRows,
@@ -148,7 +128,7 @@ function Compare-Collection {
 }
 
 function Compare-Map {
-    <#  Two flat maps of name -> { value; kind }, or name -> scalar.  #>
+    # Two flat maps of name -> { value; kind }, or name -> scalar.
     param([string]$Title, $BeforeMap, $AfterMap, [switch]$Quietly)
     $names = New-Object System.Collections.Generic.HashSet[string]
     foreach ($o in @($BeforeMap, $AfterMap)) {
@@ -159,7 +139,8 @@ function Compare-Map {
     foreach ($n in ($names | Sort-Object)) {
         $bv = Get-Field $BeforeMap $n
         $av = Get-Field $AfterMap  $n
-        # A { value; kind } pair rather than a scalar, when it came from a key dump.
+        # A { value; kind } pair rather than a scalar, when it came from a key
+        # dump.
         if ($bv -and $bv.PSObject.Properties['value']) { $bv = $bv.value }
         if ($av -and $av.PSObject.Properties['value']) { $av = $av.value }
         $bs = Format-Value $bv
@@ -173,8 +154,6 @@ function Compare-Map {
     }
     $rows.Count
 }
-
-# ==================================================================== head ===
 
 Add-Line 'Windows Setup Toolkit snapshot comparison'
 Add-Line ('=' * 78)
@@ -191,8 +170,6 @@ if ($bElev -ne $aElev) {
     $notable.Add("Snapshots taken at different privilege levels - before elevated=$bElev, after elevated=$aElev. Treat service, task, and Defender diffs with suspicion.")
 }
 
-# ============================================================== collections ==
-
 $bScope = Get-Field (Get-Field $b '__diagnostics__') 'appxScope'
 $aScope = Get-Field (Get-Field $a '__diagnostics__') 'appxScope'
 if ($bScope -and $aScope -and $bScope -ne $aScope) {
@@ -201,10 +178,9 @@ if ($bScope -and $aScope -and $bScope -ne $aScope) {
     Add-Line '           An all-users list against a current-user one reads as mass removal. Re-take both the same way.'
     $notable.Add("Package lists are not comparable: before=$bScope, after=$aScope. Re-take both snapshots elevated.")
 }
-# Everything written so far is the preamble, and the NOTABLE block is spliced
-# in after it. Marked here rather than by counting lines at the bottom: the
-# preamble grows by a warning or two depending on the pair being compared, and
-# a hardcoded index silently truncated the "After" lines off the header.
+# Everything so far is the preamble, and NOTABLE is spliced in after it. Marked
+# here rather than counted at the bottom, because the preamble grows by a
+# warning or two depending on the pair.
 $preambleEnd = $out.Count
 
 $appx = Compare-Collection 'Store packages' (Get-Field $b 'appxPackages') (Get-Field $a 'appxPackages') `
@@ -234,13 +210,11 @@ $drv = Compare-Collection 'Third-party drivers' (Get-Field $b 'drivers') (Get-Fi
 $vol = Compare-Collection 'Volumes' (Get-Field $b 'volumes') (Get-Field $a 'volumes') `
             -Key 'drive' -Watch @('freeGb', 'freePct')
 
-# Reported as a section but not summarised: paths are not an inventory, so
-# there is no count worth a Totals line. Discarded rather than assigned, or the
-# summary object lands on the pipeline and joins this script's own output.
+# A section but not a summary: paths are not an inventory. Discarded rather than
+# assigned, or the summary object lands on the pipeline and joins this script's
+# output.
 $null = Compare-Collection 'Watched paths' (Get-Field $b 'paths') (Get-Field $a 'paths') `
             -Key 'path' -Watch @('exists', 'files', 'bytes')
-
-# --------------------------------------------- the manifest's own targets ----
 
 $bReg = @{}; $aReg = @{}
 foreach ($r in @(Get-Field $b 'registryManifestTargets')) {
@@ -278,8 +252,6 @@ foreach ($r in $regMoved) {
     Add-Line ("        {0}  ->  {1}   (item wants {2})" -f $r.From, $r.To, $r.Wants)
 }
 
-# ------------------------------------------------------------- flat maps -----
-
 $treeChanges = 0
 $bTrees = Get-Field $b 'registryTrees'
 $aTrees = Get-Field $a 'registryTrees'
@@ -309,8 +281,6 @@ $null = Compare-Map 'UAC' (Get-Field $b 'uac') (Get-Field $a 'uac')
 $null = Compare-Map 'Explorer advanced' (Get-Field (Get-Field $b 'shellState') 'advanced') `
                                         (Get-Field (Get-Field $a 'shellState') 'advanced')
 
-# ------------------------------------------------------------- scalars -------
-
 Add-Head 'System state'
 foreach ($pair in @(
     @('os.buildNumber',                'os',            'buildNumber'),
@@ -338,8 +308,6 @@ Add-Line ("    {0,-30} present={1} value={2}  ->  present={3} value={4}" -f `
           'SystemRestorePointCreationFrequency', (Get-Field $bFreq 'present'), (Format-Value (Get-Field $bFreq 'value')),
           (Get-Field $aFreq 'present'), (Format-Value (Get-Field $aFreq 'value')))
 
-# ------------------------------------------------------------ event log ------
-
 Add-Head 'Event log: providers newly logging errors or warnings'
 $bEv = @{}
 foreach ($log in @('System', 'Application')) {
@@ -363,12 +331,9 @@ foreach ($log in @('System', 'Application')) {
 if (-not $evRows.Count) { Add-Line '  nothing new' }
 foreach ($r in ($evRows | Sort-Object)) { Add-Line $r }
 
-# ==================================================== notable, by rule =======
-
-# A service that was running and is now stopped WITHOUT its start type having
-# been deliberately changed is the shape of collateral damage - something else
-# took it down. One whose start type moved to Disabled was almost certainly
-# asked for, so it is reported separately and much more quietly.
+# A service that was running and is now stopped without its start type changing
+# is collateral damage - something else took it down. One whose start type moved
+# to Disabled was asked for.
 foreach ($c in $svc.Changed) {
     $bRow = $svc.BeforeMap[$c.Key]; $aRow = $svc.AfterMap[$c.Key]
     $bSt = [string](Get-Field $bRow 'status');    $aSt = [string](Get-Field $aRow 'status')
@@ -434,8 +399,6 @@ foreach ($k in $prog.Removed) {
 if ($evRows.Count -ge 5) {
     $notable.Add("$($evRows.Count) event log provider/level pairs are logging more than before. See the event log section.")
 }
-
-# ==================================================================== emit ===
 
 $head = New-Object System.Collections.Generic.List[string]
 $head.Add('')

@@ -1,25 +1,11 @@
-<#
-    The convenience one-liner:
-
-      irm https://raw.githubusercontent.com/poagalt/Windows-Setup-Toolkit/main/install.ps1 | iex
-
-    THIS RUNS NOTHING WITHOUT SHOWING ITS WORK. Piping a URL into iex is the
-    least inspectable thing a person can do on Windows, and this project's whole
-    argument is that you can read what it does before granting it administrator
-    rights. So it downloads the release, checks it against the SHA256SUMS
-    published beside it, prints the hash and the folder, and STOPS - unless -Run
-    says otherwise.
-
-    A hash mismatch aborts rather than warning and continuing: that is the one
-    case where continuing is never right.
-#>
+﻿# The convenience one-liner: downloads the published release, checks it against
+# SHA256SUMS, and unpacks it. Changes nothing else about the machine.
 [CmdletBinding()]
 param(
-    # Which release. Latest by default; pin it if you want a known version.
+    # Which release. Latest by default; pin it for a known version.
     [string]$Version = '',
-    # Where the folder lands. Under LOCALAPPDATA so no elevation is needed to
-    # write it - the launcher elevates itself later, which is the only step
-    # that needs to.
+    # Under LOCALAPPDATA so no elevation is needed to write it - the launcher
+    # elevates itself later, which is the only step that needs to.
     [string]$Destination = (Join-Path $env:LOCALAPPDATA 'WinSetupToolkit'),
     # Launch the toolkit when it is unpacked and verified.
     [switch]$Run,
@@ -36,7 +22,6 @@ Write-Host ''
 Write-Host 'Windows Setup Toolkit' -ForegroundColor Cyan
 Write-Host ''
 
-# --- which release --------------------------------------------------------
 if ($Version) {
     $tag = "v$Version"
 } else {
@@ -57,7 +42,6 @@ $base    = "https://github.com/$Repo/releases/download/$tag"
 Write-Step "Release  $tag"
 Write-Step "From     $base/$zipName"
 
-# --- download the artefact and the sums it is published with ---------------
 $work = Join-Path ([IO.Path]::GetTempPath()) ("wst-dl-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 $null = New-Item -ItemType Directory -Force -Path $work
 $zip  = Join-Path $work $zipName
@@ -74,12 +58,9 @@ $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvaria
 $expected = ''
 try {
     $raw = (Invoke-WebRequest -Uri "$base/SHA256SUMS.txt" -UseBasicParsing -TimeoutSec 60).Content
-    # .Content IS A BYTE ARRAY WHEN THE SERVER SAYS octet-stream, and GitHub
+    # .Content is a byte array when the server says octet-stream, and GitHub
     # serves every release asset that way whatever the extension. [string] on a
-    # byte[] gives space-separated decimals, so every line failed the regex and
-    # this reported "no SHA256SUMS.txt" for a release that publishes one - the
-    # one safety check here, silently never running, behind a warning that read
-    # as an honest answer.
+    # byte[] gives space-separated decimals.
     $sums = if ($raw -is [byte[]]) { [Text.Encoding]::UTF8.GetString($raw) } else { [string]$raw }
     foreach ($line in ($sums -split "`r?`n")) {
         if ($line -match '^\s*([0-9a-fA-F]{64})\s+\*?(.+?)\s*$' -and $Matches[2] -eq $zipName) {
@@ -91,9 +72,8 @@ try {
 Write-Step "SHA256   $actual"
 
 if (-not $expected) {
-    # Said plainly rather than passed over. A release with no published sums is
-    # not necessarily tampered with, but it cannot be checked either, and the
-    # difference matters enough to name.
+    # Said plainly rather than passed over: a release with no published sums is
+    # not necessarily tampered with, but it cannot be checked either.
     Write-Host ''
     Write-Host '  WARNING: this release publishes no SHA256SUMS.txt, so the download' -ForegroundColor Yellow
     Write-Host '  above could not be verified against anything. Compare the hash by hand' -ForegroundColor Yellow
@@ -109,9 +89,8 @@ if (-not $expected) {
     Write-Step 'Verified against the published SHA256SUMS.'
 }
 
-# --- unpack ----------------------------------------------------------------
 # Replaced rather than merged: leaving an older module beside a newer one is how
-# a half-upgraded toolkit happens, and every file here is disposable.
+# a half-upgraded toolkit happens.
 $app = Join-Path $Destination 'app'
 if (Test-Path -LiteralPath $app) { Remove-Item -LiteralPath $app -Recurse -Force }
 $null = New-Item -ItemType Directory -Force -Path $app
@@ -127,7 +106,6 @@ if (-not (Test-Path -LiteralPath $launcher)) { throw "The release did not contai
 Write-Step "Unpacked $root"
 Write-Host ''
 
-# --- and stop, unless told otherwise ---------------------------------------
 if (-not $Run) {
     Write-Host '  Nothing has been changed on this machine. To read it first:' -ForegroundColor Cyan
     Write-Host "    $root"
@@ -139,8 +117,7 @@ if (-not $Run) {
     Write-Host '  Or re-run this with -Run to launch it straight away.'
     Write-Host ''
     # Not done for you: a Start menu entry is a change to this machine, and the
-    # line above promises there have been none. Offered here because a program
-    # nothing links to is one nobody can find again.
+    # line above promises there have been none.
     Write-Host '  To put it in the Start menu, with its own icon and identity:' -ForegroundColor Cyan
     Write-Host "    $root\Tools\Install-WDShortcut.ps1"
     Write-Host ''

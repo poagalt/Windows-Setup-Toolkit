@@ -1,22 +1,4 @@
-﻿<#
-    Reads a run's trace.jsonl back into something a person can act on.
-
-    trace.jsonl is one JSON object per line and is written for completeness
-    rather than for reading - which is the right trade for a flight recorder
-    and the wrong one at the moment somebody is trying to find out what went
-    wrong. This is the reader.
-
-    Ordered worst first: what threw, what failed, what was refused, what was
-    skipped before it ever reached the plan, then where the time went. The
-    environment block is printed at the top whatever else happened, because
-    about half of all "why did nothing work" questions are answered by the
-    three lines about elevation, safe mode, and a pending restart.
-
-        .\Tools\Show-WDRunTrace.ps1                       # the newest run
-        .\Tools\Show-WDRunTrace.ps1 -RunDir <path>
-        .\Tools\Show-WDRunTrace.ps1 -All                  # every action, not just the interesting ones
-#>
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$RunDir,
     [switch]$All,
@@ -72,8 +54,6 @@ Emit ('=' * 78)
 Emit "Run folder : $RunDir"
 Emit "Trace      : $($rows.Count) entries$(if ($badLines) { ", $badLines unreadable line(s)" } else { '' })"
 
-# --------------------------------------------------------- did it finish? ---
-
 if (-not $end) {
     Emit ''
     Emit '  THIS RUN DID NOT FINISH.'
@@ -102,8 +82,6 @@ if ($start) {
           $start.preview, $start.allowDownloads, $start.allowOwnership, ($start.accounts -join ','))
 }
 
-# ------------------------------------------------------------ environment ---
-
 if ($envr -and $envr.env) {
     $e = $envr.env
     Head 'Machine, as it was before anything was touched'
@@ -111,8 +89,8 @@ if ($envr -and $envr.env) {
     Emit "  $($e.user)   elevated=$($e.elevated)   PowerShell $($e.psVersion)   policy $($e.executionPolicy)"
     Emit "  up $($e.uptimeHours)h   $($e.freeGb) GB free of $($e.totalGb) GB   battery=$($e.hasBattery) mains=$($e.onMains) $($e.batteryPct)%"
     Emit ''
-    # The five that make a run do less than it says, called out by name
-    # whichever way they read, so a clean line is as informative as a bad one.
+    # The five that make a run do less than it says, named whichever way they
+    # read, so a clean line is as informative as a bad one.
     $flags = New-Object System.Collections.Generic.List[string]
     if (-not $e.elevated)   { $flags.Add('NOT ELEVATED - most removals report Blocked') }
     if ($e.safeBoot)        { $flags.Add("SAFE MODE (OptionValue=$($e.safeBoot))") }
@@ -123,12 +101,9 @@ if ($envr -and $envr.env) {
     if ($e.hasBattery -and -not $e.onMains)       { $flags.Add("ON BATTERY at $($e.batteryPct)%") }
     if ($e.restorePointsError)                    { $flags.Add("restore point list unreadable: $($e.restorePointsError)") }
     elseif ($e.restorePoints -eq 0)               { $flags.Add('NO RESTORE POINTS - the rollback script is the only way back') }
-    # Count the entries that actually name a process, never the container. An
-    # empty result reaches the file as {} rather than [] - ConvertTo-Json writes
-    # a null hashtable value that way - and {} reads back truthy with a Count of
-    # 1, so a bare Count test raised this on every run that ever ran, with a
-    # blank pid after it. Which is the alarm nobody can check, about the one
-    # thing this file exists to be trusted on.
+    # Count the entries that actually name a process, never the container: an
+    # empty result reaches the file as {} rather than [], and {} reads back
+    # truthy with a Count of 1.
     $others = @($e.otherInstances | Where-Object { $_ -and $_.pid })
     if ($others.Count) {
         $flags.Add("ANOTHER TOOLKIT PROCESS was running (pid $(($others | ForEach-Object { $_.pid }) -join ', '))")
@@ -143,8 +118,6 @@ if ($envr -and $envr.env) {
         Emit "  $($e.rebootPending.renames) file operation(s) were already queued for the next restart BEFORE this run."
     }
 }
-
-# ------------------------------------------------------------- the damage ---
 
 $acts = @(Kind 'action')
 $threw = @($acts | Where-Object { $_.threw })
@@ -179,8 +152,6 @@ foreach ($grp in @(
     }
 }
 
-# ------------------------------------------------- never reached the plan ---
-
 $skips = @(Kind 'plan-skip')
 Head "Ticked but never planned   ($($skips.Count))"
 if (-not $skips.Count) {
@@ -197,8 +168,6 @@ foreach ($s in $skips) {
     if ($s.guards)  { Emit "      guards: $(@($s.guards) -join ', ')" }
 }
 
-# -------------------------------------------------------------- the items ---
-
 $items = @(Kind 'item')
 $bad = @($items | Where-Object { [string]$_.status -in @('Failed', 'Blocked', 'Partial') })
 Head "Items that did not come out clean   ($($bad.Count) of $($items.Count))"
@@ -210,8 +179,6 @@ foreach ($b in $bad) {
     Emit "      per-action: $(@($b.actions) -join ', ')"
 }
 
-# ---------------------------------------------------------------- timings ---
-
 Head 'Where the time went'
 $slow = @($acts | Sort-Object { [int]$_.ms } -Descending | Select-Object -First 15)
 foreach ($s in $slow) {
@@ -221,8 +188,6 @@ foreach ($s in $slow) {
 $totalMs = (@($acts | ForEach-Object { [int]$_.ms }) | Measure-Object -Sum).Sum
 Emit ''
 Emit "  $($acts.Count) actions, $([Math]::Round($totalMs / 1000.0, 1))s inside executors."
-
-# ------------------------------------------------------------ everything ----
 
 if ($All) {
     Head "Every action, in order   ($($acts.Count))"
