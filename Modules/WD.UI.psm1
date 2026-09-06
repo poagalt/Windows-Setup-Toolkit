@@ -1,35 +1,6 @@
-﻿<#
-    WD.UI - WPF front end. Eight pages in one window, one shown at a time by
-    $showPage:
-
-      Home     - what the application opens on. Three cards: debloat, revert,
-                 and the answer file generator.
-      Modes    - five preset columns plus Custom, each carrying its own counts.
-      Advanced - the full item list, one group per full-width block with an
-                 index rail down the left. Built lazily; see $advWork.
-      Compare  - two presets side by side, with every difference handed across.
-      Revert   - a card per past run, then that run's options one per row.
-      Run      - live progress with a colour legend.
-      Unattend - the Windows Setup answer file form.
-
-    THE ENGINE RUNS ON A BACKGROUND RUNSPACE and pushes progress into a
-    synchronized queue that a DispatcherTimer drains. Calling it on the UI thread
-    freezes the window exactly when it is busiest.
-
-    EVERY Foreground IS SET EXPLICITLY, because WPF defaults to black whatever
-    the Windows theme is - invisible on the dark palette. Set as a
-    DynamicResource through $Ref rather than as a brush, which is what makes a
-    theme switch a repaint of the open window rather than a rebuild.
-#>
-
-Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing -ErrorAction SilentlyContinue
+﻿Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing -ErrorAction SilentlyContinue
 
 function Get-WDPalette {
-    <#
-        $Theme of 'dark' or 'light' wins; anything else follows Windows. The
-        chooser on first run writes one of the two, so after that this reads a
-        decision rather than guessing at one.
-    #>
     param([string]$Theme)
 
     $dark = $false
@@ -44,34 +15,22 @@ function Get-WDPalette {
 
     if ($dark) {
         # ScrollThumb sits between Line and Muted: a bar this narrow must be
-        # findable without being the loudest thing on the page, and Line is a
-        # hairline colour chosen to disappear.
-        #
-        # BtnBg/BtnBorder/BtnTint and FieldBg exist because Button, TextBox, and
-        # ComboBox all keep the SYSTEM chrome unless retemplated, and that chrome
-        # is light in both palettes. BtnTint is translucent so it composites OVER
-        # a button carrying a colour of its own rather than replacing it.
-        #
-        # Text is a light gray, NOT white. Pure white on a near-black page is
-        # ~17:1, which is past readable and into glare - the letters bloom and a
-        # long list is tiring to read down. #BA is ~8:1, and leaves Sub (#9A,
-        # ~5.7:1) a visible step below rather than a shade nobody can see. 5.7 is
-        # the floor for that pair; a third step would go under 4.5.
+        # findable without being the loudest thing on the page.
+        # Text is a light gray, not white: pure white on a near-black page is
+        # ~17:1, past readable and into glare, and #BA leaves Sub a visible step
+        # below.
         @{ Dark=$true; Bg='#FF1F1F1F'; Panel='#FF2B2B2B'; Card='#FF303030'; CardSel='#FF37475A'
            Text='#FFBABABA'; Sub='#FF9A9A9A'; Line='#FF454545'; Accent='#FF4CA6FF'
            Ok='#FF5FD07F'; Warn='#FFE8B44A'; Bad='#FFF06C6C'; Muted='#FF9E9E9E'; RowHover='#FF3A3A3A'
            # Something standing in the way, which is neither a success nor this
-           # run going wrong. A hue of its own rather than a shade of Warn: the
-           # whole point of the status is that it is a different KIND of thing
-           # from a refusal, and a paler yellow says "a bit refused".
+           # run going wrong. A hue of its own rather than a shade of Warn,
+           # because a paler yellow reads as "a bit refused".
            Obstruct='#FFB08CE8'
            ScrollThumb='#FF5A5A5A'; ScrollThumbHover='#FF8C8C8C'
            BtnBg='#FF3C3C3C'; BtnBorder='#FF5E5E5E'; BtnTint='#26FFFFFF'; FieldBg='#FF262626'
-           # The one filled button on each page: Preview, which is the only way
-           # into an apply and is therefore the run button. A face in the accent
-           # with ink dark enough to read on it - #10243A on #4CA6FF is about
-           # 8.7:1, which is well clear of the 4.5:1 floor and needed, because
-           # this is the control somebody presses without reading it twice.
+           # The one filled button on each page: Preview, the only way into an
+           # apply. #10243A on #4CA6FF is about 8.7:1, which this needs because
+           # it is pressed without being read twice.
            GoBg='#FF4CA6FF'; GoText='#FF10243A'; GoBorder='#FF7CC0FF'
            T1='#FF5FD07F'; T2='#FF4CA6FF'; T3='#FFE8B44A'; T4='#FFF06C6C' }
     } else {
@@ -82,49 +41,24 @@ function Get-WDPalette {
            ScrollThumb='#FFBFBFBF'; ScrollThumbHover='#FF8A8A8A'
            BtnBg='#FFF0F0F0'; BtnBorder='#FFACACAC'; BtnTint='#1A000000'; FieldBg='#FFFFFFFF'
            # White on #0F6CBD is about 5.9:1. The light accent is dark enough to
-           # carry white, where the dark theme's is not - which is the whole
-           # reason these are palette entries rather than one hardcoded pair.
+           # carry white where the dark theme's is not.
            GoBg='#FF0F6CBD'; GoText='#FFFFFFFF'; GoBorder='#FF0F6CBD'
            T1='#FF1A7F37'; T2='#FF0F6CBD'; T3='#FF8A5A00'; T4='#FFC03030' }
     }
 }
 
-# ===================================================== themed dialogs =======
-#
-# MessageBox is a Win32 dialog and takes its colours from the SYSTEM, so on a
-# dark page every warning and Details panel opened as a white rectangle - the one
-# part of this interface that never followed the theme, and the part that appears
-# on top of everything else. It cannot be fixed in place: DWM's dark-mode
-# attribute reaches a window this process owns, and MessageBox's window is created
-# and destroyed inside one blocking call.
-#
-# Kept: the return strings ('OK', 'Yes', ...) so the twenty `-ne 'Yes'` sites are
-# unchanged; Escape answers the cancel button and Enter the default; modal and
-# centred on its owner.
-#
-# Better: it SCROLLS (the Details panel can run to forty lines of registry paths,
-# and MessageBox just grew off the screen), and the sound is decoupled from the
-# glyph - so a Warning can look like one without making a noise.
+# MessageBox is a Win32 dialog and takes its colours from the system, so on a
+# dark page every warning opened as a white rectangle. There is no fixing it in
+# place - its window is created and destroyed inside one blocking call.
 $script:WDDialogTheme = $null
 $script:WDDialogOwner = $null
 
-# What each background runspace imports. A runspace starts empty, so every one
-# of them has to load the toolkit for itself, and these were five bare literals
-# with no two alike - the revert one was missing WD.Preflight for its whole
-# life, which the Get-Command guard in Write-WDRunEnvironment swallowed.
-#
-# Kept minimal rather than collapsed into one list, and that is measured rather
-# than assumed: handing every runspace all nine costs the item probe 141 ms and
-# the storage walk 162 ms, in front of work that takes 2.6 s and 33-63 s
-# respectively. Cheap, but bought nothing - the fault was never the subsetting,
-# it was that nothing checked a subset was sufficient. [6] of the self test does
-# now, transitively, which is the only way to see it: the revert runspace's own
-# calls all resolved and the gap was two levels down through Initialize-WDSession.
-#
-# Add a module here, never at the use site. The keys are what [6] pairs against.
+# A runspace starts empty, so every one has to load the toolkit for itself.
+# These were bare literals and no two agreed; one omitted WD.Preflight for its
+# whole life and the guard swallowed it.
 $script:WDRunspaceModules = @{
-    # An apply, a preview, or a revert. Everything but WD.Unattend, which
-    # writes a file for another machine and is never part of a run.
+    # An apply, a preview, or a revert. Everything but WD.Unattend, which writes
+    # a file for another machine.
     Run     = @('WD.Core','WD.Detect','WD.Actions','WD.Preflight','WD.Custom','WD.Persist','WD.Discover','WD.Revert','WD.Engine')
     # The startup scan. No Preflight: it builds no session, so it never reaches
     # the tool sweep.
@@ -136,13 +70,7 @@ $script:WDRunspaceModules = @{
 }
 
 function Set-WDDialogHost {
-    <#
-        Where the themed dialogs get their brushes and their owner.
-
-        Published by Show-WDWindow rather than looked up, because a dialog can
-        be raised from a closure several scopes down and there is no route from
-        there back to the window's resource dictionary.
-    #>
+    # Where the themed dialogs get their brushes and their owner.
     param($Dictionary, $Owner, [System.Nullable[bool]]$Dark)
     if ($Dictionary)     { $script:WDDialogTheme = $Dictionary }
     if ($Owner)          { $script:WDDialogOwner = $Owner }
@@ -150,36 +78,19 @@ function Set-WDDialogHost {
 }
 
 function Show-WDMessage {
-    <#
-        Drop-in replacement for [Windows.MessageBox]::Show, in the app's own
-        colours. Same argument order, same return strings.
-
-        Falls back to the real MessageBox when there is no theme published -
-        the first-run theme chooser opens before any of this exists, and a
-        dialog that cannot be drawn is worse than one drawn in the wrong
-        colour.
-    #>
     param(
         [Parameter(Mandatory, Position = 0)]$Text,
         [Parameter(Position = 1)][string]$Title = 'Windows Setup Toolkit',
         [Parameter(Position = 2)][string]$Buttons = 'OK',
         [Parameter(Position = 3)][string]$Icon = 'None',
-        # Build the window and hand it back instead of showing it. The seam
-        # every modal in this application needs: ShowDialog blocks the
-        # dispatcher with nobody to dismiss it, so the only thing a headless
-        # check can ask about a dialog is whether it assembles.
+        # Build the window and hand it back instead of showing it - the seam
+        # every modal here needs, because ShowDialog blocks the dispatcher.
         [switch]$BuildOnly
     )
 
-    # BOTH CALL FORMS. Every site was
-    # `[Windows.MessageBox]::Show($text, $title, 'YesNo', 'Warning')`, forty of
-    # them with a dozen spanning several lines - and converting to parameter
-    # syntax means deleting the parentheses holding those continuations together,
-    # in a file that cannot be exercised without a window on somebody's screen.
-    # Kept, the comma operator hands all four over as one array, so the whole
-    # conversion was replacing the method name.
-    #
-    # Unambiguous: no caller passes an array AS the message text.
+    # Both call forms. Forty sites pass the four arguments in parentheses, which
+    # arrive as one array; converting them to parameter syntax meant deleting
+    # the parentheses holding multi-line calls together.
     if ($Text -is [array]) {
         $packed = @($Text)
         $Text = [string]$packed[0]
@@ -192,24 +103,16 @@ function Show-WDMessage {
     if ($Icon    -notin @('None','Information','Warning','Error','Question')) { $Icon = 'None' }
 
     if (-not $script:WDDialogTheme -and -not $BuildOnly) {
-        # The real one, deliberately spelled through a variable so the literal
-        # "[Windows.MessageBox]::Show(" appears nowhere else in this file. That
-        # string is what the conversion replaced, and a second copy of it here
-        # is a second copy that will be replaced again by the next sweep - as
-        # it was, into a call to this very function.
+        # The real one, spelled through a variable so the literal
+        # "[Windows.MessageBox]::Show(" appears nowhere else - the conversion
+        # sweep replaced one inside this very function.
         $box = [Windows.MessageBox]
         return [string]$box::Show($Text, $Title, $Buttons, $Icon)
     }
 
-    # NOTHING IN THIS APPLICATION MAKES A NOISE. A dialog is already the loudest
-    # thing this interface can do - modal, centred over the window, with the
-    # message in it - and the sound fires in whatever room the machine is in.
-    #
-    # The one argument for keeping it was accessibility and it does not hold: a
-    # system sound is not an accessibility feature, a screen reader announces the
-    # dialog and its icon on its own, and Windows' sound scheme is a setting the
-    # person already made. Decoupling the glyph from the noise was the POINT of
-    # replacing MessageBox; this is the rest of it.
+    # Nothing in this application makes a noise. A dialog is already the loudest
+    # thing this interface can do, and a system sound is a setting the person
+    # has made elsewhere.
 
     $ref = {
         param($El, [string]$Prop, [string]$Key)
@@ -221,19 +124,14 @@ function Show-WDMessage {
     $win = New-Object Windows.Window
     $win.Title = $Title
     $win.SizeToContent = 'Height'
-    # Width is measured from the text further down, not fixed at 560. It was
-    # fixed, and on this dialog's commonest content - a list of registry paths -
-    # that meant every one of them wrapped, in the middle of a path, because the
-    # window happened to be narrower than the line. A path broken across two
-    # lines is one nobody can read back or copy.
+    # Width is measured from the text below rather than fixed: fixed at 560, a
+    # list of registry paths wrapped mid-path.
     $win.Width = 560
-    # Tall dialogs scroll rather than growing past the screen. 0.72 leaves the
-    # taskbar and the caption visible on every layout tried.
+    # Tall dialogs scroll rather than growing past the screen; 0.72 leaves the
+    # taskbar and the caption visible.
     $win.MaxHeight = [Math]::Max(320, [Windows.SystemParameters]::WorkArea.Height * 0.72)
-    # Resizable, because no amount of measuring answers for every screen and
-    # every reader. It was NoResize, which meant the one dialog that can hold
-    # forty lines of paths could not be made bigger than whatever this function
-    # guessed.
+    # Resizable, because no measurement answers for every screen and every
+    # reader.
     $win.ResizeMode = 'CanResize'
     $win.MinWidth  = 380
     $win.MinHeight = 200
@@ -242,14 +140,9 @@ function Show-WDMessage {
     if ($script:WDDialogOwner) {
         try { $win.Owner = $script:WDDialogOwner } catch { }
     }
-    # The owner's whole resource dictionary, not just the palette. Button,
-    # TextBox and ComboBox all keep the system chrome unless they are
-    # retemplated, and that chrome is light in BOTH palettes - so a dialog with
-    # only the brushes would be a dark panel with three system-grey buttons
-    # along the bottom, which is most of the way back to the problem this
-    # replaced. The implicit styles live in the main window's Window.Resources,
-    # and that is itself a ResourceDictionary, so it merges like any other. It
-    # already carries the palette transitively.
+    # The owner's whole resource dictionary, not just the palette: Button,
+    # TextBox, and ComboBox keep the system chrome unless retemplated, and that
+    # chrome is light in both palettes.
     $merged = $false
     if ($script:WDDialogOwner) {
         try { $null = $win.Resources.MergedDictionaries.Add($script:WDDialogOwner.Resources); $merged = $true } catch { }
@@ -263,7 +156,6 @@ function Show-WDMessage {
     $root.Margin = '18,16,18,14'
     $root.LastChildFill = $true
 
-    # ---- the buttons, docked to the bottom ---------------------------------
     $row = New-Object Windows.Controls.StackPanel
     $row.Orientation = 'Horizontal'
     $row.HorizontalAlignment = 'Right'
@@ -296,22 +188,18 @@ function Show-WDMessage {
     }
     $null = $root.Children.Add($row)
 
-    # ---- the message ------------------------------------------------------
     $scroll = New-Object Windows.Controls.ScrollViewer
     $scroll.VerticalScrollBarVisibility = 'Auto'
     $scroll.HorizontalScrollBarVisibility = 'Disabled'
 
-    # A DockPanel, not a horizontal StackPanel. The window resizes now, so the
-    # text has to resize with it - and a horizontal StackPanel measures its
-    # children with INFINITE width, which is why the TextBlock below used to
-    # carry a hard-coded Width. Docked, it is given a real width and re-wraps
-    # when the window is dragged.
+    # A DockPanel, not a horizontal StackPanel: that measures its children with
+    # infinite width, so nothing wraps and the hard-coded Width it needed cannot
+    # resize.
     $body = New-Object Windows.Controls.DockPanel
     $body.LastChildFill = $true
 
-    # A bar rather than a glyph. The emoji this file builds elsewhere are
-    # colour fonts that ignore Foreground, so they cannot follow the theme, and
-    # a 3px rule in the status colour says the same thing in one element.
+    # A bar rather than a glyph: the emoji this file builds are colour fonts
+    # that ignore Foreground, so they cannot follow the theme.
     if ($Icon -ne 'None') {
         $bar = New-Object Windows.Controls.Border
         $bar.Width = 3; $bar.CornerRadius = 2
@@ -334,19 +222,15 @@ function Show-WDMessage {
     & $ref $tb 'Foreground' 'Text'
     $null = $body.Children.Add($tb)
 
-    # THE WINDOW IS SIZED TO THE TEXT, not the text to the window - measured off
-    # THIS element with wrapping off, so the typeface and line height are the ones
-    # that will be drawn. A separate probe element would drift the first time
-    # somebody changed the font.
-    #
-    # Capped at the screen, so a line wraps only because it is wider than the
-    # DISPLAY, never because the dialog was born 560 wide.
+    # The window is sized to the text, not the text to the window - measured off
+    # this element with wrapping off, so the typeface and line height are the
+    # real ones.
     $tb.TextWrapping = 'NoWrap'
     $tb.Measure((New-Object Windows.Size ([double]::PositiveInfinity), ([double]::PositiveInfinity)))
     $natural = [double]$tb.DesiredSize.Width
     $tb.TextWrapping = 'Wrap'
-    # Margins 18 either side, the bar and its gutter when there is one, a
-    # reserved scrollbar, and the window frame.
+    # Margins either side, the bar and its gutter, a reserved scrollbar, and the
+    # window frame.
     $chrome = 36 + $(if ($Icon -ne 'None') { 17 } else { 0 }) + 18 + 20
     $cap    = [Math]::Max(460, [Windows.SystemParameters]::WorkArea.Width * 0.9)
     $win.Width = [Math]::Min([Math]::Max(460, $natural + $chrome), $cap)
@@ -357,14 +241,8 @@ function Show-WDMessage {
 
     if ($BuildOnly) { return $win }
 
-    # The caption, which is a DWM attribute and not a brush - without it the
-    # title bar is white above a dark dialog, which is the original complaint
-    # in miniature.
-    #
-    # Attribute 20 only, not Set-WDWindowBackdrop: that also asks for Mica and
-    # extends the frame across the whole client area, which on a small dialog
-    # means a translucent sheet over whatever is behind it. The main window
-    # clears its page to transparent to make that work and this one must not.
+    # The caption is a DWM attribute and not a brush: without this the title bar
+    # is white above a dark dialog.
     try {
         $null = (New-Object Windows.Interop.WindowInteropHelper $win).EnsureHandle()
         Initialize-WDDwmType
@@ -375,14 +253,8 @@ function Show-WDMessage {
         }
     } catch { }
 
-    # SizeToContent is what gives the dialog its height on open, and it is also
-    # what would fight the user the moment they dragged the bottom edge - WPF
-    # re-applies it on every content change. Dropped once the first layout has
-    # happened, which is what ContentRendered means, so the opening size is
-    # measured and everything after that is the reader's.
-    #
-    # $this, not $win: an event handler on a window is handed the window, and a
-    # bare block that reaches for a local is one more thing to get wrong.
+    # SizeToContent gives the dialog its height on open and would fight the drag
+    # afterwards, so it is dropped once the content has rendered.
     $win.Add_ContentRendered({ $this.SizeToContent = 'Manual' })
 
     $null = $win.ShowDialog()
@@ -394,13 +266,11 @@ $script:WDDialogDark = $false
 $script:WDDwmReady = $false
 
 function Initialize-WDDwmType {
-    <#  P/Invoke for the two DWM calls the window needs. Compiled once.  #>
+    # P/Invoke for the two DWM calls the window needs. Compiled once.
     if ($script:WDDwmReady) { return }
-    # No -UsingNamespace here. Add-Type -MemberDefinition already emits
-    # "using System.Runtime.InteropServices;", adding it again is a duplicate
-    # using directive, and that compiler warning is treated as an error - so the
-    # type never compiled, every call was caught, and Mica silently never
-    # happened on a machine that supports it.
+    # No -UsingNamespace: Add-Type -MemberDefinition already emits "using
+    # System.Runtime.InteropServices;", the duplicate is a warning treated as an
+    # error, and the surrounding try swallows it.
     if (-not ('WD.Dwm' -as [type])) {
         Add-Type -Namespace 'WD' -Name 'Dwm' -MemberDefinition @'
 [StructLayout(LayoutKind.Sequential)]
@@ -417,27 +287,8 @@ public static extern int DwmExtendFrameIntoClientArea(IntPtr hwnd, ref MARGINS m
 }
 
 function Set-WDWindowBackdrop {
-    <#
-        Mica behind the window, and a title bar that matches the palette.
-
-        TWO INDEPENDENT WINS THAT FAIL SEPARATELY:
-
-          dark title bar (attribute 20) works back to Windows 10 1903, and is the
-          bigger visual fix - a white caption over a dark page was the one part
-          of this window that never followed the theme.
-
-          Mica (attribute 38) needs build 22621, AND needs the frame extended
-          into the client area first, or DWM has nothing to draw the material
-          into and the client area renders black.
-
-        So it REPORTS BACK rather than assuming: the caller only clears the page
-        to transparent once the backdrop is actually there, because a transparent
-        page over a backdrop that never arrived is an unreadable window.
-
-        No WindowStyle="None" anywhere: the native caption, drag, snap layouts,
-        and system menu all survive, which is the whole reason to do this through
-        DWM rather than by drawing a title bar.
-    #>
+    # Mica behind the window, and a title bar that matches the palette. The two
+    # fail separately, so this reports which arrived.
     param(
         [Parameter(Mandatory)]$Window,
         [Parameter(Mandatory)][bool]$Dark
@@ -462,8 +313,7 @@ function Set-WDWindowBackdrop {
         $backdrop = 2      # DWMSBT_MAINWINDOW - Mica
         if ([WD.Dwm]::DwmSetWindowAttribute($h, 38, [ref]$backdrop, 4) -ne 0) { return $false }
 
-        # Without this WPF paints its own opaque background over the material
-        # and nothing above changes anything.
+        # Without this WPF paints its own opaque background over the material.
         $src = [Windows.Interop.HwndSource]::FromHwnd($h)
         if (-not $src) { return $false }
         $src.CompositionTarget.BackgroundColor = [Windows.Media.Colors]::Transparent
@@ -481,8 +331,8 @@ function New-WDGridLength {
     New-Object System.Windows.GridLength -ArgumentList $Value, ([System.Windows.GridUnitType]::$Unit)
 }
 
-# Emoji are built from code points so this file stays pure ASCII - it is
-# rewritten by tooling that would otherwise mangle literal multi-byte glyphs.
+# Emoji are built from code points so this file stays pure ASCII - tooling would
+# otherwise mangle literal multi-byte glyphs.
 function New-WDGlyph { param([int]$CodePoint) [char]::ConvertFromUtf32($CodePoint) }
 
 $script:CategoryGlyphs = @{
@@ -520,17 +370,8 @@ $script:CategoryGlyphs = @{
     'section-add'          = 0x2795    # heavy plus
 }
 function Get-WDChildScrollBar {
-    <#
-        The ScrollBar of one orientation inside a control, by walking the visual
-        tree - the only route, for the reason Get-WDChildScrollViewer exists.
-
-        Exported for the same reason too: the self-test harness runs outside this
-        module's session state, so an unexported helper is invisible to it even
-        though the code two lines away can call it.
-
-        Returns $null before the first layout pass, and before the bar is needed
-        - a scroller whose content fits has no bar to find.
-    #>
+    # The ScrollBar of one orientation inside a control, by walking the visual
+    # tree - a template part is not reliably named across themes.
     param($Element, [string]$Orientation = 'Vertical')
     if ($null -eq $Element) { return $null }
     if ($Element -is [Windows.Controls.Primitives.ScrollBar] -and
@@ -544,12 +385,9 @@ function Get-WDChildScrollBar {
 }
 
 function Get-WDChildScrollViewer {
-    <#
-        The ScrollViewer inside a templated control. ListBox does not expose
-        one, and its template part is not reliably named across themes, so the
-        visual tree is the only dependable route. Returns $null before the
-        first layout pass, when the template has not been applied yet.
-    #>
+    # ListBox exposes no ScrollViewer, and its template part is not reliably
+    # named, so the visual tree is walked. Returns null until the page has been
+    # laid out once.
     param($Element)
     if ($null -eq $Element) { return $null }
     if ($Element -is [Windows.Controls.ScrollViewer]) { return $Element }
@@ -571,7 +409,7 @@ function Get-WDCategoryGlyph {
 $script:IconSourceCache = @{}
 
 function Get-WDIconSource {
-    <#  Turns an icon path into something WPF can render. Null on any failure.  #>
+    # Turns an icon path into something WPF can render. Null on any failure.
     param([string]$Path)
     if (-not $Path) { return $null }
     if ($script:IconSourceCache.ContainsKey($Path)) { return $script:IconSourceCache[$Path] }
@@ -602,40 +440,17 @@ function Get-WDIconSource {
     $src
 }
 
-# ---------------------------------------------------------------------------
-# The application's own icon: the Windows mark, made of four things people run
-# this toolkit to get rid of, with one of them being smashed by a hammer.
-#
-# ASSETS\ IS THE ONLY PLACE THIS REPO KEEPS BINARY FILES. Everything else is
-# reviewable text on purpose, and the previous icon was drawn in vector code for
-# that reason. Four real product logos cannot be - traced by eye they came out
-# close enough to name and wrong enough to be worse than nothing.
-# Tools\Build-WDIconAssets.ps1 is the whole path from each vendor's SVG to the
-# PNG loaded here; run it when a vendor changes a mark.
-#
-# The composition:
-#   - four tiles on the Windows mark's own geometry. The gap is a fourteenth of
-#     the width and the corners are barely off square; anything more generous
-#     reads as a phone home screen rather than the Windows logo.
-#   - the tiles are the logo's own BLUE, with each mark on a white hairline edge.
-#     Only the keyline follows the palette - it is what separates the mark from
-#     whatever is behind it, and OneDrive is a blue cloud on a blue tile.
-#   - the broken pane is eight pieces thrown clear, and each piece is a CLIP over
-#     the whole logo with the logo pushed back by the same offset it was thrown
-#     by. So every shard carries the part of the picture it was cut from and they
-#     would still fit together if slid home. Eight triangles of flat colour
-#     instead reads as confetti.
-#
-# Below 24px there is a `lite` cut: three big fragments instead of eight and no
-# hammer. Eight fragments of a 7px tile is eight single pixels.
-# ---------------------------------------------------------------------------
+# The application's own icon: the Windows mark made of four things people run
+# this toolkit to get rid of, with the antivirus trial being smashed.
+# Assets\ holds the only binaries in this repo, and the exception is deliberate:
+# four real product logos cannot be reconstructed from a description.
 
 $script:WDIconRoot   = $null
 $script:WDLogoCache  = @{}
 $script:WDLogoWarned = $false
 
-# What each tile reduces to when there is no room to draw it, and what the
-# whole thing falls back to if the assets are missing.
+# What each tile reduces to when there is no room to draw it, and what the whole
+# thing falls back to if the assets are missing.
 $script:WDIconTiles = @(
     @{ Key = 'edge';     Flat = '#FF2E9AD8' },
     @{ Key = 'mcafee';   Flat = '#FFC8102E' },
@@ -643,9 +458,9 @@ $script:WDIconTiles = @(
     @{ Key = 'copilot';  Flat = '#FF9A4FE0' }
 )
 
-# The break. Unit coordinates over the pane, and a direction to be thrown in.
-# At spread 0 they tile the pane exactly, which is what keeps them looking like
-# one broken thing rather than eight separate ones.
+# Unit coordinates over the pane, and a direction to be thrown in. At spread 0
+# they tile the pane exactly, which is what keeps them looking like one broken
+# thing.
 $script:WDIconPieces = @(
     @{ P = @(@(0.00, 0.00), @(0.45, 0.00), @(0.38, 0.30), @(0.00, 0.38)); D = @(-0.30, -0.34) },
     @{ P = @(@(0.45, 0.00), @(1.00, 0.00), @(0.72, 0.22), @(0.38, 0.30)); D = @(-0.04, -0.48) },
@@ -658,16 +473,15 @@ $script:WDIconPieces = @(
 )
 
 function Get-WDIconAssetRoot {
-    <#  Assets\ beside Modules\, resolved once.  #>
+    # Assets\ beside Modules\, resolved once.
     if ($script:WDIconRoot) { return $script:WDIconRoot }
     $script:WDIconRoot = Join-Path (Split-Path -Parent $PSScriptRoot) 'Assets'
     $script:WDIconRoot
 }
 
 function Get-WDIconLogo {
-    <#  One product mark, frozen and cached. Null when the file is not there,
-        which the caller answers by drawing the flat tile instead - a missing
-        asset should cost the detail, never the icon.  #>
+    # One product mark, frozen and cached. Null when the file is not there,
+    # which the caller answers by drawing the flat tile.
     param([string]$Key)
     if ($script:WDLogoCache.ContainsKey($Key)) { return $script:WDLogoCache[$Key] }
     $img = $null
@@ -694,23 +508,10 @@ function Get-WDIconLogo {
 $script:WDIconEdge = 0.62   # hairline, in the 64-unit authoring space
 
 function Add-WDIconLogo {
-    <#  One mark, fitted into a pane, on a hairline light edge.
-
-        Aspect preserved: these are not square, and squaring OneDrive's 512x328
-        gives a cloud nobody recognises.
-
-        THE EDGE is what makes a blue tile survivable - OneDrive is a blue cloud,
-        so without it that tile reads as an empty square below about 32px.
-
-        Drawn as the mark's own silhouette in white, eight times around a small
-        circle, with the mark on top. The silhouette comes from pushing the bitmap
-        as an OPACITY MASK over a white rectangle (the alpha channel IS the shape),
-        and the transform is pushed FIRST so the mask travels with the offset
-        instead of re-cutting the same hole.
-
-        Eight offsets rather than one scaled copy, because scaling grows a
-        silhouette from its centre and leaves interior holes untouched - Edge's
-        swirl, McAfee's hollow, and Copilot's gap are all holes.  #>
+    # One mark, fitted into a pane, on a hairline light edge. The silhouette
+    # comes from pushing the bitmap as an opacity mask over white, eight times
+    # around a small circle - scaling grows an outline from the centre and
+    # leaves interior holes untouched.
     param($Ctx, $Rect, [string]$Key, [double]$Inset, [double]$Edge = -1.0)
     $bm = Get-WDIconLogo $Key
     if (-not $bm) { return $false }
@@ -742,7 +543,7 @@ function Add-WDIconLogo {
 }
 
 function New-WDIconPaneRects {
-    <#  The four panes, on the Windows mark's proportions.  #>
+    # The four panes, on the Windows mark's proportions.
     param([double]$X, [double]$Y, [double]$W, [double]$GapFraction = 0.072)
     $gap = $W * $GapFraction
     $s = ($W - $gap) / 2.0
@@ -752,11 +553,7 @@ function New-WDIconPaneRects {
 }
 
 function New-WDIconDrawing {
-    <#  The icon, as a frozen Drawing fitted to a 64x64 tile.
-
-        -Theme takes dark or light and decides the tile faces; anything else
-        asks the palette, which is what every caller that predates the themed
-        icon does.  #>
+    # The icon, as a frozen Drawing fitted to a 64x64 tile.
     param([string]$Cut = 'full', [string]$Theme = '')
 
     $dark = $true
@@ -766,15 +563,12 @@ function New-WDIconDrawing {
     $mk = { param([string]$hex)
             $br = (New-Object Windows.Media.BrushConverter).ConvertFromString($hex)
             $br.Freeze(); $br }
-    # The Windows logo's own blue, in both themes. The tiles used to be a white
-    # or near-black face that followed the palette; a mark that IS the Windows
-    # logo should be the colour of the Windows logo, and a solid blue reads
-    # against a dark taskbar and a light one alike - which is most of what the
-    # theme switch was buying. Barely a gradient: enough for the 256px frame not
-    # to look like a flat swatch, not enough to read as two colours.
+    # The Windows logo's own blue, in both themes: a mark that is the Windows
+    # logo should be its colour, and a solid blue holds against a dark taskbar
+    # and a light one alike.
     $tileA = '#FF3D9EE8'; $tileB = '#FF0E68BC'
-    # Only the keyline still follows the theme, and it is the one thing that
-    # has to: it separates the mark from whatever is behind it.
+    # Only the keyline follows the theme, and it is the one thing that has to:
+    # it separates the mark from whatever is behind it.
     $inkHex = '#FF0A3F6E'
     if (-not $dark) { $inkHex = '#FF1B527F' }
 
@@ -790,16 +584,9 @@ function New-WDIconDrawing {
     $pen.LineJoin = 'Round'
     $pen.Freeze()
 
-    # THE MARK IS SIZED TO THE TILE, and everything else may go off the edge.
-    # Fitted by its own bounding box - which every other generated thing here does
-    # - the shards and the handle make the box nearly twice the mark, so the four
-    # panes came out at half the room and the icon read as a small thing in a big
-    # gap beside a Start button.
-    #
-    # So the panes fill 64 less a hairline, the footprint the Windows logo has in
-    # the taskbar, and the frame render clips whatever leaves. The handle is cut
-    # off: a handle is legible as the part you can see, a half-size four-pane mark
-    # is not legible at all.
+    # The mark is sized to the tile and everything else may go off the edge.
+    # Fitted by its own bounding box, the shards and handle nearly double it and
+    # the four panes came out half size.
     $inset  = 0.02
     $spread = 0.45          # thrown clear, but mostly still in frame
     $radF   = 0.045
@@ -816,12 +603,9 @@ function New-WDIconDrawing {
                     (New-Object Windows.Rect $r.X, $r.Y, $r.W, $r.W), ($r.W * $radF), ($r.W * $radF)
         $clip.Freeze()
         $dc.DrawGeometry($face, $pen, $clip)
-        # The logo goes on at BOTH cuts. The small one used to draw a flat
-        # swatch per tile, which is what "no logos, just coloured squares" in
-        # the taskbar was: at 20px a mark is six pixels across, and six pixels
-        # of the real thing still carry its colours in the right places where a
-        # solid block carries one. The flat colour is only the fallback for a
-        # missing asset now.
+        # The logo goes on at both cuts. The small one used to draw a flat
+        # swatch per tile, which is what "four coloured squares" in the taskbar
+        # was.
         $dc.PushClip($clip)
         if (-not (Add-WDIconLogo $dc $r ([string]$script:WDIconTiles[$i].Key) $inset)) {
             $dc.DrawGeometry((& $mk ([string]$script:WDIconTiles[$i].Flat)), $null, $clip)
@@ -829,8 +613,8 @@ function New-WDIconDrawing {
         $dc.Pop()
     }
 
-    # The break. Fewer, bigger pieces on the small cut - eight fragments of a
-    # 7px tile is eight single pixels.
+    # Fewer, bigger pieces on the small cut - eight fragments of a 7px tile is
+    # eight single pixels.
     $br = $rects[1]
     $pieces = $script:WDIconPieces
     if ($lite) { $pieces = @($script:WDIconPieces[1], $script:WDIconPieces[3], $script:WDIconPieces[7]) }
@@ -855,10 +639,8 @@ function New-WDIconDrawing {
     }
 
     if (-not $lite) {
-        # Inboard of the corner, so the HEAD lands wholly on the tile and only
-        # the handle is cut. It used to sit at 0.94/0.16, which was fine while
-        # the whole drawing was scaled to fit and put most of the head off the
-        # edge the moment the mark was sized to the tile instead.
+        # Inboard of the corner, so the head lands wholly on the tile and only
+        # the handle is cut.
         $hx = $br.X + $br.W * 0.74; $hy = $br.Y + $br.W * 0.30
         $flash = New-Object Windows.Media.Pen ((& $mk '#FFFFD46B'), 2.3)
         $flash.StartLineCap = 'Round'; $flash.EndLineCap = 'Round'; $flash.Freeze()
@@ -916,10 +698,9 @@ function New-WDIconDrawing {
     $dc.Close()
     $inner.Freeze()
 
-    # Clipped to the tile rather than fitted into it. The render target is
-    # already 64 square so anything outside is dropped either way; the explicit
-    # clip is here so Drawing.Bounds answers 64x64 and nothing downstream tries
-    # to be helpful about the overhang.
+    # Clipped to the tile rather than fitted into it: the render target is
+    # already 64 square, and the explicit clip is what keeps the fit from
+    # shrinking the panes.
     $clipAll = New-Object Windows.Media.RectangleGeometry (New-Object Windows.Rect 0, 0, 64, 64)
     $clipAll.Freeze()
     $outer = New-Object Windows.Media.DrawingGroup
@@ -930,7 +711,7 @@ function New-WDIconDrawing {
 }
 
 function New-WDIconRender {
-    <#  One frame, rendered to a bitmap.  #>
+    # One frame, rendered to a bitmap.
     param($Drawing, [int]$Size)
     $vis = New-Object Windows.Media.DrawingVisual
     # HighQuality on the visual, or the logo bitmaps are point-sampled on the
@@ -948,7 +729,7 @@ function New-WDIconRender {
 }
 
 function New-WDIconPng {
-    <#  One frame, as the bytes of a PNG.  #>
+    # One frame, as the bytes of a PNG.
     param($Drawing, [int]$Size)
     $enc = New-Object Windows.Media.Imaging.PngBitmapEncoder
     $enc.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create((New-WDIconRender $Drawing $Size)))
@@ -958,21 +739,9 @@ function New-WDIconPng {
 }
 
 function New-WDIconDib {
-    <#  One frame as a 32-bit DIB - the format an .ico entry has carried since
-        1985, and the reason the taskbar button was blank.
-
-        PNG-compressed frames inside an .ico are only guaranteed at 256x256.
-        Every modern DECODER reads them at any size, which is why WPF drew this
-        icon correctly everywhere in the self test and in the title bar - and
-        the shell's own icon path does not, so the taskbar had a live button
-        with nothing on it. Small frames are DIBs now and only 256 stays PNG,
-        which is the conventional layout and the safe one.
-
-        The header claims double the real height: an icon DIB is an XOR image
-        with an AND mask stacked under it. The mask is left at zero because a
-        32-bit frame carries its own alpha, but it has to be there and it has
-        to be the right size, or every reader mis-measures the frame that
-        follows.  #>
+    # One frame as a 32-bit DIB - the format an .ico entry has carried since
+    # 1985, and the reason the taskbar button was blank. Modern decoders read
+    # PNG at any size; the shell's classic path does not.
     param($Drawing, [int]$Size)
     $rtb = New-WDIconRender $Drawing $Size
     $conv = New-Object Windows.Media.Imaging.FormatConvertedBitmap `
@@ -1001,15 +770,7 @@ function New-WDIconDib {
 }
 
 function New-WDIconBytes {
-    <#  A complete .ico in memory: DIB frames up to 128, PNG at 256.
-
-        This file used to be PNG at every size, on the reasoning that the
-        256-only rule is a Vista-era one. Every decoder does read them - which
-        is exactly what made it hard to see - but the SHELL does not, and the
-        taskbar button came up blank while the title bar and every test were
-        fine. Real frames at real sizes still matter: the shell asks for 16px
-        for the title bar and 24-32px for the taskbar, and one big frame scaled
-        down is visibly softer than a frame drawn at that size.  #>
+    # A complete .ico in memory: DIB frames up to 128, PNG at 256.
     param([string]$Theme = '')
     $sizes = @(16, 20, 24, 32, 48, 64, 128, 256)
     $full = New-WDIconDrawing 'full' $Theme
@@ -1047,23 +808,21 @@ function New-WDIconBytes {
     foreach ($p in $pngs) { $bw.Write($p) }
     $bw.Flush()
     # Leading comma: returned bare, the pipeline unrolls this into forty-three
-    # thousand boxed objects and the caller gets an Object[] from a function
-    # called ...Bytes. It still works - every consumer coerces - which is what
-    # makes it worth pinning down here. Callers assign; nothing wraps this in
-    # @(), which is the form the comma would break.
+    # thousand boxed objects and a function called ...Bytes hands back an
+    # Object[].
     ,$ms.ToArray()
 }
 
-# Cached per theme, not once. The icon follows the palette now, so a session
-# that switches theme wants both and neither should cost a rebuild twice.
+# Cached per theme, not once: the icon follows the palette, so a session that
+# switches wants both.
 $script:WDAppIcon  = @{}
 $script:WDIconData = @{}
 $script:WDAumidSet = $false
 
 function Get-WDIconThemeKey {
-    <#  Whatever the caller said, reduced to 'dark' or 'light'. One place, so
-        the two caches and the drawing cannot disagree about what an empty
-        string means.  #>
+    # Whatever the caller said, reduced to 'dark' or 'light'. One place, so the
+    # two caches and the drawing cannot disagree about what an empty string
+    # means.
     param([string]$Theme = '')
     if ($Theme -eq 'light' -or $Theme -eq 'dark') { return $Theme }
     if ([bool](Get-WDPalette).Dark) { return 'dark' }
@@ -1071,41 +830,17 @@ function Get-WDIconThemeKey {
 }
 
 function Set-WDTaskbarIdentity {
-    <#
-        Make the taskbar button wear this icon rather than PowerShell's. SETTING
-        Window.Icon IS NOT ENOUGH, and the failure looks like the icon
-        half-working: title bar right, taskbar wrong.
-
-        A taskbar button is grouped by AppUserModelID, and a process that sets no
-        explicit one is given an id derived from its executable - so the shell
-        finds the Start menu shortcut targeting powershell.exe and draws THAT
-        shortcut's icon. The window icon is never consulted.
-
-        An explicit id nothing has a shortcut for leaves the shell nothing to
-        match, so it falls back to the window icon - which is correct, and is
-        what a machine with no shortcut installed gets. Where one HAS been
-        installed, Tools\Install-WDShortcut.ps1 stamps it with this same id and
-        the shell resolves the button to that shortcut instead: same icon, and
-        the pin and jump list attach to this application rather than to the host.
-
-        THE ID COMES FROM WD.Core so the two halves cannot disagree - a shortcut
-        stamped with one string and a process announcing another is two identities
-        that look like one. See the identity note there.
-
-        MUST RUN BEFORE THE FIRST WINDOW EXISTS - after that the button keeps what
-        it was given. Best effort; a taskbar icon is not worth failing a launch
-        over. Does not disturb the guard notice's toast, which passes its own
-        AUMID to CreateToastNotifier explicitly.
-    #>
+    # Setting Window.Icon is not enough: a taskbar button is grouped by
+    # AppUserModelID, and a process that sets none is given one derived from its
+    # executable - so the shell draws the PowerShell shortcut's icon and never
+    # consults Window.Icon.
     param([string]$Id = (Get-WDAppUserModelId))
     if ($script:WDAumidSet) { return }
     $script:WDAumidSet = $true
     try {
-        # [WD.Native] rather than a TaskbarId type of its own: this is the last
-        # thing before the splash goes up, and a csc invocation here is 400 ms
-        # of blank screen. WD.Core starts that compile in the background as the
-        # modules load, so by now it is almost always finished. See the native
-        # note at the top of WD.Core.psm1.
+        # [WD.Native] rather than a type of its own: this is the last thing
+        # before the splash goes up, and a csc invocation here is 400 ms of
+        # blank screen.
         if (-not (Use-WDNative)) {
             Write-WDLog 'Could not build the taskbar identity helper; the taskbar will show the host icon.' -Level Warn
             return
@@ -1117,14 +852,8 @@ function Set-WDTaskbarIdentity {
 }
 
 function Get-WDAppIconBytes {
-    <#  The .ico as bytes, built once.
-
-        This is what crosses a thread boundary, and the distinction is
-        load-bearing rather than tidy - see Get-WDAppIcon. Returns null if the
-        drawing failed, so a caller can tell "no icon" from "empty array".
-
-        The leading comma is the usual one: a byte[] returned bare is unrolled
-        by the pipeline into thirty thousand objects. Callers assign.  #>
+    # The .ico as bytes, built once. Bytes rather than a frame, because a
+    # decoded frame cannot cross a thread.
     param([string]$Theme = '')
     $key = Get-WDIconThemeKey $Theme
     if (-not $script:WDIconData.ContainsKey($key)) {
@@ -1138,17 +867,8 @@ function Get-WDAppIconBytes {
 }
 
 function Get-WDAppIcon {
-    <#  The window icon for THIS thread, or null if anything at all went wrong
-        - an icon is never worth failing a launch over.
-
-        Frozen, and that is still not enough to hand it to another thread.
-        A BitmapFrame holds a reference to the BitmapDecoder that produced it;
-        a decoder is a DispatcherObject and belongs to the thread that built
-        it, and Freeze() on the frame does not freeze the decoder. WPF reads
-        .Decoder.Frames to pick the best size when a window's handle is
-        created, so a foreign frame ASSIGNS fine and throws "the calling
-        thread cannot access this object" at Show(). Anything on another
-        runspace takes Get-WDAppIconBytes and decodes for itself.  #>
+    # The window icon for this thread, or null if anything went wrong - an icon
+    # is never worth failing a launch over.
     param([string]$Theme = '')
     $key = Get-WDIconThemeKey $Theme
     if ($script:WDAppIcon.ContainsKey($key)) { return $script:WDAppIcon[$key] }
@@ -1159,10 +879,8 @@ function Get-WDAppIcon {
         $dec = New-Object Windows.Media.Imaging.IconBitmapDecoder `
                    $ms, ([Windows.Media.Imaging.BitmapCreateOptions]::None),
                    ([Windows.Media.Imaging.BitmapCacheOption]::OnLoad)
-        # Hand back a middling frame rather than the first. WPF picks the
-        # best-matching frame off this one's Decoder when it can, and when it
-        # cannot, 32px is the size it most often wants anyway - where the
-        # 16px frame would have to be scaled up.
+        # Hand back a middling frame rather than the first: WPF picks the
+        # best-matching frame off this one's Decoder when it can.
         $pick = $dec.Frames[0]
         foreach ($f in $dec.Frames) { if ($f.PixelWidth -eq 32) { $pick = $f } }
         if ($pick.CanFreeze) { $pick.Freeze() }
@@ -1174,16 +892,10 @@ function Get-WDAppIcon {
     $script:WDAppIcon[$key]
 }
 
-# How wide a vertical scrollbar is here: 16px of hit area carrying a 5.5px mark
-# (see WdVBarTemplate). Named because something outside the XAML needs the same
-# number - Compare's pinned header must reserve exactly the gutter its cards lose
-# to the bar, or every card sits that difference from its own heading. Asking
-# SystemParameters instead put them 5.8px out.
-#
-# THE XAML CARRIES THE LITERAL AND THIS IS THE COPY, because a here-string cannot
-# read a variable. [7] measures the ARRANGED bar against this, which is the only
-# check that catches the two drifting: a setter reads back correctly while the bar
-# arranges at the theme's MinWidth instead.
+# How wide a vertical scrollbar is here: 16px of hit area carrying a 5.5px mark.
+# Named because the Compare header reserves the same gutter, and asking
+# SystemParameters gives the system's 17.33 rather than the one this window
+# uses.
 $script:WDVBarWidth = 16
 
 $script:Xaml = @'
@@ -2836,58 +2548,40 @@ function Show-WDWindow {
         [Parameter(Mandatory)][string]$ModulePath,
         [Parameter(Mandatory)][string]$ManifestPath,
         $Scan,
-        # id -> @{Present; Bytes; Blind}, from Get-WDItemPresence. Absent means
-        # no opinion about anything, which is what -NoScan produces.
+        # id -> @{Present; Bytes; Blind}. Absent means no opinion about
+        # anything, which is what -NoScan produces.
         $Presence,
         [string[]]$PreSelected,
         [int]$SelfTestSeconds = 0,
         $Splash,
         [string]$Theme,
         $UiState,
-        # A finished run's folder. The window opens on the run page showing that
-        # run rather than on the mode screen - see $replayRun.
+        # A finished run's folder: the window opens on the run page showing that
+        # run rather than on the mode screen.
         [string]$ShowRun = ''
     )
     if (-not $UiState) { $UiState = Get-WDUiState }
     if (-not $Theme)   { $Theme = [string]$UiState.theme }
 
-    # What the scan already enumerated, handed to Test-WDItemApplies so it can
-    # answer its third question - whether an item's packages are ones Windows
-    # refuses to remove. Null under -NoScan, which is fine: without it the
-    # question falls back to guards alone, which is the answer this page gave
-    # before and is never wrong, only less complete.
+    # What the scan enumerated, so Test-WDItemApplies can answer its third
+    # question - whether an item's packages are ones Windows refuses to remove.
     $machineInv = $null
     if ($Scan) { $machineInv = $Scan.Inventory }
 
     # The item list's most expensive question - 2,599 ms across the manifest -
-    # moved off the UI thread, where it was asked one row at a time inside the
-    # build the whole deferral mechanism exists to keep short.
-    #
-    # Its OWN runspace, not the scan's, because the main thread WAITS on that one:
-    # 2.6s added there is 2.6s added to the launch, where here it runs underneath
-    # the mode screen being read.
-    #
-    # A MAP THAT IS NOT READY IS NOT A PROBLEM. $alreadySatisfied asks the map and
-    # falls through to the machine, so a row built before its answer arrives is
-    # correct and merely slower. Nothing waits on it.
+    # moved off the UI thread. An id missing from the map is asked the old way,
+    # so it cannot be wrong.
     $satisfiedJob = Start-WDSatisfiedScan -ModulePath $ModulePath -Categories $Categories `
                                           -Inventory $machineInv -Profile $Profile
     $satisfiedMap = $(if ($satisfiedJob) { $satisfiedJob.Map } else { @{} })
 
-    # Building the rows is the visible part of the wait, and every one of those
-    # seconds is spent on this thread with the dispatcher blocked - which is why
-    # the splash appeared to freeze on whatever it last said. $say both updates
-    # the words and pumps a frame, so the animation keeps moving and the wait
-    # reads as work rather than as a hang.
+    # Building the rows is the visible part of the wait, and every second is
+    # spent on this thread with the dispatcher blocked.
     $buildClock = [Diagnostics.Stopwatch]::StartNew()
-    # There is one build per run now, so progress has one place to go: the
-    # splash. It used to have two, because a theme switch built the whole page
-    # again inside the open window and drove the busy overlay while it did.
+    # One build per run now, so progress has one place to go: the splash.
     $steps = @{ Done = 0; Total = 24 }
-    # Where the build's seconds actually go. Kept in rather than measured once
-    # and thrown away: this is the number any future attempt at making startup
-    # faster has to move, and guessing at it is how the last round of "obvious"
-    # optimizations went to the wrong place.
+    # Where the build's seconds go. Kept in rather than measured once and thrown
+    # away.
     $phaseMs = [ordered]@{}
     $phaseAt = [Diagnostics.Stopwatch]::StartNew()
     $phaseNow = @{ Name = 'start' }
@@ -2903,13 +2597,9 @@ function Show-WDWindow {
         & $say 'Building the interface' 'Window and theme'
 
     $pal   = Get-WDPalette -Theme $Theme
-    # Kept by hex string, and frozen. A BrushConverter is a new object and a
-    # string parse per call, and the callers are not all one-offs at build time:
-    # $paintPresetButton runs on every card on the Compare page, every time that
-    # page is drawn, and asked for the same half-dozen inks each pass. Frozen
-    # because these are shared across hundreds of elements and never change -
-    # freezing is what makes sharing one brush between them cheaper than making
-    # each their own rather than merely equivalent.
+    # Kept by hex string, and frozen: a BrushConverter is a new object and a
+    # string parse per call, and $paintPresetButton calls it once per card per
+    # build.
     $brushOf = @{}
     $Brush = {
         param($hex)
@@ -2924,30 +2614,21 @@ function Show-WDWindow {
     }
 
     # The page is loaded into a throwaway window and then moved: every element
-    # is looked up here, while the XAML namescope still exists, and after that
-    # $ui is the only route to any of them. That is what lets the whole page be
-    # rebuilt inside a window that stays open, which is what a theme switch is.
+    # is looked up here while the XAML namescope still exists, and nothing calls
+    # FindName later.
     $shell = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader ([xml]$script:Xaml)))
     $win   = $shell
-    # Set before the window is ever shown, so the taskbar button and the title
-    # bar are right on the first frame rather than changing under the pointer.
+    # Set before the window is shown, so the taskbar button and the title bar
+    # are right on the first frame.
     $appIcon = Get-WDAppIcon
     if ($appIcon) { $win.Icon = $appIcon }
     # The bag the window carries across rebuilds: the overlay, the current
     # dispatcher frame, and whatever this build wants done on close.
     if (-not $win.Tag) { $win.Tag = @{} }
 
-    # ---- the theme, as resources rather than as brushes --------------------
-    #
-    # Every palette colour is also a keyed brush, and everything that can take a
-    # DynamicResource takes one. That is what makes a theme switch a matter of
-    # writing new brushes under the same keys: ~200 elements repaint and nothing
-    # is re-created, re-parented, or re-measured.
-    #
-    # MERGED INTO BOTH WINDOWS, because the page is built inside $shell and lives
-    # inside $win, and a resource reference resolves by walking UP from its
-    # element. One dictionary instance in two MergedDictionaries, so writing a
-    # value once reaches both.
+    # Every palette entry is a keyed brush and everything that carries a colour
+    # points at a key through $Ref, which is what makes a theme switch a repaint
+    # rather than a rebuild.
     $themeDict = $(if ($win.Tag.ThemeDict) { $win.Tag.ThemeDict } else { New-Object Windows.ResourceDictionary })
     $win.Tag.ThemeDict = $themeDict
     foreach ($host_ in @($shell, $win)) {
@@ -2958,38 +2639,20 @@ function Show-WDWindow {
 
     # The colours a loaded preset can wear. They must differ from each other or
     # the Compare pickers become indistinguishable, and from the five shipped
-    # modes' or a file masquerades as a mode.
-    #
-    # Two forms of one list: KEYS are what everything hands to $Ref, HEX is what
-    # $paintTheme mixes them from. There was a third copy - $presetInk, literal
-    # brushes for preset buttons, which kept the system chrome and so could not
-    # use the palette at all. The buttons are retemplated and it is gone.
-    #
-    # Eight, not four: Save > File loads what it writes, so the list grows by one
-    # every time somebody keeps a selection, and the fifth file wore the first
-    # file's colour. Declared up here because $paintTheme reads it and is a
-    # closure - see the capture rule.
+    # ones.
     $LOADED_KEYS = @('L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L7', 'L8')
     $LOADED_HEX  = @('#FF8B5CD6', '#FF14919B', '#FFC9761F', '#FFB03A78',
                      '#FF3F7BD8', '#FF2E9E58', '#FFB5442F', '#FF7A6BC4')
     $paintTheme = {
         param($P)
-        # THIS LIST IS THE DICTIONARY. A palette entry that is not named here
-        # does not become a brush, and $Ref throws on a key it cannot find - so
-        # adding a colour to Get-WDPalette and forgetting this line does not
-        # produce a wrong colour, it takes the window down during the build,
-        # before anything is on screen. That is what happened to 'Obstruct'.
-        # [7] now sweeps every literal key handed to $Ref against this list.
+        # This list is the dictionary. A palette entry not named here does not
+        # become a brush, and $Ref throws on a key it cannot find.
         foreach ($k in @('Bg','Panel','Card','CardSel','Text','Sub','Line','Accent',
                          'Ok','Warn','Bad','Muted','Obstruct','RowHover','ScrollThumb','ScrollThumbHover',
                          'BtnBg','BtnBorder','BtnTint','FieldBg',
-                         # The filled run button - Preview, and Apply one page
-                         # later. Its own three entries rather than Accent plus a
-                         # guessed ink, because the two palettes need OPPOSITE
-                         # answers: the dark accent is light enough to want dark
-                         # text on it and the light one is dark enough to want
-                         # white, and a single hardcoded pair would be unreadable
-                         # in one of them.
+                         # The filled run button. Its own three entries rather
+                         # than Accent plus a guess, because the ink that reads
+                         # on it differs between palettes.
                          'GoBg','GoText','GoBorder',
                          'T1','T2','T3','T4')) {
             $themeDict["Wd$k"] = & $Brush ([string]$P[$k])
@@ -2998,56 +2661,28 @@ function Show-WDWindow {
         foreach ($k in @('Warn','Bad','Ok','Accent')) {
             $themeDict["Wd${k}Tint"] = & $Brush ('#33' + ([string]$P[$k]).Substring(3))
         }
-        # Half-strength preset colors, for edges that have to say which mode a
-        # card belongs to without four saturated stripes down a page of eighty
-        # of them. Same hue, so the card still reads as its mode's; half the
-        # alpha, so the page reads as a list rather than as a warning. The full
-        # color arrives under the pointer, exactly as it does on the Details
-        # chip - which is where this treatment was settled.
+        # Half-strength preset colours, for edges that say which mode a card
+        # belongs to without four saturated stripes down a page of eighty.
         foreach ($k in @('T1','T2','T3','T4','Sub')) {
             $themeDict["Wd${k}Soft"] = & $Brush ('#80' + ([string]$P[$k]).Substring(3))
         }
-        # The colors a preset loaded from a file can wear, with the same
-        # half-strength companions the five shipped ones get. Not palette
-        # entries because they are not part of the theme's vocabulary - nothing
-        # in the application refers to them until somebody loads a file - and
-        # they do not vary with the palette, for the same reason the preset
-        # button inks do not: they sit on system chrome as often as on the page.
-        #
-        # Read from $LOADED_HEX rather than listed again here. The list used to
-        # be written out twice, once in each place, and two copies of a palette
-        # is one palette and a bug waiting for somebody to extend the other one.
+        # The colours a preset loaded from a file can wear, with the same
+        # half-strength companions.
         for ($li = 0; $li -lt $LOADED_HEX.Count; $li++) {
             $themeDict["WdL$($li + 1)"]     = & $Brush $LOADED_HEX[$li]
             $themeDict["WdL$($li + 1)Soft"] = & $Brush ('#80' + $LOADED_HEX[$li].Substring(3))
         }
         # Not a palette entry: transparent to look at, still hit-testable, which
-        # is what every clickable row and heading needs as its resting state.
+        # is what every clickable row and heading needs at rest.
         $themeDict['WdFlat'] = & $Brush '#01000000'
     }.GetNewClosure()
     & $paintTheme $pal
-    # Published before anything can raise a dialog. The owner is set later, once
-    # $win exists; without a dictionary Show-WDMessage falls back to the real
-    # MessageBox rather than failing, which is what the first-run theme chooser
-    # gets since it opens before any of this.
+    # Published before anything can raise a dialog. Without a dictionary
+    # Show-WDMessage falls back to the real MessageBox.
     Set-WDDialogHost -Dictionary $themeDict -Owner $win -Dark ([bool]$pal.Dark)
 
-    # An exception inside a routed event handler is caught by NOTHING: WPF hands
+    # An exception inside a routed event handler is caught by nothing: WPF hands
     # it to the dispatcher, which has nowhere to put it, and the process ends.
-    # From outside that is "it closed when I clicked something" - no dialog, and
-    # a log file that stops mid-line, indistinguishable from a machine switched
-    # off.
-    #
-    # Marking it handled keeps the window up, which is the right trade for a page
-    # of independent controls: one broken handler costs the gesture, not the
-    # session. A run in progress is on its own runspace and carries on.
-    #
-    # NOT a way of ignoring faults - every one is logged with its type, inner
-    # exceptions, and script stack. Format-WDException is deliberately not used:
-    # it takes an ErrorRecord and answers a dictionary, and what arrives here is
-    # a bare Exception. The real cause is usually two levels down, since
-    # PowerShell wraps a handler's failure in a MethodInvocationException, so the
-    # chain is walked rather than only its head.
     $faultText = {
         param($Ex)
         $parts = New-Object System.Collections.Generic.List[string]
@@ -3066,7 +2701,7 @@ function Show-WDWindow {
     }.GetNewClosure()
 
     # Shown once per distinct message: a handler that throws on MouseMove throws
-    # hundreds of times, and a dialog per throw is worse than the crash was.
+    # hundreds of times, and a dialog per throw is worse than the crash.
     $seenFault = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
     $win.Dispatcher.Add_UnhandledException({
         $e = $args[1]
@@ -3084,34 +2719,26 @@ function Show-WDWindow {
                     "`r`n`r`n$text"), 'That did not work', 'OK', 'Error') | Out-Null
             }
         } catch {
-            # The handler itself must never be the thing that takes the window
-            # down, so a failure to report is swallowed rather than rethrown.
+            # The handler must never be the thing that takes the window down, so
+            # a failure to report is swallowed.
             $e.Handled = $true
         }
     }.GetNewClosure())
 
     # Points a dependency property at a theme key instead of assigning a brush.
-    #
-    # The property identifier has to come from the element's own type - a
-    # TextBlock's Foreground is TextElement's property, a Control's is Control's,
-    # and handing over the wrong one throws - so it is looked up by name and
-    # cached per type, which is about thirty lookups for the whole page.
     $dpCache = @{}
     $Ref = {
         param($El, [string]$Prop, [string]$Key)
         if (-not $El) { return }
         # A DynamicResource that resolves to nothing is silent: the property
-        # keeps its default, which for Foreground is black on a dark page and
-        # for Background is nothing at all. A typo in a key would therefore ship
-        # looking like a rendering bug somewhere else entirely.
+        # keeps its default, which for Foreground is black on a dark page.
         if (-not $themeDict.Contains("Wd$Key")) { throw "no theme key 'Wd$Key'" }
         $t  = $El.GetType()
         $ck = $t.FullName + '|' + $Prop
         $dp = $dpCache[$ck]
         if (-not $dp) {
-            # System.ComponentModel, not System.Windows - it lives in
-            # WindowsBase but under the ComponentModel namespace, and the short
-            # form PowerShell would guess at does not exist.
+            # System.ComponentModel, not System.Windows: it lives in WindowsBase
+            # under the ComponentModel namespace.
             $dpd = [System.ComponentModel.DependencyPropertyDescriptor]::FromName($Prop, $t, $t)
             if (-not $dpd) { throw "'$Prop' is not a dependency property on $($t.Name)" }
             $dp = $dpd.DependencyProperty
@@ -3171,7 +2798,6 @@ function Show-WDWindow {
         $ui[$n] = $shell.FindName($n)
     }
 
-    # ---- theming ----------------------------------------------------------
     & $Ref $ui.Root 'Background' 'Bg'
     foreach ($b in @('HeaderBar','AdvToolbar','AdvFooter','RunFooter','RevertFooter','CompareFooter','UaFooter','NowCard')) {
         & $Ref $ui[$b] 'Background' 'Panel'
@@ -3181,29 +2807,20 @@ function Show-WDWindow {
         & $Ref $ui[$b] 'BorderBrush' 'Line'
         & $Ref $ui[$b] 'Background' 'Panel'
     }
-    # The home page opens with the drive bar down. What a run does to this disk
-    # is a consequence of choices made on the debloat pages, and two of the three
-    # things offered here are not about this machine at all - one builds a file
-    # for another computer. It comes back with the page it belongs to.
+    # The home page opens with the drive bar down: what a run does to this disk
+    # is not a question two of the three cards are about.
     $ui.StorageBlock.Visibility = 'Collapsed'
     & $Ref $ui.CmpPickBar 'Background' 'CardSel'
     & $Ref $ui.CmpPickBar 'BorderBrush' 'Accent'
     & $Ref $ui.TxtCmpPick 'Foreground' 'Text'
     & $Ref $ui.TxtHomeHead 'Foreground' 'Text'
     & $Ref $ui.TxtModesTitle 'Foreground' 'Text'
-    # The past-runs page's own two lines. Declared in the XAML and then painted
-    # by nothing, which on the dark palette is black on near-black - WPF's
-    # default Foreground, and the trap this file warns about twice.
+    # Declared in the XAML and then painted by nothing, which on the dark
+    # palette is black on near-black.
     & $Ref $ui.TxtRevHomeTitle 'Foreground' 'Text'
     & $Ref $ui.TxtRevHomeHint  'Foreground' 'Sub'
-    # THE RUN BUTTONS, FILLED. Preview is the only way into an apply, and it was
-    # the same gray as Back and Compare beside it, a shade bolder at most. Filled
-    # in the accent it reads as the one control that does something to the machine.
-    # Apply Now gets the same face rather than a louder one - two filled buttons in
-    # one flow, each the end of its own page.
-    #
-    # Through $Ref like everything else, so a theme switch repaints them instead of
-    # leaving the last palette's blue behind.
+    # The run buttons, filled. Preview is the only way into an apply and was the
+    # same gray as Back beside it.
     foreach ($b in @('BtnModePreview', 'BtnPreview', 'BtnApplyNow')) {
         if (-not $ui[$b]) { continue }
         & $Ref $ui[$b] 'Background'  'GoBg'
@@ -3215,10 +2832,8 @@ function Show-WDWindow {
     & $Ref $ui.TxtLoadHint 'Foreground' 'Sub'
     foreach ($t in @('HeaderTitle','TxtPhase','LblPreset','LblFilter','LblOrder','LblSort','LblGroups','TxtCompareTally',
                      'LblCmpGroup','LblCmpSearch','TxtLoadHead','TxtModeHead')) {
-        # 'Text', not 'Accent'. These two headings needed to stand out from the
-        # muted hint lines around them, which bold and a point of size already do
-        # - and Accent is what this application paints things you can ACT on, so
-        # a blue heading over a grid of buttons would read as another control.
+        # 'Text', not 'Accent': bold and a point of size already separate these
+        # from the muted lines around them.
         & $Ref $ui[$t] 'Foreground' 'Text'
     }
     foreach ($t in @('HeaderMachine','TxtCurrent','TxtRunNote','TxtRevertTally',
@@ -3227,32 +2842,23 @@ function Show-WDWindow {
         & $Ref $ui[$t] 'Foreground' 'Sub'
     }
     # The paragraph the mode screen opens with, and the first thing anybody
-    # reads. It was Sub at 14.5 - the same gray as a footnote - on a page whose
-    # only other prose is inside the five columns, so it read as small print
-    # above the thing it explains. Text at 16 with the line height opened up.
+    # reads.
     & $Ref $ui.TxtModeHint 'Foreground' 'Text'
     & $Ref $ui.TxtNowItem 'Foreground' 'Text'
     & $Ref $ui.TxtRunEstimate 'Foreground' 'Text'
     & $Ref $ui.ChkDownloads 'Foreground' 'Text'
     & $Ref $ui.ChkOwnership 'Foreground' 'Text'
-    # Both of those are why a CheckBox has to be painted at all: it keeps the
-    # system foreground unless it is given one, and the system foreground is
-    # black. "Selected first" shipped that way on the dark toolbar - present,
-    # sized and clickable, with an invisible label - and it is now the second
-    # entry of the Sort drop-down rather than a control of its own.
+    # A CheckBox keeps the system foreground unless given one, and the system
+    # foreground is black.
     & $Ref $ui.RunOptHead 'Foreground' 'Text'
     $ui.RunOptGlyph.Text        = Get-WDCategoryGlyph -Id 'runopts'
     & $Ref $ui.RunOptRule 'Background' 'Line'
-    # The hairline between the Compare rail and the comparison, the twin of the
-    # setup page's. Painted here rather than in the XAML because the color is a
-    # theme key, and a literal brush in markup is the one thing on that page
-    # that would not follow the theme.
+    # Painted here rather than in the XAML because the colour is a palette key.
     & $Ref $ui.CmpIndexRule 'Background' 'Line'
     & $Ref $ui.DiskCap 'Foreground' 'Sub'
     & $Ref $ui.DiskNote 'Foreground' 'Sub'
-    # The index rail's hairline scrollbar reads this by name from its template.
     # Frozen and put in as a resource rather than assigned, because a thumb
-    # inside a ControlTemplate has no element this code can reach.
+    # inside a template cannot be reached any other way.
 
     & $Ref $ui.DiskBarFrame 'BorderBrush' 'Line'
     # Never assigned a brush, so the run page's progress bar rendered the system
@@ -3260,9 +2866,8 @@ function Show-WDWindow {
     & $Ref $ui.BarOverall 'Foreground' 'Accent'
     & $Ref $ui.BarOverall 'Background' 'Card'
     & $Ref $ui.BarOverall 'BorderBrush' 'Line'
-    # Free space is the frame showing through, so it needs a color of its own
-    # rather than the panel it sits on - otherwise a nearly empty drive reads as
-    # a bar that has not been drawn yet.
+    # Free space is the frame showing through, so it needs a colour of its own
+    # rather than the panel it sits on.
     & $Ref $ui.DiskBarFrame 'Background' 'Bg'
     foreach ($t in @('LblOwnership','LblDownloads','LblAccounts')) {
         & $Ref $ui[$t] 'Foreground' 'Sub'
@@ -3272,29 +2877,22 @@ function Show-WDWindow {
     $ui.AddGlyph.Text    = Get-WDCategoryGlyph -Id 'section-add'
     $ui.ExtraGlyph.Text  = Get-WDCategoryGlyph -Id 'extras'
     $ui.AppOptGlyph.Text = Get-WDCategoryGlyph -Id 'runopts'
-    # Glyphs are text, and text with no Foreground is black. Most of these are
-    # color emoji, which ignore it - but the ones Windows draws monochrome
-    # (the shield, the eye, the cog) were black on the dark page, beside a
-    # heading painted properly. Whichever way a glyph renders, it now matches
-    # the heading it introduces.
+    # Glyphs are text, and text with no Foreground is black. Most are colour
+    # emoji that ignore it - the monochrome ones do not.
     foreach ($t in @('RemoveGlyph','AddGlyph','ExtraGlyph','AppOptGlyph','RunOptGlyph')) {
         & $Ref $ui[$t] 'Foreground' 'Text'
     }
     foreach ($t in @('RemoveHead','AddHead','ExtraHead','AppOptHead')) { & $Ref $ui[$t] 'Foreground' 'Text' }
     & $Ref $ui.AppOptRule 'Background' 'Line'
     & $Ref $ui.AppOptRule2 'Background' 'Line'
-    # Painted explicitly, both of them. There is no implicit CheckBox style in
-    # this window, and WPF's default Foreground is the system control-text
-    # brush, which is black whatever Windows is set to - so a box left unpainted
-    # is an invisible label on the dark palette. That is the defect that shipped
-    # "Selected first" unreadable and the revert filter's boxes after it.
+    # There is no implicit CheckBox style in this window, and WPF's default
+    # Foreground is the system control-text brush.
     & $Ref $ui.ChkDetailPopup 'Foreground' 'Text'
     & $Ref $ui.DetailPopupNote 'Foreground' 'Sub'
     & $Ref $ui.ChkTerse 'Foreground' 'Text'
     & $Ref $ui.TerseNote 'Foreground' 'Sub'
     # The section boxes carry the eye down the page, so their edge is the only
-    # thing on it drawn in the accent color. The application box is not a
-    # section and stays on the plain line color.
+    # thing drawn in the accent colour.
     foreach ($b in @('RemoveBox','AddBox','ExtraBox')) {
         & $Ref $ui[$b] 'BorderBrush' 'Line'
         & $Ref $ui[$b] 'Background' 'Panel'
@@ -3307,9 +2905,8 @@ function Show-WDWindow {
         & $Ref $ui[$c] 'Foreground' 'Text'
         & $Ref $ui[$c] 'BorderBrush' 'Line'
     }
-    # No Foreground override on BtnFilter: buttons everywhere here keep the
-    # system chrome, which is light with dark text. Painting the dark theme's
-    # text color onto one leaves white on white.
+    # No Foreground override on BtnFilter: buttons keep the system chrome, which
+    # is light with dark text.
     & $Ref $ui.TxtFilterCount 'Foreground' 'Sub'
     & $Ref $ui.FilterCard 'Background' 'Card'
     & $Ref $ui.FilterCard 'BorderBrush' 'Line'
@@ -3324,44 +2921,26 @@ function Show-WDWindow {
         $Profile.ComputerName, $Profile.Caption, $Profile.DisplayVersion, $Profile.Build, $Profile.UBR,
         $Profile.Manufacturer, $Profile.Model, $(if ($Profile.IsPortable) { 'laptop' } else { 'desktop' })
 
-    # Custom is a GUI-only column. It is not a rung on the engine's ladder - it
-    # is the escape hatch that selects nothing and hands straight over to
-    # Advanced, so it never goes near Get-WDPresetInfo.
+    # Custom is a GUI-only column, not a rung on the engine's ladder.
     $ladderNames = @(Get-WDPresetNames)
-    # Theme keys, not colors. Everything downstream hands these to $Ref, so a
-    # preset's color follows the palette without this table being rebuilt.
+    # Theme keys, not colours, so a preset's colour follows the palette without
+    # this table being rebuilt.
     $presetColor = @{ Conservative = 'T1'; Balanced = 'T2'; Aggressive = 'T3'; Extreme = 'T4'
                       Custom = 'Sub' }
     # Custom at the far left, opposite Extreme: one selects nothing, the other
     # everything, and the ladder runs between them.
-    #
-    # A List, not an array, because this is no longer only the five the manifest
-    # ships - a loaded file joins it and is then a preset everywhere: a column in
-    # Advanced's picker, a side in Compare, a thing Reset preset can reset. The one
-    # place it is deliberately NOT equal is the mode grid, where five columns of
-    # authored prose are a comparison somebody wrote and a file has nothing to say.
     $presetNames = New-Object System.Collections.Generic.List[string]
     foreach ($n in @(@('Custom') + $ladderNames)) { $null = $presetNames.Add([string]$n) }
     # The shipped five, kept separately: the mode grid builds its columns from
-    # this rather than from $presetNames, so loading a file never widens it.
+    # this, so loading a file never widens it.
     $shippedNames = @(@('Custom') + $ladderNames)
-    # name -> @{ Path; Ids; Ink }. Ordered so the box lists them in the order
-    # they were loaded and the settings file round-trips in the same order.
+    # name -> @{ Path; Ids; Ink }. Ordered so the box lists them as loaded and
+    # the settings file round-trips in the same order.
     $loadedPresets = [ordered]@{}
 
-    # Which presets have actually been RUN here. name -> @{ When; Folder; Ids }.
-    # Persisted, unlike an override: an edit is something somebody might not have
-    # meant to keep, a run is a thing that happened.
-    #
-    # THE IDS ARE THE FEATURE. A marker saying "applied on Tuesday" over a preset
-    # since edited reads as a promise that the machine matches the card. But set
-    # equality is the WRONG test - an apply makes things stop applying, so ids
-    # legitimately drop out. See $appliedNote for the three-way question.
-    #
-    # The $null guard: @($null) is a one-element array holding nothing, so a
-    # settings object with no applied map would put one entry keyed by the empty
-    # string into the table - a preset called "" that never matches and never
-    # goes away, and nothing raises an error about it.
+    # Which presets have actually been run here. Persisted, unlike an override:
+    # an edit is something somebody might not have meant to keep, and a run is a
+    # thing that happened.
     $appliedRuns = @{}
     if ($UiState -and $UiState.PSObject.Properties['applied'] -and $UiState.applied) {
         foreach ($p in @($UiState.applied.PSObject.Properties)) {
@@ -3378,41 +2957,18 @@ function Show-WDWindow {
         }
     }
 
-    # How much of each recorded run is still in place, keyed by run id, for the
-    # marker on the mode cards. A run that has since been fully reverted has not
-    # been applied to this machine any more, and a card still saying so is the
-    # same lie as a preview promising changes that are already made.
-    #
-    # IT IS A CACHE THE PAINT READS AND NEVER FILLS. Get-WDUndoStatus measures
-    # 1,795 ms cold and 834 ms warm on a 435-change run, and $appliedNote is
-    # called once per column every time the grid is painted - on the startup
-    # path. So a paint that wants an answer it has not got puts the run id in
-    # $appliedWant and prints the plain line; an idle timer answers one per tick
-    # and repaints. The card is never wrong, only briefly less specific.
+    # How much of each recorded run is still in place, for the marker on the
+    # mode cards. Read from here only - the answer costs about 1.8 seconds and
+    # this paints on the startup path.
     $appliedState = @{}
     $appliedWant  = New-Object System.Collections.Generic.List[string]
     # $LOADED_KEYS and $LOADED_HEX are declared above $paintTheme, which reads
     # them and cannot see anything written below itself.
-    #
-    # TWO NAME CAPS, because a preset name is drawn in two very different places.
-    #
-    #   $PRESET_NAME_MAX (12)   the tight ones - the Advanced toolbar, both
-    #                           Compare pickers, "Add to X" on every card. Twelve
-    #                           because Conservative is exactly twelve, so a file
-    #                           never draws wider than a mode.
-    #   $PRESET_NAME_HOME (50)  the identity, and what the home screen prints,
-    #                           where a loaded selection gets a row the width of
-    #                           the window with nothing to push aside.
-    #
-    # The identity is the LONG one; the short form is derived ONCE at registration
-    # and looked up by $shortPreset. Derived per display site, two files differing
-    # only past the twelfth character would draw identical buttons - derived once,
-    # the collision loop below can keep both lengths unique.
     $PRESET_NAME_MAX  = 12
     $PRESET_NAME_HOME = 50
-    # name -> what to print where twelve characters is the budget. Shipped names
-    # are all within it and are absent from this table, which is what makes
-    # $shortPreset a no-op for them.
+    # name -> what to print where twelve characters is the budget. Derived once
+    # at registration, so two files differing past the twelfth character cannot
+    # draw identical buttons.
     $shortOf = @{}
     $shortPreset = {
         param([string]$Name)
@@ -3420,16 +2976,9 @@ function Show-WDWindow {
         [string]$Name
     }.GetNewClosure()
     # Custom selects no removals, but it is not a mode that does nothing - the
-    # run's own guarantees still apply, and this is the only column with room to
-    # say what they are. It used to be a line under the whole grid; it reads
-    # better here, where it is the answer to "what do I get if I pick nothing".
+    # run's own guarantees still apply.
     $presetBlurb = @{ Custom = 'Creates a system restore point, tracks every change and writes a rollback script, blocks all Windows reinstall attempts, and produces a lookup file for common issues and how to revert individual options yourself.' }
-    # No longer "Extreme removes software you installed yourself" - it does not,
-    # since the scanner's finds went to tier 0. What is left to warn about is
-    # what the mode's own blurb says: the rungs above Aggressive are risky in
-    # kind, not just in quantity.
-    # "Open Advanced" until the item list stopped being reached that way. It
-    # names the control on the card instead, in the words printed on it.
+    # What is left to warn about since the scanner's finds went to tier 0.
     $extremeWarning = 'Extreme switches off services and features other software quietly depends on. Use Show all options on the card and read the list before you preview it.'
     foreach ($p in $ladderNames) { $presetBlurb[$p] = (Get-WDPresetInfo -Name $p).Blurb }
 
@@ -3438,45 +2987,34 @@ function Show-WDWindow {
             Queue = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
             Cancel = $false; Done = $false; Error = $null
             # Set by the Skip button, read by the engine between the actions of
-            # the item currently running.
+            # the item running.
             SkipItem = $false
             # The background runspace has its own session, so its run folder and
-            # its reboot flag are not the ones this thread can see. Both are
-            # published here at the end of the run - "Open log folder" used to
-            # open the UI thread's empty folder instead.
-            # Where "What this run did" landed, so Save a copy has something to
-            # copy without guessing at a path.
-            # And where the desktop copy of the whole lot went, so the closing
-            # notice can name it rather than describing where it ought to be.
+            # reboot flag are not the ones this thread can see.
             RunDir = $null; Reboot = $false; NotesFile = $null; RestartCount = 0; KeepDir = $null
             # Whether the rollback script actually got written. It is an option
-            # with a row now, so the closing notice has to ask rather than tell.
+            # with a row now, so the closing notice has to ask.
             HasUndo = $false
             # 'ok', 'failed', or empty for a run that never tried.
             RestorePoint = '' })
         Runspace = $null; Shell = $null; Handle = $null
         Preview = $true; Mode = 'debloat'
         Counts = @{ Removed=0; Changed=0; AlreadySet=0; NotPresent=0; Skipped=0; Obstruction=0; Partial=0; Blocked=0; Failed=0 }
-        # What the bottom card is showing, and since when. NowSince is $null
-        # whenever nothing is running, which is what stops the clock.
+        # NowSince is $null whenever nothing is running, which is what stops the
+        # clock.
         NowItem = ''
         NowSince = $null
-        # How far the run actually got. Kept because the progress bar is driven
-        # to its maximum the moment a run ends, whether it finished or was
-        # stopped, so by the time anyone asks it no longer knows the difference.
+        # How far the run actually got. The progress bar is driven to its
+        # maximum the moment a run ends, whether it finished or was cancelled.
         RunIndex = 0
         RunTotal = 0
-        # What the simulation called the thing it simulated. Apply is only
-        # reachable through a simulation, so this is what its confirmation has to
-        # echo - it used to name whichever mode button was last pressed, which
-        # told somebody applying 47 hand-picked items that they were applying
-        # Balanced.
+        # Apply is only reachable through a simulation, so this is what its
+        # confirmation has to name.
         RunLabel = ''
-        # A finished apply has to be acknowledged before the window will close
-        # without asking. A simulation changed nothing, so it needs no such thing.
+        # A finished apply has to be acknowledged before the window closes
+        # without asking; a simulation changed nothing.
         Acknowledged = $true
-        # Whatever mode was open last time. A saved name that is no longer a
-        # mode falls back rather than throwing.
+        # A saved name that is no longer a mode falls back rather than throwing.
         Preset = $(if ([string]$UiState.preset -and [string]$UiState.preset -in @(Get-WDPresetNames) + @('Custom')) { [string]$UiState.preset } else { 'Balanced' })
         Modified = $false
         Suspend = $false
@@ -3484,149 +3022,81 @@ function Show-WDWindow {
         Excluded = New-Object System.Collections.Generic.HashSet[string]
         EstimateSeconds = 0.0
         ReturnPage = 'PageModes'
-        # How the Advanced list is arranged. Two settings because they are two
-        # questions - see $GROUPS and $SORTS.
-        #
-        # CATEGORY BY DEFAULT. It briefly opened on Bloat rating, on the reasoning
-        # that the rating answers "why would I remove this" - true of the question
-        # and wrong about the page. Category is the only grouping that lays out all
-        # three sections, so it is the only one where the page holds everything the
-        # run will do. Every other grouping is a lens onto part of it, and a lens
-        # is a thing to reach for rather than a thing to be handed.
-        #
-        # 'sort' was the single old setting and held what is now the grouping, so
-        # it is read as one: a preference saved by the last release opens on the
-        # arrangement it was left in rather than being silently reset.
+        # Two settings because they are two questions - see $GROUPS and $SORTS.
         Group = $(if ([string]$UiState.group) { [string]$UiState.group }
                   elseif ([string]$UiState.sort) { [string]$UiState.sort } else { 'category' })
         Sort  = $(if ([string]$UiState.sortBy) { [string]$UiState.sortBy } else { 'name' })
-        # Whether Details opens over the page rather than under the row. In-line
-        # is the shipped answer; this is for somebody who would rather the list
-        # never moved. A preference like the theme, so it persists.
+        # In-line is the shipped answer; this is for somebody who would rather
+        # have the dialog.
         DetailPopup = [bool](Get-Prop $UiState 'detailPopup' $false)
-        # Non-verbose takes away the text that is the same on every visit: the
-        # standing descriptions, the cost lines, and the status words. Details
-        # still shows all of it for the one option somebody is asking about, which
-        # is what makes it the right default rather than a power-user setting.
-        #
-        # NON-VERBOSE IS THE DEFAULT, and the setting is stored the other way up -
-        # 'verbose', absent meaning off - so that a file written before the
-        # default changed cannot quietly hold somebody at the old behaviour. The
-        # old 'terse' key is simply not read any more; a stale one in the file is
-        # dropped on the first save.
-        #
-        # Terse stays the internal flag because every page reads it, and inverting
-        # forty call sites to say the same thing is churn for nothing.
+        # Non-verbose takes away the text that is the same on every visit.
+        # Stored as the positive of the non-default, so a file written before
+        # the default changed cannot hold somebody at the old behaviour.
         Terse = -not [bool](Get-Prop $UiState 'verbose' $false)
-        # Replacement browsers offered when Edge removal is selected, and
-        # offered on their own terms in Add. A list: one browser being installed
-        # is no reason not to install a second. Asked is separate from Choices so
-        # declining is remembered and the question is not asked again until Edge
-        # removal is deselected and reselected.
+        # A list: one browser being installed is no reason not to install a
+        # second.
         BrowserChoices = @()
-        # What the user picked, as opposed to what is queued right now. A mode
-        # that leaves Edge alone clears the queued choice, and without this the
-        # pick was lost: coming back to a mode that removes Edge reset it to the
-        # default. $null means nobody has ever picked; an empty list means
-        # somebody chose None, which is an answer and not the absence of one.
+        # What the user picked, as opposed to what is queued now. $null means
+        # nobody has ever picked; an empty list means they chose None.
         BrowserPreferred = $null
-        # Null means "nobody has said", so the preset decides. Once the user
-        # ticks or unticks the box themselves their answer outlives every
-        # later preset switch - the same split as BrowserPreferred above.
+        # Null means nobody has said, so the preset decides. Once the user ticks
+        # the box their answer outlives every mode switch.
         OwnershipChoice = $null
-        # True while the queued browser is the one this picked on the user's
-        # behalf because Edge removal was selected. A deliberate pick clears it,
-        # and that is the difference between a choice that survives Edge being
-        # deselected and one that was only ever a consequence of it.
+        # True while the queued browser is the one picked on the user's behalf.
+        # A deliberate pick clears it, and only an automatic one is withdrawn.
         BrowserAuto   = $false
         BrowserAsked  = $false
         SyncingBrowser = $false
-        # Which Edge extensions were ticked because Edge removal was ticked, and
-        # what that tick was last seen to be. Recorded rather than recomputed:
-        # backing out of Edge removal must take back exactly the rows this put
-        # there and leave alone any the operator ticked themselves.
+        # Which Edge extensions were ticked because Edge removal was, so backing
+        # out withdraws exactly those and leaves a deliberate tick alone.
         EdgeExtAuto = @()
         EdgeExtOn   = $false
-        # True only while a whole mode is being written into the tick boxes. See
-        # $applyPresetToChecks: it is how a gesture is told from a state.
+        # True only while a whole mode is being written into the tick boxes: how
+        # a gesture is told from a state.
         PresetSweep = $false
         # The interaction harness drives real routed events, and a modal dialog
         # would block the dispatcher with nobody to dismiss it.
         NoPrompts = ($SelfTestSeconds -gt 0)
         # True while the page is being assembled. Every route into $syncBrowser
-        # is a gesture except the opening restore, which replays the saved mode
-        # into a window nobody is looking at yet - and a modal raised there
-        # lands on top of the splash, before the application appears at all.
-        # Cleared where the build ends.
+        # is a gesture except the opening restore.
         Building = $true
-        # Which palette is in force. Switching it repaints in place, so there is
-        # no second build and nothing for the caller to be told about.
+        # Switching repaints in place, so there is no second build and nothing
+        # for the caller to be told about.
         Theme   = $(if ($pal.Dark) { 'dark' } else { 'light' })
-        # Whether the current order keeps the Remove / Add / Extras split. Read
-        # by the filter, which decides which section boxes are on screen.
+        # Whether the current order keeps the Remove / Add / Extras split.
         Sectioned = $true
-        # Ids of rows the current grouping does not lay out at all - see
-        # $GROUP_OMITS. Not the same as filtered away, and the difference
-        # matters twice: the filter has to collapse them so no count includes a
-        # row that is not on the page, and the "N selected, not shown" chip has
-        # to ignore them, because its offer is to drop the filters and it has
-        # no filter to drop. The rail says what is missing instead.
+        # Ids the current grouping does not lay out at all - not the same as
+        # filtered away, and every count on the page has to know the difference.
         OffPage = New-Object System.Collections.Generic.HashSet[string]
-        # How long each kind of update is held back, in days. The manifest
-        # carries a default for every caller that has no GUI; this is what the
-        # box beside the row collects, and it crosses to the engine on
-        # run-options.json.
+        # The manifest carries a default for every caller with no GUI; this is
+        # what the strips collect.
         DeferDays = @{
             Feature = $(if ([int](Get-Prop $UiState 'deferFeatureDays' 0) -gt 0) { [int]$UiState.deferFeatureDays } else { 365 })
             Quality = $(if ([int](Get-Prop $UiState 'deferQualityDays' 0) -gt 0) { [int]$UiState.deferQualityDays } else { 7 })
         }
-        # Which installed browser "Change default browser" should hand the web
-        # associations to. Remembered between sessions, because it is a
-        # preference about the machine rather than about this run - but always
-        # re-checked against what is actually here, since a saved name may name
-        # a browser since uninstalled.
+        # Remembered between sessions, because it is a decision rather than a
+        # state of the machine.
         DefaultBrowser = [string](Get-Prop $UiState 'defaultBrowser' '')
-        # There was an IssuesFolder here, and a folder picker beside the row to
-        # set it. Both went when every apply started leaving a folder on the
-        # desktop holding the issues document, the rollback script, and the
-        # rest together: the want the picker served was "put it where I will
-        # find it", and that is answered better by always putting everything in
-        # one named place than by asking one file where it would like to go.
+        # There was an IssuesFolder here and a folder picker beside the row.
+        # Both went when every apply started leaving a folder on the desktop.
     }
     $EDGE_ID    = 'remove-edge'
     $BROWSER_ID = 'install-browser'
 
-    # Every preset button, wherever it appears, carries its mode's color on its
-    # edge. Buttons keep the system chrome otherwise - painting their Foreground
-    # puts the dark theme's light text onto a light button.
-    # A Button keeps the system chrome, whose face is a light gray in BOTH
-    # themes, so the dark palette's preset colors were being drawn on a surface
-    # they were never chosen against - 1.40:1 to 2.19:1, i.e. the selection
-    # signal was invisible and only the border width and the bold text carried
-    # it. The ink here is always the light-theme variant, which is what those
-    # colors were picked to read against a pale background.
+    # Every preset button carries its mode's colour on its edge. Buttons keep
+    # the system chrome otherwise, and painting their Foreground gives white on
+    # white.
     $paintPresetButton = {
         param($Button, [string]$Name, [bool]$Selected)
-        # A theme key through $Ref, like everything else that carries a color.
-        #
-        # This used to be a real brush out of a $presetInk table holding the
-        # LIGHT palette's variants in both themes, because a Button kept the
-        # system chrome - a light gray face in either palette - and the dark
-        # palette's preset colors measured 1.40:1 to 2.19:1 against it. That was
-        # the right answer to the wrong problem: the buttons are retemplated now
-        # and their face is WdBtnBg, so each palette's own colors are back to
-        # being read against the surface they were chosen for, and the border
-        # follows a theme switch on its own rather than needing a repaint.
+        # A theme key through $Ref, like everything else that carries a colour.
         $key = [string]$presetColor[$Name]
         if (-not $key) { $key = 'Sub' }
         & $Ref $Button 'BorderBrush' $key
         $Button.BorderThickness = New-Object Windows.Thickness $(if ($Selected) { 2 } else { 1 })
         $Button.FontWeight      = if ($Selected) { 'Bold' } else { 'Normal' }
     }
-    # name -> the Button on the Advanced toolbar. Filled by $buildAdvPresetRow
-    # rather than written out, because the row is no longer a fixed five: a
-    # selection loaded from a file gets a button here like any other preset, and
-    # a table written by hand would have been the one place that did not know.
+    # Filled by $buildAdvPresetRow rather than written out, because the row is
+    # no longer a fixed five.
     $advPresetButtons = [ordered]@{}
     $paintAdvancedPresets = {
         foreach ($n in @($advPresetButtons.Keys)) {
@@ -3634,77 +3104,44 @@ function Show-WDWindow {
         }
     }
     # The mode grid is built - and $selectPreset runs - long before the Advanced
-    # rows exist, so the browser coupling cannot be a plain variable here: it
-    # would be captured as null. A hashtable filled in later is seen by
-    # everything holding the same reference.
+    # rows exist, so the coupling cannot be a plain variable.
     $browserSync = @{ Fn = $null }
-    # The box of loaded selections under the mode columns. $selectPreset has to
-    # repaint it - picking a loaded selection has to look like picking a mode -
-    # and it runs long before that box is built.
+    # $selectPreset has to repaint the box of loaded selections, and it is
+    # written above it.
     $loadedRef   = @{ Paint = $null }
-    # Same problem, same shape: the category headings are built before
-    # $updateTally exists, and their click handlers need to call it.
+    # The category headings are built before $updateTally exists, and their
+    # click handlers call it.
     $updateTallyRef = @{ Fn = $null }
-    # And again for the Advanced undo stack: every row and every heading is
-    # built before the stack exists, and all of them record into it.
+    # Every row and heading is built before the undo stack exists, and all of
+    # them record into it.
     $advUndoRef = @{ Push = $null }
-    # And once more for the filter, which dependent rows have to re-run when
-    # their parent is ticked but which is built long after they are.
+    # Dependent rows re-run the filter when their parent is ticked, and it is
+    # built long after they are.
     $applyFilterRef = @{ Fn = $null }
-    # Declared up here with its sibling because $paintStorage needs to reach it
-    # and is defined long before the ordering block that fills it in.
+    # $paintStorage needs to reach it and is defined long before the ordering
+    # block that fills it in.
     $applyOrderRef  = @{ Fn = $null }
-    # The index rail. Built after the category rows exist, but repainted from
-    # $paintFilterCount and invalidated from $applyOrder, both of which are
-    # declared further down - hence a holder rather than a variable.
+    # Built after the category rows exist, but repainted and invalidated from
+    # code above it.
     $indexRef       = @{ Paint = $null; Invalidate = $null; Spy = $null }
     # The rail is rebuilt per order, from $applyOrder, which is declared far
-    # below the rail itself - hence a holder rather than a variable.
+    # below the rail itself.
     $railRef        = @{ Rebuild = $null }
-    # Each group heading's own Reset, and the two halves it needs. Fn decides
-    # which of them are on screen and Do is what the button does; both are
-    # written far below $makeGroupBlock, which is where the buttons are built, so
-    # they are reached through a holder like the tally and the rail are.
-    #
-    # Fn is called from $updateTally, which already knows which rows differ from
-    # the mode - so a heading learns it has been changed from the same two sets
-    # that mark the rows, rather than from a diff of its own per group per tick.
+    # Fn decides which resets are on screen and Do is what the button does; both
+    # are written below every heading that needs them.
     $groupResetRef  = @{ Fn = $null; Do = $null }
-    # Throwing away one grouping's cached partition. Only the storage grouping
-    # ever needs it, and it needs it badly: its two bands are decided by sizes
-    # that arrive half a minute after the window opens, so the partition built
-    # at layout time has every clean-up in Inconsequential reading as zero.
-    # Re-running $applyOrder alone did not fix it - $buildGroups returns early
-    # on a cached grouping - and simply removing the cache entry throws, because
-    # the rows are still parented to blocks nothing can reach any more. So this
-    # lets the old blocks go before it drops them.
+    # Only the storage grouping needs its cached partition thrown away, and it
+    # needs it badly: its two bands are decided by sizes that arrive later.
     $groupsRef      = @{ Drop = $null }
-    # The per-row strips follow a tick, and $updateTally - which is what a tick
-    # runs - is declared above the strips themselves.
+    # The per-row strips follow a tick, and $updateTally is declared above the
+    # strips themselves.
     $syncStripsRef  = @{ Fn = $null }
 
-    # ---- the bloat bands ---------------------------------------------------
-    #
-    # Above the mode page because three pages read them: the mode columns' bullet
-    # lists, and the grouping and filter on both Advanced and Compare.
-    #
-    # A LIST OF PAIRS, NOT AN ORDERED HASHTABLE, and that is not style.
-    # OrderedDictionary's indexer has both Item[object] and Item[int] overloads,
-    # so $BLOAT_BAND[1] with an integer key binds to POSITION 1 - every band came
-    # out labelled with its neighbour's name and the ratings read as shuffled. A
-    # plain hashtable indexes correctly and has no order, and the order is the
-    # point.
-    #
-    # BAND 6 IS NOT A SIXTH DEGREE OF BLOAT, which is why it sits last of the
-    # rated bands rather than after 5 on a scale. It is the toolkit saying it
-    # thinks you should leave this alone: the Print Spooler is how printing works,
-    # removing the Store takes the only supported way to update a Store app with
-    # it. Each is a genuine removal somebody genuinely wants, so none can be
-    # dropped - and each is regretted often enough that filing it under
-    # "Sometimes useful" beside Game DVR is not honest.
-    #
-    # The last two entries are NOT ratings - they are exceptions to rating rather
-    # than degrees of it, which is why the filter offers $BLOAT_RATED instead.
+    # 1 data collection, 2 advertises, 3 software you did not ask for, 4 legacy
+    # and leftovers, 5 sometimes useful, 6 not recommended.
+    # A list of pairs, not an ordered dictionary: that has both an Item[object]
+    # and an Item[int] indexer, so an integer key binds to the position overload
+    # and every band comes out labelled with its neighbour's name.
     $BLOAT_BAND = @(
         @{ B = 1;      N = 'Data collection' }
         @{ B = 2;      N = 'Advertising and nagging' }
@@ -3716,67 +3153,43 @@ function Show-WDWindow {
         @{ B = 'apps'; N = 'Your apps' }
     )
     $BLOAT_RATED = @($BLOAT_BAND | Where-Object { $_.B -is [int] -and [int]$_.B -gt 0 })
-    # Band key to band name, for anything that has a row and wants the label.
     # Keys are stringified because one of them is 'apps' and the rest are
-    # numbers, and a hashtable keyed by a mix of the two answers [int]3 and
-    # '3' differently - which is exactly the kind of quiet miss the [ordered]
-    # trap above produced.
+    # numbers.
     $bandName = @{}
     foreach ($band in $BLOAT_BAND) { $bandName[[string]$band.B] = [string]$band.N }
     # Software the scan found rather than the manifest naming, minus the vendor
-    # bucket - preinstalled OEM software is exactly "software you did not ask
-    # for" and belongs in that band. What is left is the operator's own: things
-    # they installed, the services those things run, and their browser
-    # extensions. None of it was ever rated, and rating it from a name would be
-    # a guess printed as a fact, so it gets a band of its own at the bottom.
+    # bucket - preinstalled OEM software is exactly what band 3 says.
     $YOUR_APP_CATS = @('discovered-apps', 'discovered-services', 'discovered-extensions')
-    # Which bloat band a row belongs to. Not simply $Row.Bloat: a rating answers
-    # "how bad is it that this is here", and that question does not apply to an
-    # install, to the run's own switches, or to software the operator chose.
+    # Not simply $Row.Bloat: a rating answers "how bad is it that this is here",
+    # which does not apply to a run switch or to software the operator chose.
     $bandOf = {
         param($Row)
-        # Band 6 outranks every other rule, because it is the one band that is
-        # not a rating: "we think you should not do this" is as true of a run
-        # switch as of a removal, and "Make this run permanent" is exactly the
-        # kind of thing it exists to warn about.
+        # Band 6 outranks every other rule: "we think you should not do this" is
+        # as true of a run switch as of a removal.
         if ([int]$Row.Bloat -eq 6) { return 6 }
         if ($YOUR_APP_CATS -contains [string]$Row.CatId) { return 'apps' }
-        # Extras otherwise collapses into the unrated band rather than
-        # scattering through the ratings on whatever number it happened to
-        # carry. Add is not here at all: see $GROUP_OMITS, which drops it from
-        # the grouping rather than filing it.
+        # Extras otherwise scatters through the ratings on whatever number it
+        # was authored with.
         if ([string]$Row.Section -ne 'remove') { return 0 }
         [int]$Row.Bloat
     }.GetNewClosure()
 
-    # ======================================================= MODES PAGE ====
-    #
-    # Preset membership is computed here rather than read straight from the
-    # engine, because the user can edit a preset in Advanced and save it back.
-    # Everything downstream - column counts, category rows, the Preview
-    # selection - reads through $effectiveIds so an edited preset stays edited.
+    # Everything the manifest carries, applicable or not, so a loaded selection
+    # can tell "dropped because it does not apply" from "not in this build".
     $catIdByName = @{}
     foreach ($c in $Categories) { $catIdByName[[string]$c.name] = [string]$c.id }
 
     $applicable = New-Object System.Collections.Generic.List[psobject]
-    # Every item the manifest carries, applicable or not, so a selection loaded
-    # from a file can be told the difference between "that option was dropped
-    # because this machine is a Dell" and "there is no such option any more".
-    # Built here rather than reusing $itemById, which is assembled with the
-    # Compare page's lookups four thousand lines below and would be captured as
-    # $null by $registerLoaded.
     $allItems = @{}
     foreach ($cat in $Categories) {
         foreach ($item in @($cat.items)) {
             $allItems[[string]$item.id] = $item
-            # The replacement browser is never listed or counted on its own. It
+            # The replacement browser is never listed or counted on its own: it
             # is chosen under Edge removal and threaded into the run from there.
             if ([string]$item.id -eq $BROWSER_ID) { continue }
             if (-not (Test-WDItemApplies -Item $item -Profile $Profile -Inventory $machineInv)) { continue }
             # Risk and presence ride along so the mode columns can say what a
-            # mode actually costs without a second walk of the manifest.
-            # Presence is three-valued and $null means "no opinion" - counting
-            # that as absent would understate every mode.
+            # mode costs without a second walk of the manifest.
             $pres = $null
             if ($Presence -and $Presence.ContainsKey([string]$item.id)) {
                 $pres = $Presence[[string]$item.id].Present
@@ -3784,8 +3197,8 @@ function Show-WDWindow {
             $applicable.Add([pscustomobject]@{
                 Id = [string]$item.id; Tier = (Get-WDItemTier -Item $item); Cat = [string]$cat.name
                 Risk = [int](Get-Prop $item 'risk' 0); Present = $pres
-                # The three fields $bandOf reads, so the mode columns can count
-                # by band without a second walk of the manifest.
+                # The three fields $bandOf reads, so the columns can count by
+                # band without a second walk.
                 Band = [string](& $bandOf ([pscustomobject]@{
                     Bloat   = [int](Get-Prop $item 'bloat' 0)
                     CatId   = [string]$cat.id
@@ -3794,34 +3207,17 @@ function Show-WDWindow {
         }
     }
 
-    # Every extension the scan found belonging to Edge.
-    #
-    # Removing the browser leaves them as folders in a profile nothing reads any
-    # more, so ticking Edge removal ticks these with it. Read off the item's own
-    # `browser` field rather than off the "(Edge)" the name ends with: the name
-    # is a label, and a label is the wrong thing to make a decision out of.
-    #
-    # This is a coupling on the Advanced page and deliberately nowhere else. A
-    # mode must not decide about somebody's extensions - that is why they are
-    # tier 0 - and a tick that appears on screen where the operator can see and
-    # clear it is a different act from an id threaded silently into a run
-    # started from the mode screen.
+    # Every extension the scan found belonging to Edge. Read off the discovered
+    # item's own browser field rather than the "(Edge)" its name ends with - a
+    # label is the wrong thing to decide from, and it is the half that gets
+    # translated.
     $edgeExtIds = New-Object System.Collections.Generic.List[string]
     foreach ($item in $allItems.Values) {
         if ([string](Get-Prop $item 'browser' '') -eq 'Edge') { $edgeExtIds.Add([string]$item.id) }
     }
 
-    # What each column lists. AUTHORED, and briefly generated instead - the
-    # mode's items counted into the bloat bands, band and count per line. That
-    # form cannot drift, which is a real advantage and answers the wrong question:
-    # a count of each kind says how MUCH of each a mode takes and never what any
-    # of it IS, and "what does this actually remove" is the only reason anybody
-    # reads the mode screen.
-    #
-    # An authored line also carries two things no generated one can: one line
-    # standing for a dozen entries ("All pre-installed games"), and a consequence
-    # beside the change ("reverted to right ctrl"). The cost is that these have to
-    # be re-read whenever items move between tiers - nothing checks them.
+    # Authored, and briefly generated instead: a count per bloat band says how
+    # much of each kind a mode takes and never says what any of it is.
     $presetBullets = @{
         Custom       = @()
         Conservative = @(
@@ -3875,11 +3271,8 @@ function Show-WDWindow {
         $catTotals[$a.Cat]++
     }
 
-    # Custom's base is empty of removals by definition, with two exceptions: the
-    # rollback script and the common issues lookup. Its column promises both,
-    # and a run that removes nothing is exactly the run whose operator is
-    # picking items by hand and will most want a record of what each of them
-    # did. They cost milliseconds and both are still rows that can be unticked.
+    # Custom's base is empty of removals by definition, with two exceptions its
+    # own column promises.
     $CUSTOM_BASE = @('rollback-script', 'issues-doc')
     $baseIds = @{ Custom = @($applicable | Where-Object { $CUSTOM_BASE -contains $_.Id } | ForEach-Object { $_.Id }) }
     foreach ($p in $ladderNames) {
@@ -3887,53 +3280,26 @@ function Show-WDWindow {
         $baseIds[$p] = @($applicable | Where-Object { $_.Tier -ne 0 -and $_.Tier -le $lvl } | ForEach-Object { $_.Id })
     }
 
-    # Three layers, and the difference between the top two is the whole point of
-    # the Save button:
-    #
-    #   $baseIds        what the manifest ships - never written to.
-    #   $presetDefaults what this person has redefined the preset to be. Taken
-    #                   back only by Restore factory defaults.
-    #   $overrides      edits on top of that, still marked as edits. Taken back
-    #                   by Reset preset, and by closing the window.
-    #
-    # $presetDefaults is written to the settings file and read back from it.
-    # $overrides is neither: an unsaved edit lasts as long as the window it was
-    # made in. Starting empty rather than reading and discarding, so a settings
-    # file written by an older build - which did save them - does not hand back
-    # a set of edits on the next launch and then drop them on the one after.
+    # Three layers: $baseIds is what the manifest ships, $presetDefaults is what
+    # this person redefined the preset to be, $overrides is edits on top still
+    # shown as edits.
     $presetDefaults = ConvertTo-WDPresetMap $UiState.presetDefaults
     $overrides      = @{}
 
-    # ---- selections loaded from a file -------------------------------------
-    #
-    # A saved selection BECOMES A PRESET: into $presetNames, a $baseIds entry like
-    # any other, so it is selectable in Advanced, comparable in Compare, editable,
-    # and resettable. Everything downstream reads through $effectiveIds and knows
-    # nothing about where a preset came from.
-    #
-    # Two things it does not inherit. No column on the mode grid - those five are
-    # authored prose and a file has none. And it is filtered to ids this machine
-    # has been offered, since a selection saved on a Lenovo names OEM items a Dell
-    # never heard of; what was dropped is REPORTED, because "42 of 48" is the
-    # difference between a file that half-applied and one that was half about
-    # another computer.
-    #
-    # These tables are declared HERE rather than beside the code that uses them,
-    # because GetNewClosure() captures the local scope as it stands and $dropLoaded
-    # has to clear them - declared three thousand lines below, they arrive $null.
+    # Declared here rather than beside the code that uses them, because
+    # GetNewClosure captures the local scope as it stands and $dropLoaded clears
+    # these.
     $counts      = @{}
     $totDelta    = @{}       # preset -> @{ Added; Removed }, edits only
     $consequence = @{}       # preset -> @{ Risky; Here }
-    # The two sides of the Compare page. Same reason for the same move: a preset
+    # The two sides of the Compare page, up here for the same reason: a preset
     # can be taken away while it is sitting in one of these slots.
     $cmpState = @{ A = 'Balanced'; B = 'Aggressive' }
 
     $knownIds = New-WDStringSet @($applicable | ForEach-Object { [string]$_.Id })
 
-    # Why one id in a saved selection did not survive the load, in a sentence.
-    # Dropping them and printing "42 of 48" was always handled; what was missing
-    # is the half anybody can act on - WHICH ones and WHY. Four answers, in the
-    # order worth checking.
+    # Why one id in a saved selection did not survive the load, in a sentence:
+    # an id is not something anybody can look up.
     $dropReason = {
         param([string]$Id)
         $item = $allItems[$Id]
@@ -3947,9 +3313,7 @@ function Show-WDWindow {
         try { $why = [string](Get-WDGuardFailure -Guards @(Get-Prop $item 'guards' @()) -Profile $Profile) } catch { }
         if ($why) { return $why }
         # Item guards passed, so the block is one level down: every action is
-        # either guarded off or inert on this machine. Test-WDItemApplies is the
-        # authority on that and does not report which, so this says the true
-        # thing it can say rather than guessing at the action.
+        # either guarded off or inert on this machine.
         return 'nothing it does can run on this machine - every step it takes is either for a different edition of Windows or aimed at something Windows will not let go of here'
     }.GetNewClosure()
 
@@ -3960,8 +3324,7 @@ function Show-WDWindow {
         if ($null -eq $raw) { return $null }
         $keep = @(@($raw) | Where-Object { $knownIds.Contains([string]$_) } | ForEach-Object { [string]$_ })
         # Recorded at the moment they are dropped, with the name the file cannot
-        # carry: an id is not something anybody can look up, and half of these
-        # ids no longer resolve to anything at all.
+        # carry.
         $lost = New-Object System.Collections.Generic.List[psobject]
         foreach ($id in @(@($raw) | ForEach-Object { [string]$_ })) {
             if ($knownIds.Contains($id)) { continue }
@@ -3971,24 +3334,22 @@ function Show-WDWindow {
         }
         $stem = [IO.Path]::GetFileNameWithoutExtension($Path)
         if (-not $stem) { $stem = 'Loaded selection' }
-        # One truncation helper, used at both budgets. The ellipsis counts
-        # toward the cap, so the cap is what the name occupies.
+        # One truncation helper at both budgets. The ellipsis counts toward the
+        # cap, so the cap is what the name occupies.
         $cut = {
             param([string]$S, [int]$Max)
             if ($S.Length -le $Max) { return $S }
             $S.Substring(0, $Max - 1).TrimEnd() + [char]0x2026
         }
         $stem = [string](& $cut $stem $PRESET_NAME_HOME)
-        # Names are the key everywhere - $baseIds, $overrides, the settings file
-        # - so a second file with the same stem cannot quietly replace the
-        # first. Suffixed rather than refused: two saves called "laptop" from
-        # two folders is an ordinary thing to have.
+        # Names are the key everywhere, so a second file with the same stem
+        # cannot quietly replace the first.
         $name = $stem
         $n = 2
         while ($presetNames -contains $name) {
             if ($loadedPresets.Contains($name) -and [string]$loadedPresets[$name].Path -eq $Path) { return $name }
-            # The suffix counts toward the cap as well, so the stem gives way to
-            # it rather than the pair being allowed to run over.
+            # The suffix counts toward the cap, so the stem gives way to it
+            # rather than the pair running over.
             $suffix = " ($n)"
             $head = $stem
             if ($head.Length + $suffix.Length -gt $PRESET_NAME_HOME) {
@@ -3996,11 +3357,9 @@ function Show-WDWindow {
             }
             $name = "$head$suffix"; $n++
         }
-        # And the short form, made unique among the short forms rather than
-        # against $presetNames. Two files called "laptop-before-the-reinstall"
-        # and "laptop-before-the-rebuild" are distinct at fifty and identical at
-        # twelve, and two Advanced buttons reading the same thing is worse than
-        # one of them reading "laptop-b (2)".
+        # And the short form is made unique among the short forms, not against
+        # $presetNames: two files differing past the twelfth character would
+        # draw identical buttons.
         $short = [string](& $cut $stem $PRESET_NAME_MAX)
         $taken = @(@($shortOf.Values) + @($shippedNames))
         $m = 2
@@ -4013,12 +3372,9 @@ function Show-WDWindow {
             $short = "$head$suffix"; $m++
         }
         $shortOf[$name] = $short
-        # The first ink nobody is wearing, not the count modulo the palette.
-        # Modulo counted how many are loaded, which is not the same question:
-        # load four and remove the second, and the next file takes ink 4 again
-        # while ink 2 sits free - two presets in the same color with a spare
-        # going begging. Falls back to the modulo only once every ink is taken,
-        # which is the honest answer when there is no distinct color left.
+        # The first ink nobody is wearing, not the count modulo the palette:
+        # modulo counts how many are loaded, which is a different question once
+        # one has been removed.
         $inUse = @($loadedPresets.Keys | ForEach-Object { [string]$loadedPresets[$_].Key })
         $ink = -1
         for ($i = 0; $i -lt $LOADED_KEYS.Count; $i++) {
@@ -4040,58 +3396,37 @@ function Show-WDWindow {
         $loadedPresets.Remove($Name)
         $baseIds.Remove($Name)
         # Freed as well as forgotten: the short form is unique among the short
-        # forms, so leaving a removed preset's in the table would make the next
-        # file with the same first twelve characters take a "(2)" it has no
-        # sibling to be distinguished from.
+        # forms, so leaving a removed preset's in the table gives the next file
+        # a "(2)" with no sibling.
         if ($shortOf.ContainsKey($Name)) { $shortOf.Remove($Name) }
         $presetColor.Remove($Name)
         $null = $presetNames.Remove($Name)
-        # Its edits go with it. Keeping them would mean loading the same file
-        # again tomorrow silently arrived pre-edited by a session nobody
-        # remembers.
+        # Its edits go with it: loading the same file tomorrow must not arrive
+        # pre-edited by a session nobody remembers.
         foreach ($h in @($presetDefaults, $overrides)) { if ($h.ContainsKey($Name)) { $h.Remove($Name) } }
-        # So does the record of it having been run. A file taken off the list
-        # is not on the list, and re-loading it tomorrow must not arrive with a
-        # green line claiming a run whose selection nothing can now check.
+        # So does the record of it having been run.
         if ($appliedRuns.ContainsKey($Name)) { $appliedRuns.Remove($Name) }
-        # And every derived table that was keyed on it. $recount clears two of
-        # these and rebuilds them from $presetNames, but $counts is filled in
-        # place and would have kept the entry forever.
+        # And every derived table keyed on it. $recount rebuilds two of these
+        # from $presetNames, but $counts is filled in place and would keep the
+        # entry for ever.
         foreach ($h in @($counts, $consequence, $totDelta)) { if ($h.ContainsKey($Name)) { $h.Remove($Name) } }
-        # ---- nothing is left pointing at it ---------------------------------
-        #
-        # This was an intermittent crash on Remove, and this is why it was
-        # intermittent: removing an unselected preset is harmless, while removing
-        # the SELECTED one left $state.Preset naming something in no table - and
-        # loading a file selects it on the way in, so "load it, look at it, take it
-        # off again" hit it every time.
-        #
-        # NOTHING FAILED AT THE MOMENT OF REMOVAL. It failed at whatever read the
-        # name next, which is why it looked random. Fixed here rather than in each
-        # reader: a name that is not a preset has no business surviving the call
-        # that stopped it being one.
+        # Nothing is left pointing at it: loading a file selects it on the way
+        # in, so load-look-remove hit the dangling name every time, and it
+        # failed at whatever read the name next.
         if ([string]$state.Preset -eq $Name) { $state.Preset = 'Balanced' }
         if ([string]$cmpState.A -eq $Name)   { $cmpState.A   = 'Balanced' }
         if ([string]$cmpState.B -eq $Name)   { $cmpState.B   = 'Aggressive' }
     }.GetNewClosure()
 
-    # A loaded preset saved to a different file used to become that file: it
-    # was renamed, re-pointed, and the entry for the original left the list.
-    # That is Save As, and it is the wrong shape for this screen - these
-    # presets are the files you have open, and saving a copy of one is no
-    # reason for the original to close. $saveLoadedCopy registers the copy
-    # alongside it instead, which is a plain load and needs no renaming at
-    # all, so $renameLoaded and $nameForPath went with the behavior they were
-    # written for.
+    # A loaded preset saved to a different file used to become that file -
+    # renamed, re-pointed, and the original gone from the list.
 
     foreach ($p in @($UiState.loadedPresets)) {
         if (-not [string]$p) { continue }
         $null = & $registerLoaded ([string]$p)
     }
-    # A file that has been moved or deleted since last time takes its preset
-    # with it, and the window may have been left sitting on it. Falling back
-    # rather than failing: the alternative is a page whose every count reads
-    # off a preset that is not in any of the tables.
+    # A file moved or deleted since last time takes its preset with it, and the
+    # window may have been left sitting on it.
     if ([string]$state.Preset -notin $presetNames) { $state.Preset = 'Balanced' }
 
     foreach ($h in @($presetDefaults, $overrides)) {
@@ -4104,33 +3439,8 @@ function Show-WDWindow {
         foreach ($id in $Layer[$Name].Removed) { $null = $Set.Remove($id) }
         foreach ($id in $Layer[$Name].Added)   { $null = $Set.Add($id) }
     }
-    # The preset as this person has defined it: what "Changed from preset" and
-    # every green "added" tag are measured against.
-    # ---- options that cannot both be on ------------------------------------
-    #
-    # ONE-DIRECTIONAL: When wins, Blocks goes, and Why is printed on the row that
-    # went so nobody has to work out which tick took it away. Never symmetric in
-    # practice - one of the pair is a decision about the run and the other is a
-    # consequence of it.
-    #
-    # APPLIED IN TWO PLACES, and both are needed: $syncExclusions unticks and
-    # annotates the row, and $effectiveIds drops the blocked id from the preset's
-    # own baseline - without the second, Extreme reads as "-1 removed" against a
-    # row the operator cannot touch.
-    #
-    # Two pairs today:
-    #   irreversible blocks rollback-script  Extreme selects both, and the script
-    #       cannot restore a file that skipped the Recycle Bin. Registry and
-    #       service changes still reverse, so it is not useless - but a row
-    #       promising a way back beside a row that removes it is the thing this
-    #       project exists not to do.
-    #   wu-off blocks wu-notify-first  both write AU\NoAutoUpdate and disagree.
-    #       wu-off has the higher order so it already wins at run time; this only
-    #       stops the page showing two ticks when one will not happen. Both are
-    #       tier 0, so only a person ticking both can produce the pair.
-    #
-    # A sweep of the manifest for registry values two items write differently
-    # finds exactly those two ids and nothing else.
+    # One-directional and stated as such: When wins, Blocks goes, and Why is
+    # printed on the row that went.
     $EXCLUSIONS = @(
         @{ When   = 'irreversible'
            Blocks = 'rollback-script'
@@ -4140,11 +3450,8 @@ function Show-WDWindow {
            Why    = 'Unavailable while "Turn Windows Update off completely" is selected: both set the same policy value and turning updates off runs last, so this one would be overwritten rather than applied.' }
     )
 
-    # Applied to BOTH id functions, and finding out why is the whole reason this
-    # is a helper rather than four lines inside $effectiveIds. $currentDiff
-    # measures the boxes against $defaultIds, not $effectiveIds - so with the
-    # rule on only one of them, Extreme ticked what it should and then reported
-    # "-1 removed" for a row nobody had touched and nobody could touch.
+    # Applied to both id functions: without the second, a preset selecting both
+    # halves of a pair reads as modified for a change nobody made.
     $applyExclusions = {
         param($Set)
         foreach ($x in $EXCLUSIONS) {
@@ -4168,13 +3475,6 @@ function Show-WDWindow {
     }
 
     # "Applied on ... Run folder at ...", or nothing at all.
-    #
-    # Nothing at all is the answer in two cases and they are not the same: the
-    # preset has never been run here, or it has been run and then edited. Both
-    # produce an empty string, deliberately - a marker that tried to say "you
-    # applied a different version of this on Tuesday" would be a paragraph
-    # where a card has room for a line, and the edit marks beside it already
-    # say the preset is not what it was.
     $appliedNote = {
         param([string]$name)
         if (-not $appliedRuns.ContainsKey($name)) { return '' }
@@ -4182,43 +3482,22 @@ function Show-WDWindow {
         $now = New-WDStringSet (@(& $effectiveIds $name))
         $then = New-WDStringSet (@($rec.Ids))
 
-        # Set equality was the first rule and it was wrong in the one case that
-        # matters: after a run that WORKED. A preset's ids are filtered through
-        # "does this apply to this machine", and the whole point of an apply is
-        # to make things stop applying - a removed Store package leaves its item
-        # inert, a program the scan found is not found again. On the run this
-        # was written against, five of a hundred and forty-nine dropped out that
-        # way, so the marker could never have appeared on a successful run.
-        #
-        # The question is whether the PRESET changed, not whether the machine
-        # did. So:
-        #
-        #   anything selected now that was not selected then  -> it was edited.
-        #   anything selected then and not now, which STILL APPLIES here
-        #                                                    -> it was edited.
-        #   anything selected then and not now, which no longer applies
-        #                                                    -> that is the run
-        #                                                       having worked.
+        # Set equality was the first rule and it is wrong in the one case that
+        # matters - after a run that worked. A removal makes items stop
+        # applying, so five of a hundred and forty-nine dropped out that way.
         foreach ($id in $now)  { if (-not $then.Contains($id)) { return '' } }
         foreach ($id in $then) {
             if ($now.Contains($id)) { continue }
             if ($knownIds.Contains($id)) { return '' }
         }
 
-        # Not this machine. ui-state.json lives under LOCALAPPDATA, which is
-        # local - but a roamed or restored profile carries it, and a card
-        # claiming a preset was applied to a computer it was never applied to is
-        # worse than no card. Three-valued, so only a definite mismatch is
-        # refused: every record written before identities existed answers
-        # "cannot say", and those are still that machine's in every ordinary
-        # case.
+        # ui-state.json lives under LOCALAPPDATA, but a roamed or restored
+        # profile carries it, and a card claiming a preset was applied to a
+        # computer it never touched is worse than no card.
         if ((Test-WDSameMachine $rec.Machine) -eq $false) { return '' }
 
-        # And how much of it is left. Read from the cache only - see
-        # $appliedState. A run whose changes are all back is not an application
-        # of the preset any more, so the marker goes entirely; one partly back
-        # says so, because "applied" on its own would overstate what the machine
-        # now matches.
+        # Read from the cache only: a paint that wants an answer it does not
+        # have prints the plain line and queues the run id.
         $runId = [string]$rec.Run
         $st = $null
         if ($runId) {
@@ -4227,12 +3506,12 @@ function Show-WDWindow {
         }
         $partly = $false
         if ($st -and [int]$st.Total) {
-            # Nothing left in place, and nothing that could not be asked about:
-            # this run has been undone, so there is no marker to draw.
+            # Nothing left in place and nothing that could not be asked about:
+            # this run has been undone.
             if ([int]$st.Outstanding -eq 0 -and [int]$st.Unknown -eq 0) { return '' }
-            # Some of it has been put back. Unknown does not count as reverted -
-            # it is the default profile and the things too costly to ask about,
-            # and calling those "reverted" would be a claim, not a reading.
+            # Unknown does not count as reverted - it is the default profile and
+            # the things too costly to ask about, and calling those undone would
+            # be a claim.
             if ([int]$st.Done -gt 0) { $partly = $true }
         }
 
@@ -4245,21 +3524,8 @@ function Show-WDWindow {
         $line
     }
 
-    # Called once, from the end of an apply. Preview writes nothing: a marker
-    # saying a preset was applied, put there by a simulation, is the one lie
-    # this whole page cannot afford.
-    #
-    # It records nothing unless what RAN is the preset. A run started from this
-    # preset and then narrowed - five rows excluded on the preview page - is
-    # not an application of the preset, and marking the card as though it were
-    # would put a green line on a mode the machine does not match. The one
-    # allowance is the replacement browser, which rides along on the Edge
-    # removal rather than being a change to the selection.
-    #
-    # What is stored is the PRESET'S ids, not the run's. They are equal at this
-    # instant by the test above; the difference is what the stored copy means
-    # later, which is "the definition of this preset when it was run" - and
-    # that is what the marker's condition is about.
+    # Preview writes nothing: a marker saying a preset was applied, put there by
+    # a simulation, is the one lie this cannot tell.
     $recordApplied = {
         param([string]$name, $Ran, [string]$Folder, [string]$RunId)
         if (-not $name) { return $false }
@@ -4271,8 +3537,8 @@ function Show-WDWindow {
         $appliedRuns[$name] = @{
             When    = (Get-Date).ToString('o')
             Folder  = [string]$Folder
-            # Which run, so the marker can ask later how much of it is still in
-            # place, and which machine, so it does not speak for another one.
+            # Which run, so the marker can ask how much is still in place, and
+            # which machine, so it does not speak for another one.
             Run     = [string]$RunId
             Machine = (Get-WDMachineIdentity)
             Ids     = @($want | Sort-Object -Unique)
@@ -4280,90 +3546,58 @@ function Show-WDWindow {
         $true
     }
 
-    # Declared up here, not next to the bar it feeds, because $saveUiState is
-    # called several times during preset setup and would otherwise write a null
-    # over a perfectly good cached measurement on the way past. Cache starts as
-    # whatever was on disk and is replaced only when a fresh walk finishes.
+    # Declared up here because $saveUiState is called several times during
+    # preset setup and would otherwise write a null.
     $storage = @{ Snapshot = $null; Cache = $UiState.storage; Scan = $null; Saved = $false }
-    # Declared up here for the same reason: $saveUiState runs several times
-    # during preset setup, long before the boxes it reads exist. An empty list
-    # at that point is the truthful answer - nothing has been drawn to tick.
+    # Same reason: $saveUiState runs long before the boxes it reads exist, and
+    # an empty list means "no accounts" rather than "not asked".
     $accountChecks = New-Object System.Collections.Generic.List[psobject]
-    # Emitted unrolled, no comma. Wrapping the result would make the caller's
-    # @(& $accountKeys) an array holding one array - the engine would receive a
-    # nested list and match no account at all - and every caller here wraps.
+    # Emitted unrolled, no comma: wrapping would make the caller's @(&
+    # $accountKeys) an array holding one array, and the engine would match no
+    # account at all.
     $accountKeys = {
         @($accountChecks | Where-Object { $_.Box.IsChecked } | ForEach-Object { [string]$_.Key })
     }
-    # The Compare rail's width, held here rather than read off its column when
-    # the settings file is written. $buildCompare collapses that column to zero
-    # when the page has no headings to index, and reading the live value would
-    # save "no rail" as though somebody had chosen it. The splitter writes here;
-    # nothing else does.
+    # Held here rather than read off its column: $buildCompare collapses that
+    # column to zero when there is nothing to index, and reading it live would
+    # save "no rail" as though somebody had chosen it.
     $cmpRail = @{ W = 184 }
-    # And the state of that rail's scroll spy, up here for the same reason: the
-    # splitter's handler is written a page below this and has to throw the
-    # measured offsets away when the drag changes where every heading is. The
-    # spy itself is built with the Compare page, far past both - $cmpSpyRef is
-    # the usual holder for a function that does not exist yet.
+    # Up here for the same reason: the splitter's handler is written below and
+    # has to throw the offsets away.
     $cmpSpy    = @{ Offsets = $null; Active = $null; Busy = $false }
     $cmpSpyRef = @{ Fn = $null }
 
-    # What the settings file is about to say, built and handed back rather than
-    # written. Split from the write, and the split is the only way this can be
-    # tested: $saveUiState returns early under $state.NoPrompts and has to, so
-    # the harness that drives every other edit on this page cannot see what
-    # would have been written. The one property this has to be right about is a
-    # property that is NOT here, and an absence nothing checks is an absence
-    # somebody re-adds. Same seam the modal-gated actions get - the decision is
-    # a function and the thing that gates it is wrapped around the outside.
+    # Built and handed back rather than written. The split is what lets the
+    # harness read the payload, since the write is gated on NoPrompts.
     $uiStateOut = {
-        # Rebuilt from scratch rather than mutated: the object came from JSON, and
-        # adding members to it is how a stale shape gets written back out.
-        #
-        # NO overrides PROPERTY. An override is an unsaved edit, and closing an
-        # application is the one gesture that means "never mind" everywhere else.
-        # Writing them looks kinder and is not: an edit that survives a restart is
-        # indistinguishable from a mode that has always removed that item, except
-        # for a badge on a screen you may not open - and it is then carried by
-        # every future run of a preset whose name still says Balanced.
-        #
-        # What DOES outlive the window is what was kept on purpose: presetDefaults
-        # (Save > Default) and loadedPresets (a file, by path).
+        # Rebuilt from scratch rather than mutated: the object came from JSON,
+        # and adding members to it is how a stale shape gets written back out.
+        # There is deliberately no overrides property.
         $out = [pscustomobject]@{
             theme          = [string]$state.Theme
             preset         = [string]$state.Preset
             presetDefaults = [pscustomobject]@{}
-            # What has actually been run here. Filled below, beside the defaults.
+            # What has actually been run here.
             applied        = [pscustomobject]@{}
             storage        = $storage.Cache
-            # Which accounts per-user settings reach. Written as the explicit
-            # list rather than as "all", because "all" on a machine that gains
-            # an account later would silently widen a choice somebody made.
+            # The explicit list rather than "all", because "all" on a machine
+            # that gains an account later means something different.
             accounts       = @(& $accountKeys)
-            # How the list was last arranged. A preference, like the theme.
+            # A preference, like the theme.
             group          = [string]$state.Group
             sortBy         = [string]$state.Sort
-            # Where an item's details are drawn. See $makeDetailChip.
+            # Where an item's details are drawn.
             detailPopup    = [bool]$state.DetailPopup
-            # How much standing text the pages carry. Stored as the positive of
-            # the non-default, so absent means the shipped behaviour. See
-            # $applyTerse.
+            # Stored as the positive of the non-default, so absent means the
+            # shipped behaviour.
             verbose        = (-not [bool]$state.Terse)
-            # How wide the index rail was left. Read off the column rather than
-            # the ScrollViewer inside it - the column is what the splitter
-            # moves, and the ScrollViewer is left to fill so the two cannot
-            # disagree about who owns the width.
+            # Read off the column rather than the ScrollViewer inside it - the
+            # column is what the splitter moves.
             railWidth      = [int]$ui.IndexCol.Width.Value
-            # The Compare page's rail is a separate preference, not a shared
-            # one. It indexes a different and shorter list - the headings two
-            # modes happen to differ across - so the width that suits it is not
-            # the width that suits twenty-three category names.
+            # A separate preference: it indexes a different and shorter list.
             cmpRailWidth   = [int]$cmpRail.W
-            # The files, not the ids. A saved selection is a file somebody
-            # owns and may edit between sessions, so re-reading it is the
-            # point; caching its contents here would mean the application
-            # quietly went on using last week's copy.
+            # The files, not the ids: a saved selection is a file somebody owns
+            # and may edit between sessions.
             loadedPresets  = @($loadedPresets.Keys | ForEach-Object { [string]$loadedPresets[$_].Path })
             # The three answers collected beside a row rather than in it.
             deferFeatureDays = [int]$state.DeferDays.Feature
@@ -4389,56 +3623,32 @@ function Show-WDWindow {
     }
 
     $saveUiState = {
-        # The interaction harness makes hundreds of edits it never means to
-        # keep. Writing them to the real settings file would hand somebody a
-        # mangled set of presets for having run a test that changes nothing.
+        # The harness makes hundreds of edits it never means to keep, and
+        # writing them to the real file would hand somebody mangled presets.
         if ($state.NoPrompts) { return }
         $null = Save-WDUiState -State (& $uiStateOut)
     }
 
-    # $counts, $totDelta and $consequence are declared with the loaded-preset
+    # $counts, $totDelta, and $consequence are declared with the loaded-preset
     # tables above, because $dropLoaded clears them.
-    # The denominator on every mode column, recomputed by $recount. A holder so
-    # the grid's closures see the current value rather than the first one.
     $modeTotal   = @{ N = 0 }
-    # Id -> the facts a mode column wants to quote. Built once; the columns are
-    # rebuilt on every preset edit and walking the manifest each time to answer
-    # "how many of these are risky" would be work for nothing.
+    # Built once: the columns are rebuilt on every preset edit, and walking the
+    # manifest each time is a manifest walk per click.
     $itemFacts = @{}
     foreach ($a in $applicable) { $itemFacts[$a.Id] = $a }
 
-    # ---- Save and Reset, which stand on the card they speak for -------------
-    #
-    # SAVE AND RESET STAND ON THE CARD OF THE PRESET THEY ACT ON, ONE PAIR PER
-    # CARD, and they read just "Save" and "Reset" - a control has to name its
-    # subject only when it is nowhere near it.
-    #
-    # There was one SHARED pair for a while, re-placed onto whichever card was
-    # selected, on the reasoning that a pair per card means handlers per card. That
-    # reasoning is answerable (the handlers take the preset name as an argument,
-    # and the builder runs on every rebuild) and the shared pair had a defect
-    # nothing answers: an edit to Aggressive could only be kept or discarded by
-    # first SELECTING Aggressive - and selecting a preset is not a neutral act on a
-    # screen whose other button previews it.
-    #
-    # $presetEditRows is name -> row, so $recount sets every visibility in one pass.
+    # Save and Reset stand on the card they speak for, one pair per card. There
+    # was one shared pair, and an edit to Aggressive could only be kept or
+    # thrown away by first selecting Aggressive.
     $presetEditRows = @{}
-    # The two things the buttons do, by name rather than by "whatever is
-    # selected". Holders, because both are written far below this and a closure
-    # made here would capture them as $null.
-    # SaveLoaded and SaveOut are here for the Advanced page's Save button, which
-    # is wired up long before either is written and would capture the name as
-    # null. Filled in beside $editActions.Save.
+    # By name rather than by "whatever is selected". Holders, because both are
+    # written far below and a closure would capture null.
     $editActions = @{ Save = $null; Reset = $null; SaveLoaded = $null; SaveOut = $null }
     $makeEditRow = {
-        # -Inline is the mode card, where this pair shares a line with Preview
-        # and sits in the right corner of it. A WRAPPANEL rather than a stack,
-        # and that is the whole reason the pair can be there at all: measured,
-        # Preview plus Save plus Reset want 199px on one line and a mode column
-        # is 170px wide at the window's minimum. Every way of shrinking them to
-        # fit came out at half a pixel of headroom, which is luck rather than a
-        # layout - so instead of squeezing, Reset drops under Save when the room
-        # runs out. On any ordinary window they sit side by side in the corner.
+        # -Inline is the mode card, where this pair shares a line with Preview.
+        # A WrapPanel: the three want 199px and a mode column is 170 at the
+        # window's minimum, so Reset drops under Save rather than being
+        # squeezed.
         param([string]$Name, [switch]$Inline)
         $row = New-Object Windows.Controls.WrapPanel
         $row.Orientation = 'Horizontal'
@@ -4473,23 +3683,19 @@ function Show-WDWindow {
         $row
     }.GetNewClosure()
 
-    # Which pairs are on show, and which one $ui points at. Separate from
-    # $recount because it is cheap and $recount is not: every repaint of the
-    # Saved presets box makes new rows, and re-counting every preset's effective
-    # selection to find that out would be a walk of the manifest per click.
+    # Separate from $recount because it is cheap and $recount is not: every
+    # repaint of the box makes new rows.
     $syncEditRows = {
         foreach ($k in @($presetEditRows.Keys)) {
-            # A preset that has been removed leaves its row behind, orphaned off
-            # the page. Dropped here rather than in $dropLoaded, which is a
-            # closure written above this table and would have captured it as
-            # $null.
+            # A removed preset leaves its row orphaned off the page. Dropped
+            # here rather than in $dropLoaded, which is a closure written above
+            # this table.
             if (-not $presetNames.Contains([string]$k)) { $presetEditRows.Remove([string]$k); continue }
             $presetEditRows[$k].Visibility =
                 $(if ($overrides.ContainsKey([string]$k)) { 'Visible' } else { 'Collapsed' })
         }
-        # For the self test, and for anything else that wants "the pair on the
-        # preset in front of me" without knowing how the cards are built. Null
-        # until the first card exists, which is why every reader guards.
+        # For the self test, and anything else wanting "the pair on the preset
+        # in front of me".
         $row = $presetEditRows[[string]$state.Preset]
         $ui.PresetEditRow   = $row
         $ui.BtnSavePreset   = $(if ($row) { $row.Tag.Save }  else { $null })
@@ -4499,32 +3705,21 @@ function Show-WDWindow {
     $recount = {
         $totDelta.Clear()
         $consequence.Clear()
-        # The denominator: the most any mode could select here, with everything
-        # already dealt with taken out. Rebuilt each pass because an edit can add
-        # a tier-0 item to a mode and push it past what the ladder alone offers.
-        #
-        # It used to be every applicable item, which counted things no mode ever
-        # selects and things this machine had already had done to it - so no
-        # column could reach it and the fraction meant nothing.
+        # The most any mode could select here, with everything already dealt
+        # with taken out. Rebuilt each pass because an edit can add to it.
         $ceiling = New-Object System.Collections.Generic.HashSet[string]
         foreach ($p in $presetNames) {
             $ids = @(& $effectiveIds $p)
             $counts[$p] = $ids.Count
-            # What the column can honestly claim. "Applies here" counts only
-            # items this machine is known to lack an answer for or is known to
-            # have - $null is "no opinion", and an item that is half policy is
-            # not a no-op just because a package is missing, so it counts.
+            # What the column can honestly claim.
             $risky = 0; $here = 0
             foreach ($id in $ids) {
                 $f = $itemFacts[$id]
                 if (-not $f) { continue }
                 if ($f.Risk -ge 2) { $risky++ }
-                # The ceiling comes off the SHIPPED presets only. A selection
-                # loaded from a file can name tier-0 items no mode selects -
-                # that is what hand-picking is - and letting those into the
-                # denominator would move the "195 of 195" printed on Extreme
-                # because somebody opened a file. The columns describe the
-                # modes; a file is not one of them.
+                # The ceiling comes off the shipped presets only: a loaded file
+                # can name tier-0 items no mode selects, and letting those in
+                # would move the number printed on Extreme.
                 if ($f.Present -ne $false) {
                     $here++
                     if ($shippedNames -contains $p) { $null = $ceiling.Add([string]$id) }
@@ -4532,31 +3727,27 @@ function Show-WDWindow {
             }
             $consequence[$p] = @{ Risky = $risky; Here = $here }
             # Custom is measured against nothing, so every tick would read as an
-            # addition and the delta would just restate the count.
+            # addition.
             if ($p -eq 'Custom' -or -not $overrides.ContainsKey($p)) { continue }
             $totDelta[$p] = @{ Added = @($overrides[$p].Added).Count; Removed = @($overrides[$p].Removed).Count }
         }
-        # Mutated, not reassigned: $modeTotal is captured by the mode grid's own
-        # closure, and rebinding the variable here would leave that reading the
-        # first value for the life of the window.
+        # Mutated, not reassigned: $modeTotal is captured by the mode grid's
+        # closure.
         $modeTotal.N = $ceiling.Count
-        # Save and Reset speak for one preset each and appear when THAT preset
-        # is edited - not when the selected one is. They are the two answers to
-        # the same question and share one condition, deliberately: offering only
-        # the destructive one on the screen the application opens on meant the
-        # way to KEEP an edit was on another page.
+        # Save and Reset appear when their own preset is edited, not when the
+        # selected one is.
         & $syncEditRows
     }
 
-    # Recording an edit and rebuilding the mode grid is one operation, kept out
-    # of the click handler so the self test can drive it without a MessageBox.
+    # Kept out of the click handler so the self test can drive it without a
+    # MessageBox.
     $setOverride = {
         param([string]$Name, [string[]]$Added, [string[]]$Removed)
         if (@($Added).Count -or @($Removed).Count) {
             $overrides[$Name] = @{ Added = @($Added); Removed = @($Removed) }
         } else {
-            # Edited back to the preset's own contents. Storing an empty override
-            # would leave Reset preset offering to undo nothing.
+            # Edited back to the preset's own contents. An empty override would
+            # leave Reset preset offering to undo nothing.
             $overrides.Remove($Name)
         }
         & $recount
@@ -4569,9 +3760,9 @@ function Show-WDWindow {
             & $repaintModeGrid
         & $saveUiState
     }
-    # What Save writes when the answer is "make this the default": the edit stops
-    # being an edit and becomes the preset, so the marks clear and Reset preset
-    # has nothing left to undo.
+    # The edit stops being an edit and becomes the preset, so the marks clear.
+    # Recomputed from $baseIds rather than merged, because merging two
+    # Added/Removed pairs has four cases.
     $promoteOverride = {
         param([string]$Name)
         if (-not $overrides.ContainsKey($Name)) { return $false }
@@ -4596,17 +3787,13 @@ function Show-WDWindow {
     }
     & $recount
 
-    # Writes "93 of 204" into a cell, then any edit spelled out beside it -
-    # green for what was added to the preset, red for what was taken out. The
-    # words rather than "+5 -2": the column is wide enough to read them, and a
-    # bare sign leaves you guessing what it counts.
+    # Green for what was added to the preset, red for what was taken out.
     $fillCountCell = {
         param($Cell, [string]$Text, [string]$BaseKey, [int]$Added, [int]$Removed)
         $Cell.Inlines.Clear()
         $head = New-Object Windows.Documents.Run $Text
         # A Run is a TextElement, not a control, but Foreground is still a
-        # dependency property on it, so it takes a resource reference like
-        # everything else.
+        # dependency property on it.
         & $Ref $head 'Foreground' $BaseKey
         $null = $Cell.Inlines.Add($head)
         if (-not ($Added -or $Removed)) { return }
@@ -4627,39 +3814,26 @@ function Show-WDWindow {
         }
     }
 
-
-    # It used to end by pointing at two footer buttons, one of which is a card on
-    # the home page now and the other of which is on the card this sentence is
-    # above. What is left is the two things about the grid that a card cannot say
-    # for itself: that the modes are a ladder, and what their counts leave out.
+    # It used to end by pointing at two footer buttons, one of which is a
+    # home-page card now.
     $ui.TxtModeHint.Text = 'Each mode does everything the mode before it does, and more. The count on a card leaves out the opt-in options - your own apps, and the quality-of-life changes - because no mode selects those. Pick a mode, then use Show all options on it to read and change every one of them.'
 
     $modeCols = @{}
 
-    # The fill is a plain Border with no width of its own, so it has to be sized
-    # against the column it sits in. Doing that only from SizeChanged left every
-    # bar at zero after a rebuild - editing a preset in Advanced rebuilds the
-    # grid without resizing it, so the bars simply vanished.
+    # The fill is a plain Border with no width of its own, so it is sized
+    # against the column it sits in. From SizeChanged alone, an edit that
+    # rebuilt the grid without resizing it left every bar flat.
     $sizingBars = @{ Busy = $false }
-    # The grid width the descriptions were last fitted to. -1 forces the first
-    # fit and is reset by every rebuild, because a rebuild makes new TextBlocks
-    # whose floors are back at zero.
+    # -1 forces the first fit and is reset by every rebuild, because a rebuild
+    # makes new TextBlocks with no floor.
     $blurbFit   = @{ W = -1.0 }
-    # Turning the ratios into widths, against the layout as it stands. Split out
-    # because a repaint - an edit that moves the numbers and nothing else - needs
-    # exactly this and none of the rest: the tracks are the same Borders at the
-    # same width they were measured at, so forcing another layout pass to find
-    # that out is the most expensive part of the cheap path.
+    # Split out because a repaint - an edit that moves the numbers and nothing
+    # else - needs the widths and not the measuring pass.
     $sizeModeFills = {
         foreach ($k in $modeCols.Keys) {
             if (-not $modeCols[$k].Fill -or -not $modeCols[$k].Track) { continue }
             # Measured off the track, not off the card minus a guess at its
-            # padding. The guess was 38px against a real inset that is not 38, so
-            # a mode selecting everything it can - Extreme, at a ratio of exactly
-            # 1.0 - still drew a bar visibly short of full, which reads as "there
-            # is more it could be doing" directly under a line saying there is
-            # not. The track is the thing the fill is measured against, so ratio
-            # 1.0 covers it exactly by construction and no constant can go stale.
+            # padding.
             $w = $modeCols[$k].Track.ActualWidth
             if ($w -gt 0) { $modeCols[$k].Fill.Width = [Math]::Max(2, $w * $modeCols[$k].Ratio) }
         }
@@ -4670,24 +3844,14 @@ function Show-WDWindow {
         try {
             # A Border created moments ago has ActualWidth 0 until the layout
             # pass runs, so measuring straight after a rebuild silently skipped
-            # every column. Forcing the pass here is what makes the rebuild path
-            # work at all.
+            # every one.
             $ui.ModeGrid.UpdateLayout()
             & $sizeModeFills
 
-            # Raises all five descriptions to a common height so the bullet lists
-            # start level. Measured rather than a MinHeight constant, which was
-            # only right at one window width and ignored entirely by a description
-            # that wrapped past it.
-            #
-            # KEYED ON THE WIDTH, and that guard IS the mechanism rather than an
-            # optimisation. Measuring means clearing the floor, which shrinks the
-            # grid, which raises SizeChanged, which clears the floor again - one
-            # layout pass per turn, for ever, and the window never answers again.
-            # A re-entrancy flag does NOT catch it: each turn is a separate
-            # dispatcher event, not re-entry. The width does catch it, because the
-            # width is what the answer depends on and it does not move when the
-            # floor does.
+            # Measured rather than a MinHeight constant. Keyed on the grid's
+            # width, because a SizeChanged handler that changes layout feeds
+            # itself and a re-entrancy flag does not catch it - each turn is a
+            # separate dispatcher event.
             $w = [double]$ui.ModeGrid.ActualWidth
             $blurbs = @($modeCols.Keys | ForEach-Object { $modeCols[$_].Blurb } | Where-Object { $_ })
             if ($blurbs.Count -and $w -gt 0 -and [Math]::Abs($w - [double]$blurbFit.W) -gt 0.5) {
@@ -4703,55 +3867,31 @@ function Show-WDWindow {
         } finally { $sizingBars.Busy = $false }
     }
 
-    # Seizing TrustedInstaller-owned keys suits the aggressive end of the
-    # ladder; the gentler modes should not be touching system ACLs. Both places
-    # a mode gets picked call this - the mode grid and the preset buttons in
-    # Advanced - because the box lives on the Advanced page, where switching
-    # mode used to leave it reading whatever the last mode wanted.
+    # Both routes into a mode call have to reach this: $selectPreset for the
+    # grid and $applyPresetToChecks for the toolbar buttons.
     $syncOwnership = {
         param([string]$name)
         $ui.ChkOwnership.IsChecked =
             if ($null -ne $state.OwnershipChoice) { [bool]$state.OwnershipChoice }
             else { $name -in @('Aggressive', 'Extreme') }
     }
-    # Click, not Checked: the handler has to tell a person ticking the box from
-    # the line above setting it, and Checked cannot.
+    # Click, not Checked: Checked cannot tell a person ticking the box from the
+    # line above setting it, so it would latch on the first mode switch.
     $ui.ChkOwnership.Add_Click({
         $state.OwnershipChoice = [bool]$ui.ChkOwnership.IsChecked
     }.GetNewClosure())
 
-    # ---- holders the mode cards' buttons reach through ---------------------
-    #
-    # DECLARED ABOVE $buildModeGrid, AND THAT IS THE POINT. These are filled in
-    # thousands of lines below, where the pages they open are wired up, and the
-    # cards' handlers cannot see that far - so they close over the TABLE and read
-    # the entry when the button is pressed.
-    #
-    # A HOLDER IS ONLY USEFUL IF IT IS A LIVE OBJECT BY THE TIME THE BLOCK THAT
-    # CLOSES OVER IT RUNS. $advRef was first declared beside $advBuilt, which
-    # reads as its natural home and is 33 lines AFTER the one and only
-    # `& $buildModeGrid` - so when that ran the name held nothing, every card's
-    # "Show all options" captured $null, and the button was hoverable, pressable,
-    # and dead. The window built perfectly and the static capture check passed:
-    # it asks whether a closure can SEE a name, not whether it has been assigned.
-    #
-    # $cmpRefs, plural, is a different thing: it breaks the cycle between
-    # $compareEdit and $buildCompare.
+    # A holder is only useful if it is a live object by the time the block that
+    # closes over it is invoked. These are declared above $selectPreset because
+    # $buildModeGrid runs thousands of lines above where their handlers are
+    # written.
     $advRef   = @{ Ensure = $null; Open = $null }
     $goRef    = @{ Compare = $null; ComparePick = $null; Preview = $null; Home = $null }
     $cmpPickRef = @{ Take = $null; End = $null }
 
-    # ONE PAGE AT A TIME, decided in one place. Every navigation used to be a
-    # pair - collapse the one you are on, show the one you want - which is
-    # correct exactly as long as you are on the one it names. With a home page
-    # above the mode screen that stopped being true: Compare is reached from a
-    # card, so its handler collapsed PageModes, and reached any other way it
-    # would leave two pages stacked on each other with no error anywhere.
-    #
-    # The drive bar rides along, because whether it belongs is a fact about the
-    # page rather than about the click that got there. It is about what a run
-    # does to this disk, and the home page offers two things that are not runs
-    # at all - one of them builds a file for a different computer.
+    # One page at a time, decided in one place. Every navigation used to be
+    # "collapse the one you are on, show the one you want", which is correct
+    # only while you are on the one it names.
     $showPage = {
         param([string]$Name)
         foreach ($p in @('PageHome','PageModes','PageAdvanced','PageRevertHome','PageRevert',
@@ -4763,11 +3903,7 @@ function Show-WDWindow {
 
     $selectPreset = {
         param([string]$name)
-        # Belt and braces against a name that is no longer a preset. $dropLoaded
-        # moves the selection off one it deletes, so this should never fire -
-        # but everything below indexes $presetColor, $consequence and $baseIds
-        # by this name without checking, and under StrictMode the first of those
-        # to come back $null takes the window down.
+        # Belt and braces against a name that is no longer a preset.
         if (-not $presetNames.Contains($name)) { $name = 'Balanced' }
         $state.Preset = $name
         & $recount          # Reset preset follows the mode on screen
@@ -4780,11 +3916,9 @@ function Show-WDWindow {
                 $modeCols[$k].Check.Text       = $(if ($sel) { 'SELECTED' } else { 'click to select' })
                 & $Ref $modeCols[$k].Check 'Foreground' $(if ($sel) { $presetColor[$k] } else { 'Muted' })
             }
-            # Hidden rather than Collapsed on the four - see $buildModeGrid.
-            # Two things, not one: Preview shares its row with Save and Reset,
-            # and that pair follows whether the column is EDITED rather than
-            # whether it is selected, so the row itself has to stay while its
-            # Preview goes.
+            # Hidden rather than Collapsed on the four. Two things, not one:
+            # Preview shares its row with Save and Reset, which follow the edit
+            # rather than the selection.
             if ($modeCols[$k].Acts) {
                 $modeCols[$k].Acts.Visibility = $(if ($sel) { 'Visible' } else { 'Hidden' })
             }
@@ -4792,28 +3926,17 @@ function Show-WDWindow {
                 $modeCols[$k].Go.Visibility = $(if ($sel) { 'Visible' } else { 'Hidden' })
             }
         }
-        # $ui.BtnAdvanced, BtnCompare and BtnModePreview are the SELECTED card's
-        # three buttons, re-pointed on every selection. They were XAML elements
-        # in a footer that no longer exists; about forty places drive them by
-        # name, and re-pointing is one line where a rename would have been churn
-        # everywhere to say the same thing. Exactly as the Advanced toolbar's
-        # preset buttons already do it.
+        # The selected card's three buttons, re-pointed on every selection, so
+        # the forty places that press them by name go on working.
         if ($modeCols.ContainsKey($name) -and $modeCols[$name].Open) {
             $ui.BtnAdvanced    = $modeCols[$name].Open
             $ui.BtnCompare     = $modeCols[$name].Cmp
             $ui.BtnModePreview = $modeCols[$name].Go
         }
-        # The tally under the columns is gone. It read "Balanced selects 108 of
-        # the 323 options still to be done on this machine" - which is the card's
-        # own count, restated in a corner of the window a long way from the card,
-        # and two places holding one fact is one place plus a way for them to
-        # disagree.
-        #
-        # A loaded selection is picked the same way a column is, so the box
-        # under the columns has to answer the same click.
+        # The tally under the columns is gone: it was the card's own count
+        # restated in a corner of the window a long way from the card.
         if ($loadedRef.Paint) { & $loadedRef.Paint }
-        # After the repaint, because it rebuilt the rows the pairs live on. The
-        # $recount at the top of this ran before they existed.
+        # After the repaint, because that rebuilt the rows the pairs live on.
         & $syncEditRows
         & $syncOwnership $name
         # The mode screen never touches the Advanced checkboxes, so ask the
@@ -4827,59 +3950,40 @@ function Show-WDWindow {
         }
     }
 
-    # What a click on a preset MEANS, which is not always "select this one".
-    # While the Compare-with question is up it means "compare with this one",
-    # and this is the one place that decides - a preset is clickable from a
-    # card's border, from the panel inside it, and from a loaded-file row, and
-    # swapping three handlers over per gesture is three chances to leave one
-    # behind. Bare, not a closure: it is called from handlers that live in three
-    # different scopes and it reads this function's locals, which are alive for
-    # as long as the window is.
+    # What a click on a preset means, which is not always "select this one":
+    # while the Compare question is up it means "compare with this one".
     $pickOrSelect = {
         param([string]$name)
         if ($cmpPickRef.Take -and (& $cmpPickRef.Take $name)) { return }
         & $selectPreset $name
     }
 
-    # Everything about one mode column that an edit can change: the fraction, the
-    # edit delta beside it, how far along the bar is, and how much of what the
-    # mode selects is marked risky. Written once and called from both the build
-    # and the repaint, because two copies of "what does this column say" is
-    # exactly the pair that drifts - one of them gets the new wording and the
-    # other goes on printing the old one until somebody edits a preset.
+    # Everything about one mode column that an edit can change, so a repaint
+    # does not need a rebuild.
     $paintModeCol = {
         param([string]$Name)
         $col = $modeCols[$Name]
         if (-not $col -or -not $col.Num) { return }
-        # The numerator is what this mode will actually DO here, not what it
-        # nominally selects. A mode that picks 234 items on a machine holding 203
-        # of them was quoting a number nothing on this machine would ever match,
-        # and the honest figure needs no caption to explain it. Both halves count
-        # only what applies here, Custom included - it used to quote its raw
-        # selection, which was harmless while that was always zero and stopped
-        # being so the moment it selected anything at all.
+        # The numerator is what this mode will actually do here, not what it
+        # nominally selects.
         $shown = $counts[$Name]
         if ($consequence[$Name]) { $shown = [int]$consequence[$Name].Here }
         $td = $totDelta[$Name]
-        # "options selected" rather than a bare fraction. On its own the fraction
-        # reads as a count of removals, and about a fifth of what a mode selects
-        # does not remove anything - the shell tweaks, the policy writes, the
-        # run's own commitments.
+        # "options selected" rather than a bare fraction: on its own the
+        # fraction reads as a count of removals.
         & $fillCountCell $col.Num "$shown of $($modeTotal.N) options selected" 'Text' ([int]$td.Added) ([int]$td.Removed)
-        # Same number the line above quotes. A bar that disagrees with the figure
-        # printed on top of it is worse than no bar. $sizeModeBars turns it into
-        # a width against the track.
+        # Same number the line above quotes. A bar that disagrees with the
+        # figure printed on it is worse than no bar.
         $col.Ratio = 0.0
         if ($modeTotal.N -gt 0) { $col.Ratio = [double]$shown / $modeTotal.N }
-        # Whether this one has actually been run here, and is still what was
-        # run. Painted rather than built, so an apply that finishes while the
-        # window is open marks its own card without a rebuild.
+        # Painted rather than built, so an apply that finishes with the window
+        # open marks its own card.
         if ($col.Applied) {
             $note = & $appliedNote $Name
             $col.Applied.Text = $note
             $col.Applied.Visibility = $(if ($note) { 'Visible' } else { 'Collapsed' })
         }
-        # The risky count - see where $facts is built. Absent on Custom.
+        # The risky count. Absent on Custom.
         if ($col.Facts) {
             $cq = $consequence[$Name]
             if ($cq -and [int]$cq.Risky -gt 0) {
@@ -4895,17 +3999,11 @@ function Show-WDWindow {
     }
 
     $buildModeGrid = {
-        # GetNewClosure captures only the LOCAL scope. This scriptblock runs in a
-        # child scope, so anything a handler below needs must be copied into a
-        # local here first - otherwise the closure captures $null and firing the
-        # event throws "the expression after '&' ... produced an object that was
-        # not valid".
+        # GetNewClosure captures only the local scope, and this scriptblock runs
+        # in a child one - so anything a handler below needs is copied into a
+        # local first.
         $onSelect = $pickOrSelect
-        # The card's own ways off this page, copied in for the same reason
-        # $onSelect is: reached as $advRef or $goRef from a handler built down
-        # there they would be captured as $null, and the buttons would be drawn,
-        # hovered, and dead. Which is exactly what the first version of Show all
-        # options did - see the note over the declarations themselves.
+        # The card's own ways off this page, copied in for the same reason.
         $openRef  = $advRef
         $goRefL   = $goRef
 
@@ -4936,8 +4034,8 @@ function Show-WDWindow {
             & $Ref $border 'BorderBrush' 'Line'
             $border.Cursor          = 'Hand'
             $border.Tag             = $p
-            # No tooltip. The blurb is already printed in the column, and a
-            # hover card repeating it just covers the thing it is describing.
+            # No tooltip: the blurb is already printed in the column, and a
+            # hover card repeating it covers the thing it describes.
             [Windows.Controls.Grid]::SetColumn($border, $c)
             [Windows.Controls.Grid]::SetRow($border, 0)
             $border.Add_MouseLeftButtonUp({ & $onSelect $this.Tag }.GetNewClosure())
@@ -4947,39 +4045,24 @@ function Show-WDWindow {
 
         for ($c = 0; $c -lt $shippedNames.Count; $c++) {
             $p = $shippedNames[$c]
-            # A DOCKPANEL, so what a card can DO sits at the bottom of it rather
-            # than wherever that card's prose happens to end. Stacked, Custom's
-            # three buttons landed a third of the way up the card - it has no
-            # bullet list and a shorter description - while the other four had
-            # theirs near the foot, and five cards with their controls at five
-            # different heights reads as one card being broken.
-            #
-            # Two panels inside it: $sp is the card, $spTop takes what is left
-            # after $spFoot has claimed the bottom edge.
+            # A DockPanel, so what a card can do sits at the bottom rather than
+            # wherever that card's prose ends. Stacked from the top, Custom's
+            # three landed a third of the way up while the others were near the
+            # foot - 399px of spread.
             $sp = New-Object Windows.Controls.DockPanel
             $sp.LastChildFill = $true
             $sp.Margin = '12,12,12,12'
-            # HIT-TESTABLE, and it takes the same click the column background
-            # does. It was IsHitTestVisible = $false so clicks fell through to the
-            # Border underneath - and WPF DOES NOT DESCEND into a subtree whose
-            # root is not hit-testable, so the Save and Reset buttons in here would
-            # have drawn, hovered, and been completely dead.
-            #
-            # Transparent rather than NO brush: a Panel with a null Background is
-            # not a hit-test target either, so the gaps between the text blocks
-            # would still fall through.
+            # Hit-testable, and it takes the same click the column background
+            # does. It was IsHitTestVisible = $false, and WPF does not descend
+            # into a subtree whose root is not hit-testable.
             $sp.Background = [Windows.Media.Brushes]::Transparent
             $sp.Tag = $p
             # A Button marks MouseLeftButtonUp handled before it bubbles, so
-            # Save and Reset do not also re-select the preset they are standing
-            # on - and re-selecting it would be harmless anyway, since the pair
-            # only appears on the selected one.
+            # Save and Reset do not also re-select the preset they stand on.
             $sp.Add_MouseLeftButtonUp({ & $onSelect $this.Tag }.GetNewClosure())
 
-            # The bottom edge, claimed FIRST so it gets the foot of the card;
-            # $spTop is added last and fills whatever is left. Everything that
-            # answers "what can I do with this one" goes in here, and everything
-            # that describes it goes in $spTop.
+            # The bottom edge, claimed first so it gets the foot of the card;
+            # $spTop is added last and fills what is left.
             $spFoot = New-Object Windows.Controls.StackPanel
             [Windows.Controls.DockPanel]::SetDock($spFoot, 'Bottom')
             $null = $sp.Children.Add($spFoot)
@@ -4992,10 +4075,7 @@ function Show-WDWindow {
             & $Ref $title 'Foreground' $presetColor[$p]
             $null = $spTop.Children.Add($title)
 
-            # The only count on the page now that the category grid has gone, so
-            # the edit delta rides along with it. Built empty and written by
-            # $paintModeCol at the foot of this loop, which is also what every
-            # later edit calls - see the note there.
+            # The only count on the page, so the edit delta rides along with it.
             $num = New-Object Windows.Controls.TextBlock
             $num.FontSize = 13; $num.Margin = '0,2,0,6'; $num.TextWrapping = 'Wrap'
             $null = $spTop.Children.Add($num)
@@ -5013,10 +4093,6 @@ function Show-WDWindow {
             $null = $spTop.Children.Add($fillHost)
 
             # What the mode costs, in the one term this can answer honestly.
-            # "128 of 274" is a size; this is a consequence, and it is what turns
-            # an adjective like "Balanced" into something falsifiable. Custom is
-            # excluded - its set is empty until somebody fills it, so the figure
-            # would read as zero and mean nothing.
             $facts = $null
             if ($p -ne 'Custom') {
                 $facts = New-Object Windows.Controls.TextBlock
@@ -5025,38 +4101,24 @@ function Show-WDWindow {
             }
 
             # The description says what the mode is for and what it costs; the
-            # bullets below say what it takes. Neither repeats the other.
+            # bullets say what it takes.
             $blurb = New-Object Windows.Controls.TextBlock
             $blurb.Text = $presetBlurb[$p]
-            # No MinHeight here. $sizeModeBars measures the five and raises them
-            # all to the tallest, which is the same alignment without the gap a
-            # fixed floor leaves under the four shorter ones.
+            # No MinHeight: $sizeModeBars raises all five to the tallest.
             $blurb.FontSize = 12.5; $blurb.TextWrapping = 'Wrap'
             $blurb.LineHeight = 17
-            # All five in the normal text color. Custom was the exception, on
-            # the grounds that it describes an action rather than a set of
-            # items - and the exception was the one that read properly. Four
-            # muted paragraphs beside one that is not is a column that looks
-            # switched off next to a column that does not, on the screen the
-            # application opens on; and these descriptions are the thing being
-            # read, not a caption under it.
+            # All five in the normal text colour.
             & $Ref $blurb 'Foreground' 'Text'
             $null = $spTop.Children.Add($blurb)
 
             # Not @($presetBullets[$p]) alone - a missing key yields $null, and
-            # @($null) is a one-element array holding nothing, which renders as
-            # a blank bullet. Custom has no list at all.
+            # @($null) is a one-element array holding nothing.
             $bullets = @()
             if ($presetBullets.ContainsKey($p)) { $bullets = @($presetBullets[$p]) }
             if ($bullets.Count) {
                 $bh = New-Object Windows.Controls.TextBlock
-                # "ADDS TO PREVIOUS" on every rung including the first, which
-                # used to read "REMOVES" on the grounds that Conservative is
-                # the one column with nothing beneath it. That stopped being
-                # true when Custom acquired a base set: its blurb now describes
-                # what every run does whatever column is picked - restore point,
-                # journal, rollback script, lookup file - so Conservative does
-                # have a previous, and it is the one printed beside it.
+                # "ADDS TO PREVIOUS" on every rung including the first: Custom
+                # has a base set, so Conservative does have a previous.
                 $bh.Text = 'ADDS TO PREVIOUS'
                 $bh.FontSize = 11; $bh.FontWeight = 'SemiBold'; $bh.Margin = '0,6,0,3'
                 & $Ref $bh 'Foreground' 'Muted'
@@ -5068,12 +4130,8 @@ function Show-WDWindow {
                     & $Ref $li 'Foreground' 'Text'
                     $null = $spTop.Children.Add($li)
                 }
-                # Nine lines is not the whole of what a mode does - Balanced
-                # alone selects over a hundred items - and a list that simply
-                # stops implies it was the whole of it. Italic and muted so it
-                # reads as a note about the list rather than a tenth entry in
-                # it, and NOT added to $bullets: that array is the authored
-                # promise about contents, and Compare reads it.
+                # Nine lines is not the whole of what a mode does, and a list
+                # that simply stops reads as the whole list.
                 $more = New-Object Windows.Controls.TextBlock
                 $more.Text = "$([char]0x2022)  and more..."
                 $more.FontSize = 12.5; $more.TextWrapping = 'Wrap'; $more.Margin = '0,0,0,3'
@@ -5088,54 +4146,26 @@ function Show-WDWindow {
             & $Ref $chk 'Foreground' 'Muted'
             $null = $spFoot.Children.Add($chk)
 
-            # "Applied on ...", when this preset has been run here and not touched
-            # since. Built empty on EVERY column, like the item rows' Gate line: a
-            # mode gets applied later and the grid is repainted rather than
-            # rebuilt, so a line that exists only where somebody remembered to
-            # build one does half its job.
-            #
-            # BELOW the selection line, not above the description: the descriptions
-            # are raised to a common height so the bullet lists start level, and a
-            # marker above that point would push one card's bullets out of step.
+            # Built empty on every column, like the item rows' Gate line: a
+            # marker that exists only where somebody remembered to build one is
+            # a rule that half works. Below the selection line, or it would push
+            # one column's bullets out of step with the others.
             $applied = New-Object Windows.Controls.TextBlock
             $applied.FontSize = 11; $applied.Margin = '0,6,0,0'; $applied.TextWrapping = 'Wrap'
             $applied.Visibility = 'Collapsed'
             & $Ref $applied 'Foreground' 'Ok'
             $null = $spFoot.Children.Add($applied)
 
-            # EVERYTHING YOU CAN DO WITH A PRESET, ON THE PRESET.
-            #
-            # These three were a footer strip of five that looked like peers and
-            # were not. Two people who had never seen the application both picked
-            # a mode and then had nowhere to go: the strip read as scenery, and
-            # only Preview stood out of it because Preview was the filled one.
-            #
-            # Stacked, not in a row - three across want ~260px and a column is 190
-            # at its narrowest. Ordered the way the work goes: read the list, weigh
-            # it against another mode, then run it, with the only filled button on
-            # the page last as the terminus. No count on any of them; the card
-            # already says "108 of 323" four elements up.
-            #
-            # HIDDEN on the four cards it is not on, NEVER Collapsed. All five
-            # share one Auto row, so a control that took its space back would let
-            # the row follow whichever card was selected and the grid would jump a
-            # button's height on every click. Hidden is also not hit-testable.
+            # Everything you can do with a preset, on the preset. Stacked rather
+            # than in a row: three across want about 260px and a column is 190
+            # at its narrowest.
             $acts = New-Object Windows.Controls.StackPanel
             $acts.Margin = '0,14,0,0'
             $acts.Visibility = 'Hidden'
 
             # Preview's line, with Save and Reset in the right corner. Auto then
-            # star, in that order, because a Grid gives an Auto column its full
-            # desired width before the star gets anything - so Preview can never
-            # be squeezed, which is right for the only button here that starts a
-            # run.
-            #
-            # THE PAIR IS NOT IN $acts, and that is load-bearing. $acts is Hidden
-            # on the four unselected cards, and Save and Reset appear on any EDITED
-            # column whether or not it is selected - which is the whole reason they
-            # moved onto the cards: keeping or dropping an edit to Aggressive used
-            # to mean selecting Aggressive first, and selecting a preset is not a
-            # neutral act on a screen whose other button previews it.
+            # star, so Preview is the one that can never be squeezed - which is
+            # the right way round for the only button that starts a run.
             $goRow = New-Object Windows.Controls.Grid
             foreach ($cw in @(@{ V = 0; U = 'Auto' }, @{ V = 1; U = 'Star' })) {
                 $gcd = New-Object Windows.Controls.ColumnDefinition
@@ -5151,10 +4181,8 @@ function Show-WDWindow {
                 $b = New-Object Windows.Controls.Button
                 $b.Content = $Text
                 $b.Padding = '12,6'; $b.Margin = '0,0,0,6'; $b.FontSize = 12.5
-                # Left and content-width, not stretched. Stretched, all three
-                # ran the full width of the card and the column turned into
-                # three slabs - a button reads as a button partly by not being
-                # the size of the thing it sits on.
+                # Left and content-width, not stretched: stretched, all three
+                # ran the full card and read as three slabs.
                 $b.HorizontalAlignment = 'Left'
                 $b.ToolTip = $Tip
                 if ($Go) {
@@ -5164,7 +4192,7 @@ function Show-WDWindow {
                     & $Ref $b 'BorderBrush' 'GoBorder'
                 }
                 # A Button marks the click handled before it bubbles, so none of
-                # these also re-selects the card underneath - see $sp above.
+                # these also re-selects the card underneath.
                 $b.Add_Click($Do)
                 # Preview goes into its own row beside Save and Reset; the other
                 # two are stacked above it.
@@ -5181,9 +4209,8 @@ function Show-WDWindow {
             $open = & $mkAct 'Show all options' `
                 'Opens the full list with this preset ticked, so you can change any of it. Nothing is applied until you press Preview.' `
                 $false { if ($openRef.Open) { & $openRef.Open } }.GetNewClosure()
-            # The card names itself to the pick, because by the time somebody
-            # answers it the selected preset may be a different one - answering
-            # is a click on another card.
+            # The card names itself to the pick: by the time somebody answers,
+            # the selected preset may be a different one.
             $cardName = [string]$p
             $cmp = & $mkAct 'Compare with...' `
                 'Shows what this preset removes that another one leaves alone, and lets you hand items between them.' `
@@ -5191,8 +4218,8 @@ function Show-WDWindow {
             $go = & $mkAct 'Preview' `
                 'Works out exactly what this preset would do to this machine and shows you, without changing anything.' `
                 $true { if ($goRefL.Preview) { & $goRefL.Preview } }.GetNewClosure()
-            # Show all options and Compare, stacked; then Preview's row, which
-            # carries this column's own Save and Reset in its right corner.
+            # Show all options and Compare, stacked; then Preview's row,
+            # carrying this column's Save and Reset.
             $null = $spFoot.Children.Add($acts)
             $goRow.Margin = '0,0,0,0'
             $null = $spFoot.Children.Add($goRow)
@@ -5221,58 +4248,34 @@ function Show-WDWindow {
 
         & $selectPreset $state.Preset
         # The bars are new objects every rebuild, so size them here as well as
-        # on resize - a rebuild without a resize would otherwise leave them flat.
-        # The descriptions are new objects too, and their floors are back at
-        # zero, so the width they were last fitted at no longer describes them.
+        # on resize.
         $blurbFit.W = -1.0
         & $sizeModeBars
     }
 
     $ui.ModeGrid.Add_SizeChanged($sizeModeBars.GetNewClosure())
 
-    # An edit cannot change the SHAPE of this page - the columns, titles,
-    # descriptions and bullet lists all come off the manifest. It changes one
-    # cell, one bar and one line per column, which is what this repaints.
-    # Rebuilding the grid instead cost ~0.2s per box ticked in Advanced and per
-    # item handed across on Compare, laying out prose that had not changed.
-    #
-    # Deliberately NOT "rebuild, but only while the page is on screen": that buys
-    # the same time and pays in staleness - $modeCols would hold cells disagreeing
-    # with $counts for as long as somebody stayed elsewhere, and every reader
-    # would have to know it. Nothing here is ever out of date, only less work.
+    # An edit cannot change the shape of this page - the columns, titles,
+    # descriptions, and bullets all come off the manifest.
     $repaintModeGrid = {
         foreach ($p in $shippedNames) { & $paintModeCol $p }
-        # The tally line under the columns is counted too, and it is $selectPreset
-        # that writes it.
+        # The tally line under the columns is counted too, and it is
+        # $selectPreset that writes it.
         & $selectPreset $state.Preset
-        # $sizeModeFills, not $sizeModeBars: nothing here changed a size, so the
-        # tracks are still the width the last layout pass measured them at, and
-        # the descriptions are still the same TextBlocks fitted to the same
-        # window. What is skipped is an UpdateLayout over the whole grid.
+        # $sizeModeFills, not $sizeModeBars: nothing changed size, so the tracks
+        # are still the width the last layout measured.
         & $sizeModeFills
     }
 
         & $buildModeGrid
 
-    # ======================================================== HOME PAGE ====
-    #
-    # Three cards, built rather than declared. Three of anything carrying a
-    # glyph, a title, a paragraph, and identical hover and click behaviour is
-    # one builder and three lines of data; written out three times in XAML it is
-    # three places for them to drift.
-    #
-    # ORDER IS THE ONLY EMPHASIS. Debloat and customize is first, because it is
-    # what this toolkit is for and it is what somebody arriving with no idea
-    # should reach first. It wore the accent as well for one release and that
-    # was too much: one lit card beside two grey ones reads as the other two
-    # being switched off rather than as the first being the usual answer, and
-    # every one of the three is a thing somebody deliberately came here to do.
-    # Position says it; colour said it twice and got it wrong.
+    # Three cards, one line of prose, and nothing else. A Button with a card
+    # template rather than a Border with a click handler: a Button is focusable,
+    # answers the keyboard, and marks its click handled.
     $homeCards = @{}
     $buildHomeCards = {
-        # Copied in for the reason every builder in this file copies things in:
-        # the handlers below are closures made inside a block invoked with &,
-        # so they see this block's locals and nothing else.
+        # Copied in because the handlers below are closures made inside a block
+        # invoked with &.
         $uiRef   = $ui
         $refFn   = $Ref
         $cards   = $homeCards
@@ -5280,9 +4283,8 @@ function Show-WDWindow {
         $g = $ui.HomeGrid
         $g.Children.Clear()
 
-        # Glyph, title, and the paragraph under it. The paragraph says what the
-        # thing IS, in the words somebody who has never opened this would use -
-        # not what it is called and not how it works.
+        # The paragraph says what the thing is, in the words somebody who has
+        # never opened this would use.
         $spec = @(
             @{ Key = 'debloat'; Glyph = 0x1F9F9
                Title = 'Debloat and customize'
@@ -5299,12 +4301,8 @@ function Show-WDWindow {
             $s = $spec[$i]
             $btn = New-Object Windows.Controls.Button
             $btn.Style  = $ui.Root.FindResource('WdCardButton')
-            # The SAME margin on all three, not none on the outside edges. The
-            # cells a UniformGrid hands out are equal; a card that gives back 8px
-            # on one side and 16 on both is not, and 330/322/330 across the first
-            # screen anybody sees is exactly the kind of thing that reads as
-            # wrong without being nameable. The cost is 8px of extra gutter at
-            # each end, which nothing is measuring.
+            # The same margin on all three, not none on the outside edges: equal
+            # cells minus unequal margins gave 330/322/330.
             $btn.Margin = '8,0,8,0'
             $btn.VerticalAlignment = 'Stretch'
             $btn.MinHeight = 200
@@ -5314,8 +4312,7 @@ function Show-WDWindow {
             $gl = New-Object Windows.Controls.TextBlock
             $gl.Text = New-WDGlyph $s.Glyph
             # A colour emoji ignores Foreground, which is most of these; the two
-            # that are not carry the card's own accent, so the row does not read
-            # as one lit tile beside two dead ones.
+            # that are not carry the card's own accent.
             $gl.FontSize = 34; $gl.Margin = '0,0,0,14'
             & $refFn $gl 'Foreground' 'Sub'
             $null = $body.Children.Add($gl)
@@ -5336,16 +4333,13 @@ function Show-WDWindow {
 
             $btn.Content = $body
             # No SetRow/SetColumn: a UniformGrid places children in the order
-            # they arrive, which is the order $spec is written in.
+            # they arrive.
             $null = $g.Children.Add($btn)
             $cards[[string]$s.Key] = $btn
         }
 
-        # Only the first is wired here. The other two are the pages that already
-        # had their own handlers in the footer, and those are attached where
-        # those pages are built - $ui.BtnRevert and $ui.BtnUnattend are pointed
-        # at these two buttons so the wiring, and the forty harness lines that
-        # press them by name, go on working unchanged.
+        # Only the first is wired here. The other two already had handlers
+        # written for the footer buttons they replace.
         $uiRef.BtnRevert   = $cards['revert']
         $uiRef.BtnUnattend = $cards['unattend']
         $uiRef.BtnDebloat  = $cards['debloat']
@@ -5354,107 +4348,49 @@ function Show-WDWindow {
     }
     & $buildHomeCards
 
-    # ==================================================== ADVANCED PAGE ====
-    #
-    # BUILT ON DEMAND, NOT AT STARTUP. The application opens on the mode screen,
-    # which needs none of this - its columns are counted off the manifest, and
-    # Preview there runs the preset rather than the boxes. Three hundred rows,
-    # each with an already-set probe and an icon, were seven of the eight seconds
-    # before the window appeared, laying out a page most first visits never open.
-    #
-    # The pieces stay where they read best; each expensive one is APPENDED here
-    # instead of running, and the list runs in source order the first time
-    # anything needs the page. The order of construction is unchanged - only when.
-    #
-    # Two rules for anything added, both the closure rule this file keeps
-    # re-learning. It is a closure, so it sees the locals that existed where it
-    # was WRITTEN and nothing declared after it. And it must MUTATE, never assign:
-    # $x.Add(...) reaches the outer list, $x = @(...) writes to a copy nothing
-    # else ever sees.
+    # The rows are the expensive half of the application, so each step is added
+    # to a list and run the first time anything needs the page.
     $advWork  = New-Object System.Collections.Generic.List[scriptblock]
-    # Busy guards against re-entrancy between the two routes into the work list.
-    # The pre-warm below runs off a dispatcher tick, and $ensureAdvanced pumps
-    # dispatcher frames while it reports progress - so without this a tick can
-    # fire from inside the drain and both start pulling entries off the front.
-    # Peak is the longest a single pre-warm step held the UI thread. It is the
-    # figure that decides whether the pre-warm can be felt at all - see the
-    # timer at the bottom of this function.
+    # Busy guards re-entrancy between the two routes into the work list: the
+    # pre-warm runs off a dispatcher tick, and $ensureAdvanced pumps frames.
     $advBuilt = @{ Done = $false; Ms = 0; Ms0 = 0; Busy = $false; Warmed = 0; Peak = 0; PeakAt = 0; PeakOpen = 0 }
-    # How the work reports itself while it runs. Null until something asks for
-    # the page, so the work items say nothing when there is nobody watching -
-    # and one call per step rather than one for the lot, because a bar that
-    # moves seventeen times reads as work and a bar that sits still reads as a
-    # hang. The splash used to do exactly this for the same list.
-    #
-    # N is entries this drain has FINISHED and Left is what the queue still
-    # holds, so the fraction is N / (N + Left). Both halves are read at the
-    # moment of reporting rather than fixed up front, which is what makes this
-    # survive the pre-warm having already emptied part of the list - see the
-    # note on $ensureAdvanced's reporter for what the fixed denominator did.
+    # Null until something asks for the page, so the work items say nothing when
+    # nobody is watching.
     $advSay   = @{ Fn = $null; N = 0; Shown = 0.0 }
     $rows = New-Object System.Collections.Generic.List[psobject]
-    # The holder that breaks the ordering cycle for Non-verbose: the check box is
-    # wired near the top of this function and the pass that answers it cannot be
-    # written until every page's elements exist. Same device as $advRef.Ensure.
+    # The check box is wired near the top of this function and the pass that
+    # answers it cannot be written until every page's elements exist.
     $terseRef = @{ Do = $null }
-    # The same device for the two Refresh buttons, and for the same reason.
-    # LastReport is the seam: both handlers end in a modal, and a modal cannot be
-    # driven headlessly, so what the button SAID is only checkable if it is also
-    # left somewhere. Same reason $itemDetail exists as a function rather than
-    # living inside the dialog call.
+    # LastReport is the seam: both handlers end in a modal, which a headless
+    # check cannot dismiss.
     $refreshRef = @{ Adv = $null; Rev = $null; LastReport = '' }
-    # Col is a theme key. Its tint - the same hue at low alpha, used behind the
-    # badge on hover - is that key plus 'Tint', which $paintTheme derives.
+    # Col is a theme key. Its tint - the same hue at low alpha - is that key
+    # plus 'Tint', which $paintTheme derives.
     $riskStyle = @{ 1 = @{ Label = 'caution'; Col = 'Warn' }; 2 = @{ Label = 'risky'; Col = 'Bad' } }
 
-    # SECTION, THEN order, THEN name. Every category carries an authored 'order',
-    # which sorting by name threw away entirely - but 'order' alone is not the
-    # page's order either, because the sections lay out one after another, so a
-    # Remove category at 98 comes before an Add one at 91.
-    #
-    # foreach over the BARE call, never @(Get-WDSectionNames): that returns ,@(...)
-    # so it survives assignment, and wrapping its pipeline output gives ONE element
-    # holding an array. Every rank then keyed on an array object, every lookup
-    # missed, every section ranked 0, and the three-key sort fell through to its
-    # second key with nothing complaining.
+    # Section, then order, then name. Sorting by name threw the authored order
+    # away; order alone is wrong too, because the sections are laid out one
+    # after another.
     $secRank = @{}
     $rank = 0
     foreach ($s in (Get-WDSectionNames)) { $secRank[[string]$s] = $rank; $rank++ }
-    # Every category, Recurring included. It used to be pulled out here and
-    # hand-built into a block of its own below the columns, which bought one
-    # paragraph of explanation and cost it a place in every other mechanism on
-    # the page: it was skipped by $buildGroups, so no grouping could list it;
-    # it had no entry in $catHeaders, so the filter could not collapse it and
-    # had to count its rows separately; and the rail carried it as a fixed card
-    # under "Also on this page", which said it was not part of the list when it
-    # is simply the last category of Remove. The paragraph is a category field
-    # now - see $makeGroupBlock's $Note - and nothing else needs to know.
+    # Every category, Recurring included. It used to be pulled out and
+    # hand-built below the columns, which cost it a place in every other
+    # mechanism on the page.
     $normalCats = @($Categories |
                     Sort-Object @{ E = { [int]$secRank[[string](Get-WDItemSection -Item $null -Category $_)] } },
                                 @{ E = { [int](Get-Prop $_ 'order' 100) } },
                                 @{ E = { [string]$_.name } })
 
     # Builds one item row. Shared by the two-column body and by Extras.
-    # ---- replacement browser, tied to Edge removal -------------------------
-    # Removing Edge on a fresh install can leave someone with no way to reach
-    # the internet, so selecting it offers a replacement. The offer only exists
-    # while Edge removal is selected: deselect it anywhere - a checkbox, a
-    # different mode, an exclusion in the preview - and the install is dropped.
     $rowById = @{}
 
-    # What is already on the machine. One registry sweep, cached inside
-    # Get-WDInstalledPrograms, rather than a `winget list` per item - thirteen of
-    # those would add half a minute to startup to answer a question the uninstall
-    # hives already answer.
-    #
-    # Read here rather than beside the Add section, where it used to sit, because
-    # the browser picker two lines below needs it: it has to know which of its
-    # buttons would install something the machine already has.
+    # One registry sweep, cached, rather than a `winget list` per item -
+    # thirteen of those would add most of a minute to startup.
     & $say 'Building the interface' 'Checking what is already installed'
-    # A List filled in place rather than an array assigned, and that is Refresh's
-    # doing: $alreadySatisfied captures this, so rebuilding it with a fresh
-    # assignment would leave that closure reading the old one for ever. Mutate,
-    # never assign - the same rule everything on $advWork follows.
+    # A List filled in place rather than an array assigned: $alreadySatisfied
+    # captures this, and a fresh assignment would leave it reading the old one
+    # for ever.
     $installedNames = New-Object System.Collections.Generic.List[string]
     $readInstalled = {
         $installedNames.Clear()
@@ -5465,18 +4401,13 @@ function Show-WDWindow {
     & $readInstalled
 
     # A plain local, never $script:. A $script: variable read from inside a
-    # closure resolves against that closure's own module scope, which is empty -
-    # it came back null, and @($null) rendered as a single blank radio button.
+    # closure resolves against that closure's own module scope, which is empty.
     $browserNames   = @((Get-WDBrowserCatalog).Keys)
-    # Which of the catalog is already here. Matched loosely, because an
-    # uninstall entry reads "Google Chrome" on one machine and "Google Chrome
-    # (64-bit)" on the next, and the catalog key is the stem of both.
+    # Matched loosely, because an uninstall entry reads "Google Chrome" on one
+    # machine and something longer on another.
     $browserHere = New-Object System.Collections.Generic.HashSet[string]
     # Filled in place, for the reason $installedNames is a List: half a dozen
-    # closures capture this set, and Refresh has to be able to change what it
-    # holds without any of them being rebuilt. $rowGate reads it on every filter
-    # pass, so a browser installed while the window is open brings the "Change
-    # default browser" row back by itself once this has been re-asked.
+    # closures capture this set and Refresh has to change what it holds.
     $sweepBrowsers = {
         $browserHere.Clear()
         foreach ($b in $browserNames) {
@@ -5488,13 +4419,6 @@ function Show-WDWindow {
     & $sweepBrowsers
     $refreshBrowsers = @{ Do = $sweepBrowsers }
     # The one offered when a mode removes Edge without anybody having chosen.
-    #
-    # The offer exists for exactly one reason: so the machine is not left with
-    # no way to reach the web. If the person already runs Chrome, or Firefox, or
-    # anything else in the catalog, that reason is already met - so the
-    # default is **nothing**, and downloading a browser they did not ask for
-    # onto a machine that has one is the wrong side to err on. Only a machine
-    # whose only browser is the Edge about to be removed gets a default install.
     $freeBrowsers   = @($browserNames | Where-Object { -not $browserHere.Contains([string]$_) })
     $browserDefault = ''
     if (-not $browserHere.Count) {
@@ -5504,9 +4428,8 @@ function Show-WDWindow {
     }
     $BROWSER_NONE   = 'No browser - I will sort it out myself'
 
-    # "Chrome and Firefox", not "Chrome, Firefox". A list read out to a person
-    # needs the last comma turning into a word. Declared above $tellBrowser
-    # because that is a closure and captures only what already exists.
+    # "Chrome and Firefox", not "Chrome, Firefox". Declared above $tellBrowser
+    # because that is where it is captured.
     $joinNames = {
         param([string[]]$Names)
         $n = @($Names)
@@ -5515,18 +4438,9 @@ function Show-WDWindow {
         (($n[0..($n.Count - 2)]) -join ', ') + " and $($n[-1])"
     }
 
-    # Selecting a mode that removes Edge does not stop to ASK - it says what will
-    # happen and where to change it, which is the same information without a
-    # decision in the way.
-    #
-    # ONLY ON A MACHINE WITH NO OTHER BROWSER. There were two notices, and the
-    # second said "no replacement will be installed - this machine already has
-    # Chrome": a dialog telling somebody who runs Chrome that they still have
-    # Chrome. Nothing is about to happen to them, and a modal that reports a
-    # non-event teaches people to dismiss modals without reading them.
-    #
-    # The surviving case is different in kind: something WILL be installed, and the
-    # alternative to saying so is a run that downloads a browser nobody mentioned.
+    # Selecting a mode that removes Edge does not stop to ask: it says what will
+    # happen and where to change it. A modal that blocks on a decision nobody
+    # came here to make is worse than a default with a visible way to change it.
     $tellBrowser = {
         if (-not $browserDefault) { return }
         Show-WDMessage (
@@ -5536,46 +4450,29 @@ function Show-WDWindow {
             'Removing Microsoft Edge', 'OK', 'None') | Out-Null
     }.GetNewClosure()
 
-    # TWO PICKERS, ONE ANSWER - the strip under Edge removal and the standing block
-    # in Add - so every route goes through $setBrowsers and every panel repaints
-    # from the same state. Two panels each holding their own idea would drift.
-    #
-    # The answer is a LIST, not a name: nothing about installing one browser is a
-    # reason not to install a second, and somebody moving off Edge often wants a
-    # daily driver and a spare.
-    #
-    # $rowStrips is id -> element, laid out by $fillColumns as a SIBLING of that
-    # row rather than a child, so nothing hides it implicitly.
+    # Two pickers, one answer - the strip under Edge removal and the standing
+    # block in Add - so every route goes through $setBrowsers and every panel
+    # repaints.
     $rowStrips = @{}
-    # Rows whose presence on the page is a live condition rather than a fact
-    # about the machine. A guard would be the natural home for this and cannot
-    # be: a guard is evaluated once, when the list is built, and these depend on
-    # what has been ticked since. Keyed by id, consulted by $applyFilter, and
-    # empty for all but one row.
+    # Rows whose presence is a live condition rather than a fact about the
+    # machine. A guard cannot answer this, because a guard is evaluated once
+    # when the list is built.
     $rowGate = @{}
     $browserUi = @{ Panels = New-Object System.Collections.Generic.List[psobject]; Row = $null; Strip = $null }
-    # The "which browser becomes the default" picker, which is built inside the
-    # deferred page build and has to be reachable from $setBrowsers - declared
-    # here so both see the same holder rather than two copies of null.
+    # Built inside the deferred page build and reachable from $setBrowsers, so
+    # it is declared here.
     $defBrowserUi = @{ Panel = $null; Refresh = $null }
     $setBrowsers = {
         param([string[]]$Names, [bool]$Remember)
-        # STATE AND UI ONLY. The choice reaches disk once, from $startRun, where
-        # the process is elevated: %ProgramData%'s root grants Users create but not
-        # modify, so rewriting on every click threw access-denied unelevated.
-        #
-        # Kept in CATALOG order, not click order, so both pickers and the run report
-        # read the list the same way round.
-        #
-        # An already-installed browser is dropped rather than queued: its button is
-        # disabled, so this can only come from a preference stored before it was
-        # installed.
+        # State and UI only. The choice reaches disk once, from $startRun, where
+        # the process is elevated: %ProgramData%'s root grants Users create but
+        # not modify.
         $want = @($browserNames | Where-Object { $_ -in @($Names) -and -not $browserHere.Contains([string]$_) })
         if ($Remember) { $state.BrowserPreferred = $want }
         $state.BrowserChoices = $want
-        # Any deliberate pick stops being the one this made on the user's behalf
-        # when Edge removal was selected, which is what decides whether
-        # deselecting Edge takes it away again.
+        # Any deliberate pick stops being the one made on the user's behalf,
+        # which is what decides whether backing out of Edge removal withdraws
+        # it.
         $state.BrowserAuto = $false
         $pretty = & $joinNames $want
         foreach ($p in $browserUi.Panels) {
@@ -5591,31 +4488,26 @@ function Show-WDWindow {
             foreach ($n in $p.Buttons.Keys) {
                 $btn = $p.Buttons[$n]
                 $on = if ($want.Count) { $n -in $want } else { $n -eq $BROWSER_NONE }
-                # Weight alone was enough when this was one-of-N and a bold
-                # button meant "the answer". With several on at once the set
-                # needs an outline to be read as a set.
+                # Weight alone was enough when this was one-of-N. With several
+                # on at once the set needs to be readable at a glance.
                 $btn.FontWeight      = if ($on) { 'Bold' } else { 'Normal' }
                 & $Ref $btn 'BorderBrush' $(if ($on) { 'Accent' } else { 'Line' })
                 $btn.BorderThickness = New-Object Windows.Thickness $(if ($on) { 2 } else { 1 })
             }
         }
-        # A browser occupies a drive like anything else, and it is not a row, so
-        # nothing in the tally's loop over the rows would ever notice it. Reached
-        # through the holder because the bar is built long after this is.
+        # A browser occupies a drive like anything else and is not a row, so
+        # nothing in the tally's loop would notice it.
         if ($storage.Paint) { & $storage.Paint }
         # And one row's presence depends on this answer: "Change default
-        # browser" appears the moment a browser is queued and goes again when
-        # the choice is withdrawn. The gate is re-asked by the filter, so the
-        # filter is what has to be re-run.
+        # browser" appears the moment a browser is queued.
         if ($applyFilterRef.Fn) { & $applyFilterRef.Fn }
         # Its picker lists what is here plus what is queued, so queueing one has
-        # to put it on the list - and withdrawing one has to take it off again,
-        # including when it was the selected answer.
+        # to put it on the list.
         if ($defBrowserUi.Refresh) { & $defBrowserUi.Refresh }
     }.GetNewClosure()
 
-    # What a click on one of the buttons means: add it, or take it away again.
-    # None is not a browser, it is the way to clear the lot.
+    # What a click on one of the buttons means: add it, or take it away. None is
+    # not a browser, it is the way to clear the lot.
     $toggleBrowser = {
         param([string]$Name)
         if ($Name -eq $BROWSER_NONE) { & $setBrowsers @() $true; return }
@@ -5624,10 +4516,8 @@ function Show-WDWindow {
         & $setBrowsers $now $true
     }.GetNewClosure()
 
-    # The strip is a sibling of the Edge row in the column, not a child of it,
-    # so nothing hides it implicitly. It has to follow that row on both counts:
-    # unticking Edge removal, and the filter taking the row off screen. Missing
-    # the second left the picker floating under an unrelated item.
+    # The strip is a sibling of the Edge row, not a child, so nothing hides it
+    # implicitly.
     $showBrowserStrip = {
         param([bool]$EdgeOn)
         if (-not $browserUi.Strip) { return }
@@ -5642,9 +4532,8 @@ function Show-WDWindow {
         if ($state.SyncingBrowser) { return }
         & $showBrowserStrip $EdgeOn
         if (-not $EdgeOn) {
-            # Only a choice this made on the user's behalf is withdrawn here. A
-            # browser picked deliberately in the Add section is an install in
-            # its own right, and nothing about Edge should cancel it.
+            # Only a choice this made on the user's behalf is withdrawn. A
+            # browser picked deliberately in Add is an install in its own right.
             if (@($state.BrowserChoices).Count -and $state.BrowserAuto) { & $setBrowsers @() $false }
             $state.BrowserAsked = $false
             return
@@ -5652,41 +4541,29 @@ function Show-WDWindow {
         if ($state.BrowserAsked) { return }
         $state.BrowserAsked = $true
         # A pick made earlier survives a trip through modes that leave Edge
-        # alone. Only somebody who has never chosen gets the default, and only
-        # they get told about it - repeating the notice to someone who has
-        # already been to the picker is just noise.
-        #
-        # $null means nobody has ever picked; an empty list means somebody chose
-        # None, which is an answer and must not be overruled with a default.
+        # alone.
         if ($null -ne $state.BrowserPreferred) {
             & $setBrowsers @($state.BrowserPreferred) $false
             return
         }
         if (@($state.BrowserChoices).Count) { return }
         # Nothing left to offer means every browser in the catalog is already
-        # here, and a machine with three browsers on it is not about to be
-        # stranded by losing Edge. No queue, and no notice about one.
+        # here.
         if (-not @($freeBrowsers).Count) { return }
-        # Default rather than ask. The notice says what will happen and where to
-        # change it, so nothing is blocked on a decision nobody wanted to make.
-        #
-        # An empty default means this machine already has a browser, so there is
-        # nothing to queue - but the notice still runs, because "this mode
-        # removes Edge" is the part somebody needs to hear either way.
+        # Default rather than ask: the notice says what will happen and where to
+        # change it.
         if ($browserDefault) {
             & $setBrowsers @($browserDefault) $false
             $state.BrowserAuto = $true
         }
         # Everything above this line has to run at boot, or a restored mode that
-        # removes Edge opens with no queued browser and a hidden picker. Only
-        # the announcement waits for a gesture.
+        # removes Edge opens with no queued browser and a hidden picker.
         if (-not $state.NoPrompts -and -not $state.Building) { & $tellBrowser }
     }.GetNewClosure()
     $browserSync.Fn = $syncBrowser
 
     # The install is a choice rather than a tick, so it is never a row - its id
-    # is threaded into the selection here instead. Any chosen browser counts,
-    # whether or not Edge is going: the Add section offers it on its own terms.
+    # is threaded into the selection here.
     $withBrowser = {
         param([string[]]$Ids)
         $out = @($Ids | Where-Object { $_ -ne $BROWSER_ID })
@@ -5694,15 +4571,13 @@ function Show-WDWindow {
         ,$out
     }
 
-    # Built twice: the indented strip under the Edge removal row, and the
-    # standing block in the Add section. Same handler, same state, so clicking
-    # either repaints both.
+    # Built twice: the strip under the Edge row, and the standing block in Add.
+    # Same handler, same state.
     $makeBrowserPicker = {
         param([string]$Kind)
         $set = $toggleBrowser
         $ui2 = $browserUi
-        # Copied in for the same reason everything else in this block is: this
-        # is a closure, and it can only see its own locals.
+        # Copied in because this is a closure and can only see its own locals.
         $strips = $rowStrips
         $edgeId = $EDGE_ID
         $entry = @{ Kind = $Kind; Label = $null; Buttons = @{} }
@@ -5722,18 +4597,15 @@ function Show-WDWindow {
         $null = $sp.Children.Add($lbl)
 
         $wrap = New-Object Windows.Controls.WrapPanel
-        # Copied in for the same reason as everything else here: this block sees
-        # its own locals only.
+        # Copied in for the same reason.
         $here = $browserHere
         foreach ($n in @(@($browserNames) + $BROWSER_NONE)) {
             $btn = New-Object Windows.Controls.Button
             $btn.Content = $(if ($n -eq $BROWSER_NONE) { 'None' } else { $n })
             $btn.Padding = '10,3'; $btn.Margin = '0,0,6,4'; $btn.FontSize = 12.5
             $btn.Tag = $n
-            # A browser the machine already has is not an offer. Left enabled it
-            # was a button that queued a download, ran an installer, and reported
-            # that the thing was already installed - which is the same noise an
-            # already-installed row in Add is grayed out to avoid.
+            # A browser the machine already has is not an offer: left enabled it
+            # queued a download and an installer for something already here.
             if ($here.Contains([string]$n)) {
                 $btn.Content   = "$n (installed)"
                 $btn.IsEnabled = $false
@@ -5751,44 +4623,23 @@ function Show-WDWindow {
         $entry.Label = $lbl
         $ui2.Panels.Add([pscustomobject]$entry)
         # The Edge one is also the row strip for the Edge row, so $fillColumns
-        # places it. $browserUi.Strip stays as the name everything else knows it
-        # by; $rowStrips is what the layout reads.
+        # places it.
         if ($Kind -eq 'edge') { $ui2.Strip = $box; $strips[$edgeId] = $box }
         $box
     }
 
-    # ASKING AND DISABLING ARE TWO QUESTIONS, and one function was answering both
-    # - which is why a preset that had already been applied showed a page of
-    # ticked rows with nothing saying so. The probe existed and returned early for
-    # every tier but 0.
-    #
-    #   $alreadySatisfied  is there anything left for this to DO, ANY tier. The
-    #                      tag and the filter read it. Never disables anything.
-    #   $alreadyDone       should this row refuse a tick. TIER 0 ONLY - graying a
-    #                      row a preset selects removes the only way to drop it.
-    #
-    # Two ways of being already done: the software is installed, or the setting is
-    # already the setting. "PowerToys Run on Alt+Space" where Alt+Space already
-    # does that is as finished as an install. Returns '' when there is something
-    # to do, or the words to show when there is not.
+    # Asking and disabling are two questions, and one function was answering
+    # both - which is why a preset already applied showed a page of ticked rows
+    # with nothing saying so.
     $alreadySatisfied = {
         param($item)
         foreach ($pat in @(Get-Prop $item 'detect' @())) {
             if (-not $pat) { continue }
             foreach ($n in $installedNames) { if ($n -like $pat) { return 'already installed' } }
         }
-        # The inventory and the profile both matter here and neither used to be
-        # passed. Without the inventory an appx or uninstall action can never
-        # answer, so every item made of a package plus some policy writes was
-        # permanently outstanding; without the profile a guarded action that
-        # will never run on this machine is asked anyway, and answers no for
-        # ever. Between them that was most of the list somebody with a mode
-        # already applied was looking at.
-        # The map first, the machine second. Both roads are the same call with
-        # the same arguments, so they cannot disagree - the map is a cache of
-        # this very question, filled by a runspace started when the window began
-        # building. An id that is not in it yet is asked here, which is what
-        # every id used to be.
+        # The inventory and the profile both matter and neither used to be
+        # passed: without the inventory an appx or uninstall action can never
+        # answer.
         $key = [string]$item.id
         if ($satisfiedMap.ContainsKey($key)) {
             if ($satisfiedMap[$key]) { return 'already applied' }
@@ -5797,56 +4648,34 @@ function Show-WDWindow {
         if (Test-WDItemSatisfied -Item $item -Inventory $machineInv -Profile $Profile) { return 'already applied' }
         ''
     }
-    # $alreadyDone answers the second, and is deliberately still tier 0 only. A
-    # row a preset selects has to stay tickable even when the machine already
-    # matches it: disabling it would take away the only way to drop it from that
-    # preset's selection, which is a worse problem than the one this solves.
-    # Everything that reads this - the disable, $installedIds, and $cmpLive on
-    # the Compare page - means "this row is not a decision", so widening it
-    # would silently drop real differences off Compare too.
+    # $alreadyDone answers the second, and is deliberately still tier 0 only: a
+    # row a preset selects has to stay tickable.
     $alreadyDone = {
         param($item, [int]$tier)
         if ($tier -ne 0) { return '' }
         $r = [string](& $alreadySatisfied $item)
-        # One word for the disabled case, because there the row IS the claim.
+        # One word for the disabled case, because there the row is the claim.
         if ($r -eq 'already applied') { return 'already set' }
         $r
     }
     # Which parent rows count as satisfied without being ticked: PowerToys does
-    # not have to be queued if it is already here, and its options should be
-    # available on a machine that already has it.
+    # not have to be queued if it is already here.
     $installedIds = New-Object System.Collections.Generic.HashSet[string]
 
-    # Is there a browser here other than Edge? "Make your other browser the
-    # default" is the one row in the list that means nothing without an answer
-    # to that - on a machine with only Edge it offers to point the web at
-    # something that does not exist. $browserHere is the same sweep the picker
-    # grays its buttons from, so the two cannot disagree about what a browser is
-    # or about which ones are here.
+    # "Make your other browser the default" is the one row that means nothing
+    # without an answer to this.
     $otherBrowserHere = [bool]($browserHere.Count)
     # A browser queued for install counts too, and that changes while the page
-    # is open - which is why this is a gate re-asked on every filter pass rather
-    # than a guard decided once when the list was built.
+    # is open - hence a gate re-asked on every filter pass.
     $rowGate['set-default-browser'] = {
         [bool]($otherBrowserHere -or @($state.BrowserChoices).Count)
     }.GetNewClosure()
 
-    # The one category whose rows carry a measured size and drive the bar above
-    # them. Matched on the category id rather than its name, which is a label
-    # and may be translated or reworded.
+    # Matched on the category id rather than its name, which is a label.
     $STORAGE_CAT = 'storage'
 
-    # ---- which accounts per-user settings reach ---------------------------
-    #
-    # Everything in this toolkit is machine-wide by nature except one thing:
-    # registry values written with scope 'allusers', which go into each account's
-    # own hive and into the default profile so accounts made later inherit them.
-    # That is the only place where "which accounts" is a question with an answer,
-    # so it is the only place that offers a choice. HKLM policies, services,
-    # scheduled tasks, Windows features and removed packages have no per-account
-    # version and the block says so rather than implying the tick governs them.
-    #
-    # Defaults to everything, which is what every release before this did.
+    # Only registry values written with scope allusers have a per-account
+    # answer. Everything else is machine-wide and always was.
     $accountList = @()
     try { $accountList = @(Get-WDUserAccounts) } catch { }
     # Which rows the choice actually governs, worked out once from the actions.
@@ -5866,46 +4695,19 @@ function Show-WDWindow {
     }
     $accountTags = New-Object System.Collections.Generic.List[psobject]
 
-    # Two theme keys, shared by every row. A row is a click target the width of
-    # half the window, and without the hover tint there is nothing to say so
-    # until the pointer is already on it.
-    #
-    # WdCard over the section box's WdPanel measured 1.07:1 in dark and 1.04:1
-    # in light - which is to say the tint was not visible on any of the ~240
-    # rows. WdRowHover is a dedicated pair, about 1.3:1.
+    # A row is a click target the width of half the window, and without the
+    # hover tint there is nothing to say so.
 
-    # What the Details panel says: the risk note FIRST, then what the option
-    # changes, then whether it can be taken back. The note is at the top because
-    # a warning under forty lines of registry paths is not read - what an option
-    # changes is reference, what it costs you is the decision.
-    #
-    # TWO VIEWS OF ONE ASSEMBLY. The same words are drawn as a panel under the
-    # row, where the note carries its badge's colour, and as one flat string for
-    # the search index and the pop-up. Two builders would be two copies of one
-    # paragraph.
-    #
-    # -Live IS THE EXPENSIVE HALF AND IS OFF BY DEFAULT. -ShowState reads every
-    # registry value and service the item names: measured over the manifest,
-    # 2,528 ms with it against 465 without, and 1-12 ms for the single item a
-    # click asks about. It was paid on every row at build time - most of two
-    # seconds spent filling in panels nobody was going to open.
-    #
-    # Where to change it back by hand, and what might break later, live in the
-    # common issues document instead. Both are read weeks later by somebody with
-    # a problem; this panel is read while deciding.
+    # What the Details panel says: the risk note first, then what the option
+    # changes, then whether it can be taken back.
     $itemDetailParts = {
         param($Item, [switch]$Live)
         $m    = Get-WDItemMechanics -Item $Item -ShowState:$Live
         $part = New-Object System.Collections.Generic.List[hashtable]
 
-        # THE RISK NOTE COMES FIRST, and that is the whole reason it is a
-        # separate part. It is the one thing here written to stop somebody, and
-        # it was at the bottom - under a list of registry paths that can run to
-        # forty lines, which is exactly where a warning is not read. What this
-        # option changes is reference; what it costs you is the decision.
-        #
-        # In the badge's own colour, rather than behind the badge as a second
-        # panel saying a second thing about one row.
+        # The risk note comes first, and that is the whole reason it is a
+        # separate part: it is the one thing written to stop somebody, and it
+        # was under forty lines of registry paths.
         $risk = [int](Get-Prop $Item 'risk' 0)
         if ($riskStyle.ContainsKey($risk)) {
             $note = [string](Get-Prop $Item 'riskNote' '')
@@ -5922,10 +4724,8 @@ function Show-WDWindow {
             $out.Add('  Nothing was recorded for this one.')
         }
         # The count, because a panel listing thirty values is one nobody adds up
-        # by eye - and "nothing, it is all already set" is the single most useful
-        # thing it can say. Only a live read can say it: without the state there
-        # are no markers to count, which is why this asks the lines rather than
-        # the switch.
+        # by eye - and "nothing, it is all already set" is the most useful thing
+        # it can say.
         $marked = @($m.Lines | Where-Object { $_ -match '\[(already set|will be set|already set for)' })
         if ($marked.Count) {
             $todo = @($marked | Where-Object { $_ -match '\[will be set\]' }).Count +
@@ -5939,24 +4739,14 @@ function Show-WDWindow {
         }
         $part.Add(@{ Text = ($out -join "`r`n"); Ink = 'Sub' })
 
-        # Three-valued, because the honest answer is. "Undoing the run puts every
-        # one of these back exactly" was on every dialog and was simply untrue of
-        # the ones that delete a file or uninstall an app.
-        #
-        # The word, and nothing after it. Each of the three used to carry a
-        # sentence explaining itself, which is a caption on a label: "fully"
-        # followed by "Revert past changes restores every one of these exactly"
-        # says the same thing twice, and the two-hundred-odd dialogs that said
-        # "fully" were all carrying the longer half for nothing. The specifics of
-        # putting one back by hand are in the common issues document, which is
-        # where somebody wanting them actually is.
+        # Three-valued, because the honest answer is: "undoing the run puts
+        # every one of these back exactly" was untrue of anything that deletes.
         $part.Add(@{ Text = "`r`n`r`nRevertible: $($m.Revert)"; Ink = 'Sub' })
         ,$part
     }.GetNewClosure()
 
-    # The flat view. Everything that wants one string - the search index, the
-    # pop-up, the preview row, and the self test - comes through here, so none of
-    # them can drift from what the panel shows.
+    # The flat view. Everything that wants one string comes through here, so
+    # none of them can drift from the panel.
     $itemDetail = {
         param($Item, [switch]$Live)
         $parts = & $itemDetailParts $Item -Live:$Live
@@ -5965,34 +4755,14 @@ function Show-WDWindow {
         $sb.ToString()
     }.GetNewClosure()
 
-    # The chip that opens it. THE SHAPE IS WHAT SAYS "BUTTON" - a border, a hand
-    # cursor, a hover fill. It was the bare word "details" in the same size and
-    # colour as the "opt-in" tag beside it, so it read as a label; painted in the
-    # accent instead, ~240 of them turned the page into a column of blue down the
-    # right of every name. So: ordinary text gray with a hairline edge, and the
-    # accent arrives under the pointer, where one at a time can be lit.
-    #
-    # UNDER THE ROW, NOT OVER IT. The page is the thing being decided against, and
-    # an answer that covers the question while you read it makes you close it to
-    # check what you were asking. It also brings the coverage with it: a MessageBox
-    # blocks the dispatcher with nobody to dismiss it, which is why the risk badge
-    # and Preview are excluded from the interaction harness by name. An in-line
-    # panel is an element the harness can press and read back. Anybody who wants
-    # the dialog has it - App Options writes $StateRef.DetailPopup.
-    #
-    # WHAT NON-VERBOSE TOOK OFF THE ROW GOES BACK IN HERE: the status words as one
-    # comma list, then the description. With Non-verbose off it adds nothing,
-    # since all of it is on the row two lines above.
-    #
-    # $Facts is the row's own BY REFERENCE, so a status that moves under Refresh is
-    # the one this shows.
+    # The chip that opens it. The shape is what says "button" - a border, a hand
+    # cursor, a hover fill.
     $terseLead = {
         param($Facts)
         $out = New-Object System.Collections.Generic.List[hashtable]
         if (-not $Facts) { return ,$out }
         # One row, comma separated, at the very start: these are the tags that
-        # used to sit beside the name, and a list of two or three words reads as
-        # a list rather than as three lines of prose.
+        # used to sit beside the name.
         $words = @(@($Facts.Status) | Where-Object { $_ })
         if ($words.Count) {
             $out.Add(@{ Text = ($words -join ', ') + "`r`n`r`n"; Ink = 'Muted' })
@@ -6011,16 +4781,7 @@ function Show-WDWindow {
         $setBrush = $Ref
         $partsFn  = $itemDetailParts
         $leadFn   = $terseLead
-        # IT HAS TO READ AS A BUTTON AT REST, not only under the pointer. It sat
-        # in a hairline of the same Line grey that draws every rule and divider
-        # on the page, on no fill, with its word in Sub - so at rest it was a
-        # bordered label, and the only thing that said "control" was a hover tint
-        # nobody sees until they are already on it.
-        #
-        # A real face (BtnBg, the same fill every other button on the page has),
-        # the button border, and the word in Text rather than Sub. That is the
-        # smallest set of changes that makes it look like what it is; the accent
-        # still arrives on hover, where exactly one of them can be lit at a time.
+        # It has to read as a button at rest, not only under the pointer.
         $chip = New-Object Windows.Controls.Border
         $chip.CornerRadius = New-Object Windows.CornerRadius 4
         $chip.Padding = '9,2,9,3'; $chip.Margin = '8,2,0,0'
@@ -6033,11 +4794,8 @@ function Show-WDWindow {
         $t.Text = 'Details'; $t.FontSize = 11
         & $Ref $t 'Foreground' 'Text'
         $chip.Child = $t
-        # The label is repainted too, not only the frame: a chip whose edge
-        # lights up while its word stays gray reads as a hover effect on a label
-        # rather than as a button waking up. It rides in the same Tag as
-        # everything else the handlers need - a Border has one Tag, and a second
-        # assignment silently wins.
+        # The label is repainted too: a chip whose edge lights while its word
+        # stays gray reads as a hover effect on a label.
         $chip.Tag = @{ Title = $Title; Item = $Item; State = $StateRef; Label = $t
                        Stack = $Stack; Panel = $null; Facts = $Facts; Lead = $leadFn }
         $chip.Add_MouseEnter({
@@ -6050,42 +4808,23 @@ function Show-WDWindow {
         }.GetNewClosure())
         $chip.Add_MouseLeftButtonUp({
             $d = $this.Tag
-            # THE STATE READ HAPPENS HERE, and only here. Every line saying
-            # whether it is already what this would write costs a registry and
-            # service sweep of that item - 1 to 12 ms for one, and most of two
-            # seconds if it is done for the whole list at build time, which is
-            # what it used to be.
-            #
-            # A caller may hand over a plain string rather than a manifest item:
-            # the two always-run steps do, because neither is an item and their
-            # text is authored rather than derived. There is nothing to read off
-            # the machine for one of those, so it becomes a single part and both
-            # branches below skip the live read entirely.
+            # The state read happens here and only here: every line saying
+            # whether a value is already what this would write costs a registry
+            # read, and doing it per row cost 2.5 seconds of the build.
             $parts = $(if ($d.Item -is [string]) {
                            @(@{ Text = [string]$d.Item; Ink = 'Sub' })
                        } else { @(& $partsFn $d.Item -Live) })
             # Under Non-verbose the row is no longer saying any of this, so the
-            # panel does. Rebuilt on every open rather than cached with the
-            # element: the status can change under Refresh, and the option can be
-            # switched off between two presses of the same chip.
+            # panel does.
             if ($d.State.Terse -and $d.Facts) {
-                # ASSIGNED FIRST, then wrapped. $terseLead ends in ,$out so that a
-                # caller who assigns gets the list rather than its elements one at
-                # a time - and wrapping that call in @() directly gives a
-                # ONE-element array holding the whole list. $parts[0] was then the
-                # List itself, $p.Ink member-enumerated to @('Muted','Sub'), and
-                # [string] of that is 'Muted Sub' - which is how a Details click
-                # came to ask the theme for a key called WdMuted Sub. The comma is
-                # right when the caller assigns; here it has to.
+                # Assigned first, then wrapped. $terseLead ends in ,$out so a
+                # caller who assigns gets the list.
                 $lead = & $d.Lead $d.Facts
                 if ($lead.Count) { $parts = @($lead) + @($parts) }
             }
             if ($d.State.DetailPopup -or -not $d.Stack) {
-                # 'None', not 'Information'. MessageBox couples the icon to a
-                # system sound - Information plays the Asterisk - and there is no
-                # parameter that separates them. Reading a description is not an
-                # event, and a ding on the one gesture this page is built around
-                # turns reading into something with a noise attached.
+                # 'None', not 'Information': MessageBox couples the icon to a
+                # system sound, and reading a description is not an event.
                 if (-not $d.State.NoPrompts) {
                     $flat = New-Object System.Text.StringBuilder
                     foreach ($p in $parts) { $null = $flat.Append([string]$p.Text) }
@@ -6108,16 +4847,8 @@ function Show-WDWindow {
                 $null = $d.Stack.Children.Add($tb)
                 $d.Panel = $tb
             }
-            # FILLED ON EVERY OPEN, not once when the element was made. Three
-            # things it says can change between two presses of the same chip: the
-            # live state read, the status word after a Refresh, and whether
-            # Non-verbose is on - and a panel built once would go on showing
-            # whichever of those was true the first time.
-            #
-            # Runs rather than one string, because the risk note is drawn in its
-            # badge's colour and a TextBlock has one Foreground. Note that .Text
-            # reads empty once Inlines are used, so anything inspecting this has
-            # to concatenate them.
+            # Filled on every open, not once when the element was made: what it
+            # says can change between two presses of the same chip.
             $d.Panel.Inlines.Clear()
             foreach ($p in $parts) {
                 $run = New-Object Windows.Documents.Run
@@ -6134,21 +4865,17 @@ function Show-WDWindow {
     $makeItemRow = {
         param($item, $catName, $catId, $secName)
         if (-not $secName) { $secName = 'remove' }
-        # $Ref copied into this scope on purpose. GetNewClosure captures the
-        # local scope only, and the handlers below are created inside this
-        # scriptblock - reaching for $Ref directly would capture nothing and
-        # every hover would throw.
+        # $Ref copied into this scope on purpose: GetNewClosure captures the
+        # local scope only.
         $setBrush = $Ref
 
         $tier = Get-WDItemTier -Item $item
         $risk = [int](Get-Prop $item 'risk' 0)
-        # Copied into this scope so the handlers below capture it - see the
-        # closure rule on $buildModeGrid.
+        # Copied into this scope so the handlers below capture it.
         $undoRef = $advUndoRef
 
-        # An item that only makes sense underneath another one - the PowerToys
-        # modules under the PowerToys install - is indented and hidden until its
-        # parent is ticked, exactly as the browser picker is under Edge removal.
+        # An item that only makes sense underneath another one is indented and
+        # hidden until its parent is ticked.
         $needs = [string](Get-Prop $item 'requires' '')
 
         $panel = New-Object Windows.Controls.DockPanel
@@ -6156,9 +4883,7 @@ function Show-WDWindow {
         $panel.LastChildFill = $true
         & $Ref $panel 'Background' 'Flat'
         # The hover handlers are attached further down, once it is known whether
-        # this row is one the machine can actually act on. A tint on a row that
-        # cannot be ticked is the page's own "you can act on this" signal used
-        # on something you cannot.
+        # this row is one the machine can act on.
 
         $cb = New-Object Windows.Controls.CheckBox
         $cb.IsChecked = $false
@@ -6167,16 +4892,14 @@ function Show-WDWindow {
         $cb.Tag = [string]$item.id
         [Windows.Controls.DockPanel]::SetDock($cb, 'Left')
         $null = $panel.Children.Add($cb)
-        # Click, not Checked: Checked fires for every programmatic set too, so
-        # applying a preset would push 200 entries onto the undo stack. By the
-        # time Click runs the box has already flipped, so the old value is the
-        # opposite of what it now reads.
+        # Click, not Checked: Checked fires for every programmatic set, so
+        # applying a preset would push 200 entries onto the undo stack.
         $cb.Add_Click({
             if ($undoRef.Push) { & $undoRef.Push @(@{ Id = [string]$this.Tag; Was = (-not $this.IsChecked) }) }
         }.GetNewClosure())
 
         # Only a real application icon earns space here. A generic category
-        # glyph on every row is visual noise that carries no information.
+        # glyph on every row is noise.
         $src = $null
         $ik  = [string](Get-Prop $item 'iconKind' '')
         $inm = [string](Get-Prop $item 'iconName' '')
@@ -6190,14 +4913,9 @@ function Show-WDWindow {
         }
 
         $stack = New-Object Windows.Controls.StackPanel
-        # WrapPanel, not a horizontal StackPanel, and the difference is the whole
-        # of a bug. A horizontal StackPanel measures every child with INFINITE
-        # width, so a TextBlock marked TextWrapping="Wrap" never wraps and
-        # everything after it is pushed off the edge and clipped - which on a
-        # narrow window meant the Details chip on a long-named row simply was not
-        # there. A WrapPanel measures children against its own width, so the name
-        # wraps when it has to and the tags and the chip drop to the next line
-        # rather than off the page.
+        # WrapPanel, not a horizontal StackPanel: that measures every child with
+        # infinite width, so nothing wraps and the last chip is drawn off the
+        # card.
         $line  = New-Object Windows.Controls.WrapPanel
         $line.Orientation = 'Horizontal'
 
@@ -6208,18 +4926,14 @@ function Show-WDWindow {
         $name.TextWrapping = 'Wrap'
         $null = $line.Children.Add($name)
 
-        # Filled in by $updateTally when this row differs from the preset. Color
-        # alone would not be enough, so it carries a word too.
+        # Filled in by $updateTally when this row differs from the preset.
+        # Colour alone is not enough, so it carries a word.
         $diffTag = New-Object Windows.Controls.TextBlock
         $diffTag.FontSize = 11.5; $diffTag.Margin = '8,4,0,0'; $diffTag.FontWeight = 'Bold'
         $diffTag.Visibility = 'Collapsed'
         $null = $line.Children.Add($diffTag)
 
         # What this row does to the drive: negative frees, positive fills.
-        # Removals size themselves from what the installer recorded in its own
-        # uninstall key; installs from a figure the manifest carries, because
-        # nothing on the machine knows what a package that is not here yet will
-        # occupy. Clean-ups fill theirs in later, from the measurement.
         $rowDelta = 0L
         $rowBlind = 0
         if ($Presence -and $Presence.ContainsKey([string]$item.id)) {
@@ -6229,14 +4943,8 @@ function Show-WDWindow {
         $addMb = [int](Get-Prop $item 'installSize' 0)
         if ($addMb -gt 0) { $rowDelta = [int64]$addMb * 1MB }
 
-        # Only when it is worth a decision. Every row used to carry its figure,
-        # which put "-4 MB" beside two hundred names and made the column read as
-        # noise - nobody picks or skips an item over four megabytes. A gigabyte
-        # is where the number starts changing an answer, so that is the floor.
-        # Clean-ups are exempt: they are *about* the space, and they say
-        # "measuring" until theirs arrives, because a row that quietly grows a
-        # size later reads as a glitch and a zero in the meantime reads as an
-        # answer.
+        # Only when it is worth a decision: every row used to carry its figure,
+        # which put "-4 MB" beside two hundred names.
         $SIZE_TAG_FLOOR = 1GB
         $sizeTag = $null
         if ([string]$catId -eq $STORAGE_CAT -or [Math]::Abs($rowDelta) -ge $SIZE_TAG_FLOOR) {
@@ -6257,67 +4965,35 @@ function Show-WDWindow {
             $null = $line.Children.Add($sizeTag)
         }
 
-        # ONE probe per row, read two ways: it is the most expensive thing on a row
-        # (a registry read per value, a ServiceController per service), so asking
-        # twice would put a second back on the page build.
-        #
-        # ABSENT AND APPLIED ARE EXCLUSIVE, AND ABSENT WINS - which is why presence
-        # is asked FIRST and the probe only runs when the answer is no. Both mean
-        # "a run finds nothing to do here", so a row wearing both says it twice in
-        # words that disagree about why. Once the probe learnt to answer appx
-        # actions, a package never installed here started reading "already applied"
-        # - a claim that somebody did this, about a machine that never had the
-        # thing. Absent is also the more useful statement: a fact about the machine
-        # that will not change, against a job that turned out to be finished. It
-        # saves the probe entirely on about a fifth of the list.
+        # One probe per row, read two ways: it is the most expensive thing on a
+        # row, so it is asked once and both answers come out of it.
         $absent = $false
         if ($Presence -and $Presence.ContainsKey([string]$item.id)) {
             $absent = ($false -eq $Presence[[string]$item.id].Present)
         }
         $satisfied = ''
         if (-not $absent) { $satisfied = [string](& $alreadySatisfied $item) }
-        # Whichever of the three status words this row ends up wearing - "already
-        # installed", "already set", or "opt-in". Exactly one is possible, which
-        # is why one variable holds it: they are the branches of one if. Non-
-        # verbose takes it away, and "not on this machine" is deliberately NOT in
-        # here - that one changes what the row IS rather than describing it.
+        # Whichever of the three status words this row wears. Exactly one is
+        # possible.
         $terseTag = $null
-        # Already done AND not a decision: say so, gray it out, take it out of
-        # play. Nothing to tick means nothing to run, and the run would report
-        # "already installed" anyway - better to answer that before the click.
+        # Already done and not a decision: say so, gray it out, take it out of
+        # play.
         $here = $(if ($tier -eq 0) {
                       if ($satisfied -eq 'already applied') { 'already set' } else { $satisfied }
                   } else { '' })
-        # ONE ELEMENT, BUILT ON EVERY ROW, whichever of the three words it ends up
-        # wearing - or none. It was three separate TextBlocks in three branches of
-        # an if, which is fine for a page that is built once and never asked again
-        # and is wrong the moment Refresh exists: a row whose answer changes from
-        # "opt-in" to "already set" while the window is open would have needed an
-        # element that was never created. Same rule the Gate line already follows,
-        # and for the same reason.
+        # One element, built on every row, whichever word it ends up wearing -
+        # or none. It was three TextBlocks in three branches, so a row whose
+        # answer changed needed an element that was never created.
         $terseTag = New-Object Windows.Controls.TextBlock
         $terseTag.FontSize = 11; $terseTag.Margin = '6,4,0,0'
         $terseTag.Visibility = 'Collapsed'
         $null = $line.Children.Add($terseTag)
 
         # And one place that decides what it says, so Refresh and the build
-        # cannot disagree about it. Returns nothing; it paints.
-        # $setBrush and $stateHere, never $Ref and $state: this closure is built
-        # inside a block invoked with &, so GetNewClosure copies THIS
-        # invocation's locals and nothing of Show-WDWindow's. $stateHere is the
-        # same hashtable rather than a snapshot, so Non-verbose toggled later is
-        # read live by a repaint.
+        # cannot disagree.
         $stateHere = $state
-        # What the row is currently saying about itself, for the Details panel to
-        # pick up when Non-verbose has taken it off the row. By reference and
-        # kept current by the painter below, so Refresh changing a status changes
-        # what the next press of Details shows.
-        #
-        # "not on this machine" is in here even though the row keeps that tag in
-        # either mode: the panel is a full account of what the row is saying, and
-        # leaving out the one fact that makes it unselectable would be an odd gap.
-        # Desc and Over are filled a little further down, where those two are
-        # read - the chip holds this hashtable by reference, so it sees them.
+        # What the row is currently saying about itself, for the Details panel
+        # to pick up when Non-verbose has taken it off the row.
         $rowFacts = @{ Status = @(); Desc = ''; Over = ''; Absent = $absent }
         $paintStatus = {
             param([string]$Word, [string]$Sat, [int]$Tr)
@@ -6331,15 +5007,8 @@ function Show-WDWindow {
                 })
                 $terseTag.Visibility = 'Visible'
             }
-            # Already done and a preset DOES select it: tag it, leave it alone.
-            # The row stays live and stays ticked, because it is still part of
-            # what the preset means and unticking it has to remain possible - all
-            # that has changed is that the page now says a run would find nothing
-            # to do here.
-            #
-            # Not painted like the absent rows either. Absent is a fact about the
-            # machine that will not change; this is a job already finished, which
-            # is the good outcome, so it reads in the Ok colour rather than gray.
+            # Already done and a preset does select it: tag it, leave it alone.
+            # The row stays live and stays ticked.
             elseif ($Sat) {
                 $terseTag.Text = "  $Sat"
                 & $setBrush $terseTag 'Foreground' 'Ok'
@@ -6354,8 +5023,8 @@ function Show-WDWindow {
             }
             else { $terseTag.Visibility = 'Collapsed' }
             if ($stateHere.Terse) { $terseTag.Visibility = 'Collapsed' }
-            # And the same answer in words, for the Details panel. Rebuilt rather
-            # than appended, so a row that stops being outstanding stops saying it.
+            # Rebuilt rather than appended, so a row that stops being
+            # outstanding stops saying it.
             $words = New-Object System.Collections.Generic.List[string]
             if ($Word)          { $words.Add($Word) }
             elseif ($Sat)       { $words.Add($Sat) }
@@ -6372,10 +5041,8 @@ function Show-WDWindow {
         }
         & $paintStatus $here $satisfied $tier
 
-        # A row the account choice governs says which accounts it will reach.
-        # Only these rows get it: a policy in HKLM applies to the whole machine
-        # whatever anyone ticks, and putting the same tag on it would claim the
-        # choice governed something it does not.
+        # Only rows the account choice governs get this: a policy in HKLM
+        # applies to the whole machine.
         if ($perUserIds.Contains([string]$item.id)) {
             $acct = New-Object Windows.Controls.TextBlock
             $acct.FontSize = 11; $acct.Margin = '6,4,0,0'
@@ -6385,21 +5052,12 @@ function Show-WDWindow {
         }
 
         if ($absent) {
-            # FULL SIZE, AND UNMISTAKABLY NOT A DECISION. These rows were drawn at
-            # half scale under Non-verbose, which saved room and cost legibility -
-            # a name at 7pt is not something anybody reads, and the list saying
-            # what the toolkit covers is the entire reason the row is there.
-            #
-            # So the row keeps its size and says it four ways instead, which is
-            # what the page already has to say about anything that is not a
-            # decision: the box refuses a tick, the name is Muted, the whole row
-            # is dimmed, and the name is struck through - a line through a name is
-            # the one mark that cannot be mistaken for a style choice.
+            # Full size, and unmistakably not a decision. These were drawn at
+            # half scale under Non-verbose, which saved room and cost legibility
+            # - a name at 7pt is not read.
             & $Ref $name 'Foreground' 'Muted'
             $name.TextDecorations = [Windows.TextDecorations]::Strikethrough
-            # On the panel, so it carries the tick box and every tag with it. The
-            # row is still perfectly readable at 0.6 - this is the page's own
-            # signal for "here, but not yours to act on".
+            # On the panel, so it carries the tick box and every tag with it.
             $panel.Opacity = 0.6
             $gone = New-Object Windows.Controls.TextBlock
             $gone.Text = '  not on this machine'; $gone.FontSize = 11; $gone.Margin = '6,4,0,0'
@@ -6408,14 +5066,8 @@ function Show-WDWindow {
             $null = $line.Children.Add($gone)
         }
 
-        # What this actually does to the machine, built from the item's own
-        # actions rather than from anything anybody wrote twice.
-        #
-        # NOT LIVE. This copy exists to be searched, and the search index wants
-        # the paths and the values, which are in the lines whether or not each
-        # one has been checked against the machine. The live read belongs to the
-        # click, where it costs a few milliseconds for one item instead of two
-        # seconds for the list.
+        # Built from the item's own actions rather than from anything anybody
+        # wrote twice.
         $detailText = & $itemDetail $item
 
         if ($riskStyle.ContainsKey($risk)) {
@@ -6423,16 +5075,9 @@ function Show-WDWindow {
             $badge.CornerRadius = 3; $badge.Padding = '6,1,6,2'; $badge.Margin = '8,3,0,0'
             $badge.BorderThickness = New-Object Windows.Thickness 1
             & $Ref $badge 'BorderBrush' $riskStyle[$risk].Col
-            # A MARKER, NOT A CONTROL. It used to open a dialog of its own, so a
-            # row with a badge had two things to click and each said a different
-            # half of one answer - deciding meant opening both and holding the
-            # first in your head while reading the second. The note is inside
-            # Details now, in this badge's own colour, and this says the word.
-            #
-            # So no hand cursor, no hover tint and no click. A control that looks
-            # like one and does nothing is worse than a label; the page's own
-            # rule for an entry that is not a place to go is that it stops being
-            # a card, and this is the same rule on a smaller thing.
+            # A marker, not a control. It used to open a dialog of its own, so a
+            # row with a badge had two things to click and each said half an
+            # answer.
             $bt = New-Object Windows.Controls.TextBlock
             $bt.Text = $riskStyle[$risk].Label
             $bt.FontSize = 11
@@ -6441,24 +5086,13 @@ function Show-WDWindow {
             $null = $line.Children.Add($badge)
         }
 
-        # And a way in for the other two hundred rows. The risk badge was the
-        # only route to the per-item detail and two thirds of the list has no
-        # badge - "what does this actually do" is a question about every row,
-        # not only about the alarming ones.
-        #
-        # $stack, not $line: the panel opens UNDER the row, and $line is the
-        # WrapPanel the name and the chips are on. A detail added there would be
-        # laid out beside the chip that opened it.
-        # Captured rather than added anonymously: its Tag is where the panel
-        # lands once somebody opens it, and Collapse all has to be able to shut
-        # every one of them.
+        # And a way in for the other two hundred rows: the risk badge was the
+        # only route to the per-item detail.
         $detChip = & $makeDetailChip ([string](Get-Prop $item 'name' $item.id)) $item $stack $state $rowFacts
         $null = $line.Children.Add($detChip)
         $null = $stack.Children.Add($line)
 
-        # Held, because Non-verbose takes it away. It is the standing description
-        # - always on screen, the same on every visit - which is exactly the
-        # class of text somebody who already knows this list is reading past.
+        # Held, because Non-verbose takes it away.
         $descEl = $null
         $descText = [string](Get-Prop $item 'desc' '')
         if ($descText) {
@@ -6466,20 +5100,16 @@ function Show-WDWindow {
             $d.Text = $descText; $d.FontSize = 13; $d.TextWrapping = 'Wrap'; $d.Margin = '0,2,0,0'
             & $Ref $d 'Foreground' 'Sub'
             # Built collapsed under Non-verbose rather than skipped, and asked
-            # here rather than only in $applyTerse: rows are built lazily, so one
-            # created after the option was ticked has to come up right without
-            # waiting for another pass over the list.
+            # here rather than only in $applyTerse: rows are built lazily.
             if ($state.Terse) { $d.Visibility = 'Collapsed' }
             $null = $stack.Children.Add($d)
             $descEl = $d
         }
         $rowFacts.Desc = $descText
 
-        # There was a $showOverhead switch here, passed $true only by the
-        # hand-built Recurring block and $false by every other caller. The
-        # field's presence already says the same thing - nothing outside
-        # Recurring carries one - so the switch was a second answer to a
-        # question the data had already answered, and it went with the block.
+        # There was a $showOverhead switch here, passed true only by the
+        # hand-built Recurring block. The field's presence already says the same
+        # thing.
         $ovhEl = $null
         $ovh = [string](Get-Prop $item 'overhead' '')
         if ($ovh) {
@@ -6493,11 +5123,8 @@ function Show-WDWindow {
             $rowFacts.Over = 'Cost: ' + $ovh
         }
 
-        # Why this row is unavailable, when something else on the page has taken
-        # it away. Built empty on every row rather than only where a rule exists:
-        # $EXCLUSIONS is data, a rule can name any id, and a row that grew a
-        # reason line only if somebody remembered to build one is a rule that
-        # silently does half its job.
+        # Built empty on every row rather than only where a rule exists:
+        # $EXCLUSIONS is data, and a rule can name any id.
         $gate = New-Object Windows.Controls.TextBlock
         $gate.FontSize = 12.5; $gate.TextWrapping = 'Wrap'; $gate.Margin = '0,4,0,0'
         $gate.Visibility = 'Collapsed'
@@ -6506,14 +5133,8 @@ function Show-WDWindow {
 
         $null = $panel.Children.Add($stack)
 
-        # A row with nothing to act on is INERT: the box refuses a tick, the row
-        # ignores a click, and the pointer gets no tint. Grayed-but-tickable was
-        # the old answer, on the reasoning that a tick only cost one lookup - true,
-        # and beside the point: everything about a live row says "this is a
-        # decision", and the hover tint is the loudest part of that.
-        #
-        # $applyPresetToChecks skips them too, so a mode never leaves one ticked and
-        # unreachable - which was the objection that kept them tickable.
+        # A row with nothing to act on is inert: the box refuses a tick, the row
+        # ignores a click, and the pointer gets no tint.
         if ($absent) {
             $cb.IsEnabled = $false
             $panel.Cursor = 'Arrow'
@@ -6526,91 +5147,61 @@ function Show-WDWindow {
         $panel.Tag = $cb
         $panel.Add_MouseLeftButtonUp({
             # IsEnabled does not block a programmatic set, so the row click has
-            # to honour it too or a disabled box would still toggle.
+            # to honour it too.
             if (-not $args[1].Handled -and $this.Tag.IsEnabled) {
                 $was = [bool]$this.Tag.IsChecked
                 $this.Tag.IsChecked = -not $was
-                # The box's own Click never fires for this route, so the row has
-                # to record its own gesture.
+                # The box's own Click never fires for this route, so the row
+                # records its own gesture.
                 if ($undoRef.Push) { & $undoRef.Push @(@{ Id = [string]$this.Tag.Tag; Was = $was }) }
             }
         }.GetNewClosure())
 
-        # Nothing here for Non-verbose any more. It used to shrink an absent row
-        # to half size; those are drawn full size and struck through instead, and
-        # that treatment does not depend on the option, so it is applied where the
-        # row learns it is absent rather than here.
+        # Nothing here for Non-verbose any more: an absent row is drawn full
+        # size and struck through instead.
 
         [pscustomobject]@{
             Id = [string]$item.id; Tier = $tier; Risk = $risk
             Bloat = [int](Get-Prop $item 'bloat' 0)
             Check = $cb; Panel = $panel; Category = $catName; CatId = [string]$catId; Section = $secName
             # A row that belongs in one of the page's fixed blocks rather than
-            # in its category's columns. Only "Auto-detect manufacturer" uses
-            # it, which reads as a thing the run is allowed to do rather than
-            # as one of its behaviors - so it sits with the other two of those
-            # under Authority. It stays an ordinary manifest item throughout:
-            # ticked, previewed, planned, journalled and counted like any other.
+            # its category's columns.
             HostBlock = [string](Get-Prop $item 'block' '')
             Name = $name; DiffTag = $diffTag; SizeTag = $sizeTag; Requires = $needs
-            # The Details chip's Tag, which is where the expanded panel lands on
-            # first open. Held so Collapse all can shut every one - see
-            # $shutRowDetails.
+            # The Details chip's Tag, where the expanded panel lands on first
+            # open. Held so Collapse all can shut every one.
             Detail = $detChip.Tag
             # What Non-verbose takes away: the standing description, the cost
-            # line, and whichever status word this row wears. Held rather than
-            # searched for, because the alternative is walking the visual tree
-            # for text blocks and guessing which of them is prose.
+            # line, and whichever status word this row wears.
             Desc = $descEl; Over = $ovhEl; TerseTag = $terseTag
-            # The item, and the one place that repaints the status word. Refresh
-            # re-reads the machine and needs both: the item to ask about, and a
-            # painter that cannot disagree with what the build did.
+            # The item, and the one place that repaints the status word: Refresh
+            # re-reads the machine and needs both.
             Item = $item; PaintStatus = $paintStatus
-            # The line that says why another tick has taken this row away, and
-            # whether it currently has. Gated separately from Absent: one means
-            # "there is nothing here to do", the other "you asked for something
-            # that rules this out", and the second is undone by a click.
+            # Gated separately from Absent: one means another tick has taken
+            # this row away, the other means the machine has.
             Gate = $gate; Gated = $false
-            # Done is "this row refuses a tick because it is finished" and is
-            # tier 0 only; Applied is "a run would find nothing to do here",
-            # whatever tier. The first is about the control, the second about
-            # the machine, and only the second is worth filtering on.
+            # Done is "refuses a tick because it is finished" and is tier 0
+            # only; Applied is "a run would find nothing to do here".
             Absent = $absent; Done = [bool]$here; Applied = [bool]$satisfied
             Delta = $rowDelta; Blind = $rowBlind
-            # The detail text is in here, and that is what makes a registry path
-            # findable: typing PublishUserActivities now lands on the option that
-            # writes it. The revert page's search has always looked inside its
-            # own details for exactly this reason, and it is the same question
-            # asked one page over. It costs nothing - the text is built for the
-            # panel either way, and building it without the live state read is
-            # what took two seconds off this page.
+            # The detail text is in here, which is what makes a registry path
+            # findable by typing it.
             Search = (([string](Get-Prop $item 'name' '')) + ' ' + $descText + ' ' + $catName + ' ' + $detailText).ToLower()
         }
     }
 
         & $say 'Building the interface' 'Laying out the item list'
 
-    # Fills a pair of columns from a list of rows, newspaper fashion: the first
-    # half down the left, the rest down the right. Alternating rows between the
-    # columns would read wrong down either one.
-    #
-    # Below four rows it stays one column. Two columns of one row apiece is not
-    # a layout, it is two lonely rows with a gutter between them, and half the
-    # short categories on this page are exactly that size.
-    # $ColL/$ColR, not $L/$R: variables are case-insensitive here, so a parameter
-    # named $R is the same variable as the row loop's $r further down. It bound
-    # correctly, then the first category's last row overwrote it, and the second
-    # half of every category tried to add itself to a row object.
+    # Fills a pair of columns newspaper fashion: the first half down the left,
+    # the rest down the right.
     $fillColumns = {
         param($RowList, $ColL, $ColR, $Grid)
 
         $ColL.Children.Clear(); $ColR.Children.Clear()
         $list = @($RowList)
 
-        # A dependent row means nothing on its own, so it travels with its
-        # parent wherever the parent lands. A dependent whose parent is not in
-        # this list stands alone rather than vanishing - dropping it is what the
-        # obvious "skip anything with .Requires" version does.
+        # A dependent row travels with its parent wherever the parent lands; one
+        # whose parent is not in the list stands alone rather than vanishing.
         $here = New-Object System.Collections.Generic.HashSet[string]
         foreach ($r in $list) { $null = $here.Add([string]$r.Id) }
         $kids = @{}
@@ -6622,14 +5213,8 @@ function Show-WDWindow {
                 $kids[[string]$r.Requires].Add($r)
             }
         }
-        # Weighed by what is on the page, not by how many rows exist. A Collapsed
-        # row takes no height, so balancing on the raw count staggers the two
-        # columns the moment a filter hides an uneven number from each half -
-        # which is exactly what "hide not on this machine" did to every category
-        # holding absent rows: the rows vanished, the break stayed where it was,
-        # and one column ran on well past the bottom of the other with a page of
-        # dead space beside it. Hidden rows are still parented, so they are still
-        # here to come back; they just weigh nothing while they are not drawn.
+        # Weighed by what is on the page, not by how many rows exist: a
+        # Collapsed row takes no height.
         $groups  = New-Object System.Collections.Generic.List[psobject]
         $weights = New-Object System.Collections.Generic.List[int]
         $total   = 0
@@ -6645,12 +5230,8 @@ function Show-WDWindow {
             $total += $w
         }
 
-        # Where to break the run of groups, chosen as the boundary that leaves
-        # the two columns closest in height rather than the first group that
-        # crosses the halfway mark. Those differ whenever one group is large:
-        # four single rows followed by PowerToys and its five options crossed
-        # halfway only on the last group, so all ten rows went down the left and
-        # the right column was empty. Breaking before the block gives 4 and 6.
+        # The boundary that leaves the two columns closest in height, rather
+        # than the first group to cross halfway.
         $split = 0
         if ($total -ge 4) {
             $run = 0; $bestGap = [double]::PositiveInfinity
@@ -6668,18 +5249,11 @@ function Show-WDWindow {
             foreach ($r in $groups[$gi]) {
                 # A row that still has a parent means two groups in this order
                 # both listed it. Caught here rather than left to WPF, whose
-                # message names neither the row nor the groups.
+                # message names neither.
                 if ($r.Panel.Parent) { throw "row '$($r.Id)' is listed by two groups in this order" }
                 $null = $target.Children.Add($r.Panel)
-                # A strip belonging to this row - the browser picker under Edge
-                # removal, the days box under an update deferral, the folder
-                # under the issues document. A sibling rather than a child, so
-                # nothing hides it implicitly and so it survives a re-order the
-                # same way a row does.
-                #
-                # This was one hardcoded test for the Edge row. Three features
-                # want the same shape now, and a fourth is one line rather than
-                # a fourth special case.
+                # A strip belonging to this row goes in as a sibling, not a
+                # child, so nothing hides it implicitly.
                 if ($rowStrips.ContainsKey([string]$r.Id)) {
                     $strip = $rowStrips[[string]$r.Id]
                     if ($strip.Parent) { $strip.Parent.Children.Remove($strip) }
@@ -6688,14 +5262,8 @@ function Show-WDWindow {
             }
         }
 
-        # Nothing landed on the right, so give its width back. Half a window of
-        # nothing beside four rows reads as a layout that has gone wrong.
-        #
-        # Asked of what is drawn there, not of what is parented there. With the
-        # split weighed by visible rows a column can hold nothing but Collapsed
-        # ones, and counting those kept half the width reserved for a column with
-        # nothing in it - the same dead space this was written to reclaim,
-        # arriving by the other door.
+        # Nothing landed on the right, so give its width back: half a window of
+        # nothing beside four rows reads as a layout gone wrong.
         $rightDrawn = 0
         foreach ($c in $ColR.Children) { if ($c.Visibility -eq 'Visible') { $rightDrawn++ } }
         if ($Grid) {
@@ -6710,35 +5278,6 @@ function Show-WDWindow {
     }.GetNewClosure()
 
     # One group, full width, its own rows in two columns inside it.
-    #
-    # This replaced packing whole categories into two page-tall columns. That was
-    # denser by about a sixth of the page height and had NO SINGLE READING ORDER:
-    # two categories sat side by side at every scroll position, so an index down
-    # the side could only ever be half right - and highlighting two entries at
-    # once describes the problem rather than solving it. Full-width blocks make
-    # the page's order, the manifest's order, and the rail's order one list.
-    #
-    # A "group" is a category under the category order, and a letter range, a
-    # risk level or a size band under the others. They are the same thing to the
-    # page and to the rail, which is what lets every order have a working index
-    # instead of only one of them.
-    # $GroupRows, not $Rows: $rows is the page's whole row list, captured by this
-    # closure, and PowerShell variable names are case-insensitive.
-    #
-    # One definition of what collapsed looks like, shared with Collapse all - a
-    # second copy is how the sign and the visibility come to disagree. The rail is
-    # invalidated by the CALLER, so Collapse all throws the offsets away once
-    # rather than ninety times.
-    #
-    # FOLDING SHUTS THE DETAILS PANELS INSIDE IT, and unfolding deliberately does
-    # not open them. The two directions are not symmetric: Collapse all means "put
-    # this page away", and a group that comes back with six paragraphs standing
-    # open has not been put away - while an expansion is something a person opened
-    # on purpose, one row at a time.
-    #
-    # Every row is asked, not only the open ones: an unbuilt panel is $null and
-    # costs a test, where a register of which are open is a second copy of a fact
-    # the panels already hold.
     $shutRowDetails = {
         param($Rows)
         foreach ($r in @($Rows)) {
@@ -6789,19 +5328,14 @@ function Show-WDWindow {
         $null = $headPanel.Children.Add($head)
         $null = $block.Children.Add($headPanel)
 
-        # Fainter than the box edge around the whole section: this is a divider
-        # inside a group, and at full strength every group read as its own boxed
-        # thing again.
+        # Fainter than the box edge around the whole section: at full strength
+        # every group read as its own boxed section.
         $rule = New-Object Windows.Controls.Border
         $rule.Height = 1; & $Ref $rule 'Background' 'Line'; $rule.Opacity = 0.55; $rule.Margin = '0,0,0,4'
         $null = $block.Children.Add($rule)
 
-        # One line of prose under the heading, and only where a category has
-        # something to say that no row name can. Recurring's is the reason it
-        # used to be built by hand outside the loop: every item under it costs
-        # something for as long as it stays, which is invisible from a list of
-        # names. Carried on the category rather than in code, so a category
-        # that needs a sentence gets one without becoming a special case.
+        # One line of prose under the heading, only where a category has
+        # something no row name can say.
         $sub = $null
         if ($Note) {
             $sub = New-Object Windows.Controls.TextBlock
@@ -6812,36 +5346,22 @@ function Show-WDWindow {
         }
         $null = $block.Children.Add($grid)
 
-        # Plain assignment and an explicit null test. $rowList = $(if ($GroupRows)
-        # {...}) fails twice over here: an empty collection is falsy, so a caller
-        # handing over a list it is about to fill got a different list back, and
-        # the if-expression would unroll it anyway. The caller's list is kept by
-        # reference on purpose - the category loop passes it empty and fills it.
+        # Plain assignment and an explicit null test: an empty collection is
+        # falsy, and an if-expression unrolls it to $null.
         $rowList = $GroupRows
         if ($null -eq $rowList) { $rowList = New-Object System.Collections.Generic.List[psobject] }
 
-        # ---- buttons on the heading, and the heading itself is inert ----------
-        #
-        # Selecting the group used to be a click on the heading. That stopped
-        # working the moment a collapse control joined the same line: clicking the
-        # name of a category is then as likely to mean "fold this away" as "take
-        # all of it", and a target whose meaning has to be guessed is worse than
-        # two controls that each say what they do. So the name is a NAME - no hand
-        # cursor, no hit-test background, no handler - and the actions are buttons.
-        #
-        # Built after the grid and the note, because the collapse button has to be
-        # handed both of them to hide.
+        # Buttons on the heading, and the heading itself is inert: with a
+        # collapse control on the same line, clicking the name is as likely to
+        # mean "fold this away" as "take all of it".
         $toggle = New-Object Windows.Controls.Button
         $toggle.Content = '-'
         $toggle.Width = 24; $toggle.Padding = '0,1'; $toggle.FontSize = 13
         $toggle.FontWeight = 'Bold'; $toggle.Margin = '10,0,0,0'
         $toggle.VerticalAlignment = 'Center'
         $toggle.ToolTip = 'Collapse this group'
-        # Index rather than Rows: collapsing a group moves every heading below it,
-        # so the rail's measured offsets are stale afterwards for exactly the
-        # reason a filter pass makes them stale. Without this, clicking a rail
-        # entry after folding a category away scrolls to where that entry used to
-        # be.
+        # Index rather than Rows: collapsing a group moves every heading below
+        # it, so the rail's measured offsets are stale afterwards.
         $toggle.Tag = @{ Body = $grid; Note = $sub; Index = $indexRef; Set = $setGroupOpen; Rows = $rowList }
         $toggle.Add_Click({
             $t = $this.Tag
@@ -6851,11 +5371,8 @@ function Show-WDWindow {
         }.GetNewClosure())
         $null = $headPanel.Children.Add($toggle)
 
-        # Takes the whole group, and takes it back when pressed again. It acts on
-        # what is VISIBLE, so it respects the filter rather than quietly ticking
-        # rows that are not on screen. Worth having on every kind of group and not
-        # only on categories: "take everything risky" and "take everything that
-        # frees a gigabyte" are the same gesture.
+        # Takes the whole group and takes it back. It acts on what is visible,
+        # so it respects the filter.
         $selAll = New-Object Windows.Controls.Button
         $selAll.Content = 'Select all'
         $selAll.FontSize = 11.5; $selAll.Padding = '8,2'
@@ -6881,15 +5398,8 @@ function Show-WDWindow {
         $null = $headPanel.Children.Add($selAll)
 
         # Puts this group back to what the selected mode does, and nothing else.
-        # Collapsed until there is something to undo, on the same principle as
-        # Advanced's own Save and Reset: all three of its answers are about a
-        # change that has not been made, so offering it over an untouched
-        # category is a control that does nothing on ninety headings at once.
-        #
-        # Shown by $groupResetRef.Fn off the two sets $updateTally already built,
-        # and it counts only rows the reset could actually MOVE - a row whose box
-        # refuses a tick is not something this can put back, and a Reset that
-        # appears and then does nothing is worse than no Reset.
+        # Measured against $defaultIds rather than $effectiveIds, which folds in
+        # every other group's edits.
         $reset = New-Object Windows.Controls.Button
         $reset.Content = 'Reset'
         $reset.FontSize = 11.5; $reset.Padding = '8,2'
@@ -6903,17 +5413,8 @@ function Show-WDWindow {
         }.GetNewClosure())
         $null = $headPanel.Children.Add($reset)
 
-        # Ordered and VisN are filled in by $applyOrder and read by
-        # $rebalanceGroups: the sorted member list this block was last laid out
-        # from, and how many of them were on the page at the time. Declared in
-        # the literal rather than added later, because a pscustomobject takes a
-        # new property only through Add-Member and a rebalance that has to
-        # remember one thing is not worth a reflection call per block.
-        #
-        # SelAll and Toggle are on it so the interaction pass can press the real
-        # buttons. The select-all gesture used to be a click on Head, which the
-        # harness drove directly; there is a control for it now and the test
-        # drives that instead.
+        # Ordered and VisN are filled by $applyOrder and read by
+        # $rebalanceGroups.
         [pscustomobject]@{ Name = $Title; Head = $headPanel; Rule = $rule; Rows = $rowList
                            Section = $Section; Block = $block
                            L = $colL; R = $colR; Grid = $grid; Note = $sub
@@ -6924,67 +5425,32 @@ function Show-WDWindow {
     $catHeaders = New-Object System.Collections.Generic.List[psobject]
 
     # The rows: the expensive half of the application, and why any of this is
-    # deferred.
-    #
-    # SMALL ENTRIES, and that is the fix for a two-second freeze rather than a
-    # tidier way of writing the same thing. A pre-warm tick runs one entry TO
-    # COMPLETION and cannot be interrupted, so every click landing inside one
-    # waits for the whole of it. This was a single entry covering every category.
-    #
-    # One entry per category was only half the answer: the categories are wildly
-    # uneven - most hold five or ten rows, one holds over a hundred - so the worst
-    # entry was still 1.3s. THE UNIT IS A FIXED NUMBER OF ROWS, because rows are
-    # what cost.
-    #
-    # A step builds at most $CAT_CHUNK rows and, if its category has more, puts
-    # itself back at the FRONT of the list - entries run in source order and the
-    # rest of the build depends on that. The holder carries the filtered item
-    # list, the position, and the target block between steps, captured BY
-    # REFERENCE so all of a category's steps share one.
-    #
-    # Filtering happens inside the first step, not out here: it calls
-    # Test-WDItemApplies per item, which is real work, and doing it at list-build
-    # time puts it back on the path this exists to keep clear.
-    #
-    # Eight rather than ten since the already-applied probe moved onto every row
-    # at ~4ms each. The ceiling that matters is the LONGEST SINGLE STEP, so the
-    # answer to a step growing is fewer rows in it, not a higher ceiling.
+    # deferred. The unit is a fixed number of rows, because rows are what cost.
     $CAT_CHUNK = 8
     foreach ($cat in $normalCats) {
     $catBox = @{ Cat = $cat; Items = $null; At = 0; InCat = $null; Step = $null }
     $catStep = {
         if ($null -eq $catBox.Items) {
-            # $knownIds, NOT a second Test-WDItemApplies - worth 1.9s of the
-            # deferred build. The startup pass that fills $applicable already
-            # answers that for every item, and its inventory arm is a nested loop
-            # over every installed package, which is what made asking again per
-            # category the most expensive step here.
-            #
-            # It also removes the chance of the two disagreeing about what applies.
+            # $knownIds, not a second Test-WDItemApplies - worth 1.9s of the
+            # deferred build, and it removes the chance of the page and the
+            # preset counts disagreeing.
             $catBox.Items = @($catBox.Cat.items |
                               Where-Object { $knownIds.Contains([string]$_.id) } |
                               Sort-Object { [string](Get-Prop $_ 'name' $_.id) })
-            # return, not continue: this is one category's own scriptblock now,
-            # and there is no loop here to continue.
+            # return, not continue: this is one category's own scriptblock, and
+            # there is no loop here.
             if (-not $catBox.Items.Count) { return }
             if ($advSay.Fn) { & $advSay.Fn ([string]$catBox.Cat.name) }
 
             # A category is one section or the other; an item that disagrees
-            # with its category still reports its own, so the filter stays
-            # truthful even though the column it sits in is the category's.
+            # with its category still reports its own.
             $secName = Get-WDItemSection -Item $null -Category $catBox.Cat
             $catBox.InCat = New-Object System.Collections.Generic.List[psobject]
             $g = & $makeGroupBlock ([string]$catBox.Cat.name) `
                                    (Get-WDCategoryGlyph -Id ([string]$catBox.Cat.id)) `
                                    $secName $catBox.InCat ([string](Get-Prop $catBox.Cat 'note' ''))
-            # The group block is added to $catHeaders as soon as it exists, and
-            # its row list fills in underneath over the steps that follow - the
-            # list is held by reference, which is what $makeGroupBlock's own
-            # comment about not replacing the caller's list is for.
-            #
-            # Not laid out here either way. $applyOrder runs at the end of this
-            # build and does exactly that for whichever order is in force, so
-            # doing it now as well was a second full pass over every row.
+            # The block is added as soon as it exists and its rows fill in
+            # underneath over the steps that follow.
             $catHeaders.Add($g)
         }
         $n = 0
@@ -6995,12 +5461,7 @@ function Show-WDWindow {
                                   (Get-WDItemSection -Item $item -Category $catBox.Cat)
             $rows.Add($row)
             # A hosted row goes straight into its fixed block and is never
-            # offered to the grouping, so nothing re-parents it later. It is
-            # still in $rows, which is what the filter, the tally, the preset
-            # application and the rail counts all walk - so the only thing that
-            # differs from any other row is where on the page it is drawn.
-            # $hostPanel, never $host: variables are case-insensitive here and
-            # $Host is the PowerShell host object.
+            # offered to the grouping.
             if ($row.HostBlock) {
                 $hostPanel = $null
                 switch ($row.HostBlock) { 'authority' { $hostPanel = $ui.RunOptionsBlock } }
@@ -7008,9 +5469,7 @@ function Show-WDWindow {
             }
             $catBox.InCat.Add($row)
             # The replacement browser is chosen right here, under the item that
-            # makes it necessary, rather than as a separate entry somewhere else
-            # in the list that means nothing on its own. Built now so that
-            # $fillColumns has a strip to place beside the Edge row.
+            # makes it necessary.
             if ($row.Id -eq $EDGE_ID) {
                 $null = & $makeBrowserPicker 'edge'
                 $browserUi.Row = $row
@@ -7019,28 +5478,19 @@ function Show-WDWindow {
         if ($catBox.At -lt $catBox.Items.Count) { $advWork.Insert(0, $catBox.Step) }
     }.GetNewClosure()
     # After the closure is made, and it still works: the closure captured the
-    # holder, not this variable, so it sees whatever the holder is carrying when
-    # it runs. This is how a step reaches itself in order to ask for another go.
+    # holder rather than this variable.
     $catBox.Step = $catStep
     $advWork.Add($catStep)
     }
 
-    # ---- strips that belong to one row -------------------------------------
-    #
-    # Two answers the manifest cannot carry, collected beside the row that needs
-    # them and shown only while that row is ticked. Both cross into the engine
-    # on run-options.json, written once from $startRun, exactly as the browser
-    # choice does - the run is on another runspace and a file is the only thing
-    # that reliably crosses.
+    # Strips that belong to one row.
     $advWork.Add({
-        # Every entry on this list names itself, not only the categories. These
-        # six used to say nothing, so the bar and the line under it both stopped
-        # dead for the last part of the wait - which is the most expensive part,
-        # since the page is laid out down there.
+        # Every entry on this list names itself, not only the categories: these
+        # six said nothing, so the bar and the line under it both stopped for
+        # the last third of the wait.
         if ($advSay.Fn) { & $advSay.Fn 'Building the fields beside a row' }
-        # Built from $rows rather than read out of $rowById: that table is
-        # filled by a later entry in this same list, and a lookup against it
-        # from here comes back empty with nothing to say so.
+        # Built from $rows rather than $rowById: that table is filled by a later
+        # entry in this same list.
         $byId = @{}
         foreach ($r in $rows) { $byId[[string]$r.Id] = $r }
 
@@ -7055,14 +5505,8 @@ function Show-WDWindow {
             $box
         }
 
-        # --- how long to hold updates back ---------------------------------
         # "Defer for [ 30 ] days (max 365)". The ceiling is a fact about the
-        # field rather than a continuation of the sentence, so it is in
-        # parentheses after the unit and painted as an aside - "days, up to 365"
-        # read as one phrase and left the reader working out which number the
-        # box wanted. A WrapPanel, not a horizontal StackPanel: that one measures
-        # its children with infinite width, so at a narrow window the ceiling is
-        # drawn off the edge of the strip rather than dropping to a second line.
+        # field rather than the end of the sentence.
         foreach ($d in @(@{ Id = 'wu-defer-feature'; Key = 'Feature'; Max = 365 },
                          @{ Id = 'wu-defer-quality'; Key = 'Quality'; Max = 30 })) {
             if (-not $byId.ContainsKey([string]$d.Id)) { continue }
@@ -7088,9 +5532,8 @@ function Show-WDWindow {
             $null = $sp.Children.Add($cap)
             $box.Child = $sp
             # Clamped as it is typed, not on the way to the engine, so the box
-            # shows the number that will actually be written. Windows silently
-            # ignores a period outside its own range, which looks exactly like
-            # the policy never having been set.
+            # shows the number that will be written. Windows silently ignores a
+            # period outside its range.
             $tb.Tag = @{ Key = [string]$d.Key; Max = [int]$d.Max; State = $state; Save = $saveUiState }
             $tb.Add_LostFocus({
                 $t = $this.Tag
@@ -7105,22 +5548,10 @@ function Show-WDWindow {
             $rowStrips[[string]$d.Id] = $box
         }
 
-        # --- which browser to hand the associations to ----------------------
-        #
-        # It used to take the first non-Edge browser it found, which is a guess on
-        # any machine with two - and a machine with two is exactly where somebody
-        # cares which wins.
-        #
-        # Browsers actually here, plus anything this run has QUEUED: a browser about
-        # to exist is a legitimate answer, and the one somebody removing Edge most
-        # likely wants. $rowGate removes the row when both lists are empty, so this
-        # strip never renders an empty question.
+        # Which browser to hand the associations to.
         if ($byId.ContainsKey('set-default-browser')) {
-            # Copied into this scope first. This whole block is a closure, and a
-            # closure written inside it captures only what is local *here* -
-            # reaching for $state or $Ref through the chain captures $null and
-            # the first click throws. The static check in [6] catches it, and it
-            # caught this.
+            # Copied into this scope first: this whole block is a closure, and
+            # one written inside it captures only what is local here.
             $defUi     = $defBrowserUi
             $hereNames = $browserHere
             $stateRef  = $state
@@ -7138,8 +5569,7 @@ function Show-WDWindow {
             $box.Child = $sp
             $rowStrips['set-default-browser'] = $box
             # Rebuilt on demand rather than once: what is installed cannot
-            # change while the window is open, but what is *queued* can, and the
-            # queued one is the interesting case.
+            # change while the window is open, but what is queued can.
             $defBrowserUi.Panel   = $btnRow
             $defBrowserUi.Refresh = {
                 $panel = $defUi.Panel
@@ -7147,9 +5577,8 @@ function Show-WDWindow {
                 $panel.Children.Clear()
                 $names = @(@($hereNames) + @($stateRef.BrowserChoices) | Sort-Object -Unique)
                 if (-not $names.Count) { return }
-                # An answer nobody has given yet is the first one, not none:
-                # the row does nothing without a browser to point at, so there
-                # is no "leave it alone" option for this to default to.
+                # An answer nobody has given yet is the first one, not none: the
+                # row does nothing without a browser to point at.
                 if (-not $stateRef.DefaultBrowser -or $names -notcontains $stateRef.DefaultBrowser) {
                     $stateRef.DefaultBrowser = [string]$names[0]
                 }
@@ -7161,9 +5590,8 @@ function Show-WDWindow {
                         & $paint $b 'BorderBrush' 'Accent'
                         $b.BorderThickness = New-Object Windows.Thickness 2
                     }
-                    # Everything the handler needs travels on the Tag rather than
-                    # in a third-level closure. Two scope hops is where this
-                    # stops being readable and starts being a bug.
+                    # Everything the handler needs travels on the Tag rather
+                    # than in a third-level closure.
                     $b.Tag = @{ Name = [string]$n; State = $stateRef; Ui = $defUi; Save = $saveRef }
                     $b.Add_Click({
                         $t = $this.Tag
@@ -7178,29 +5606,16 @@ function Show-WDWindow {
         }
 
         # There was a third strip here - a folder picker under the common issues
-        # document, asking where to write it. It is gone: every apply now leaves
-        # a folder on the desktop with that document, the rollback script, and
-        # the run notes in it, so the file has one place and the question has no
-        # answer left to give. The tick box stays, because not wanting the
-        # document at all is still a position.
+        # document. Every apply leaves a folder on the desktop now.
     }.GetNewClosure())
 
-    # Two strips follow their row's visibility alone, and not its tick. The
-    # number in them is the whole of what the option does - "defer feature
-    # updates" without a figure beside it is half a sentence - so it is worth
-    # reading, and worth setting, before deciding whether to tick the row rather
-    # than only afterwards. Left live rather than grayed for the same reason:
-    # typing the number and then ticking is the order somebody works in.
-    #
-    # The rest stay tied to their tick. A question nobody has asked for is
-    # clutter, and the browser picker in particular is a question with no
-    # meaning at all until Edge is going.
+    # These two follow their row's visibility alone and not its tick: the number
+    # is the whole of what the option does, so it is worth setting before
+    # deciding whether to take it.
     $STRIP_ALWAYS = @('wu-defer-feature', 'wu-defer-quality')
 
-    # Every strip follows its own row's tick and its own row's visibility. One
-    # loop rather than a handler per strip: the browser one predates this and
-    # keeps its own path, because backing out of Edge removal has to withdraw a
-    # queued install as well as hide a box.
+    # Every strip follows its own row's tick and visibility. One loop rather
+    # than a handler per strip.
     $syncStrips = {
         foreach ($id in @($rowStrips.Keys)) {
             if ($id -eq $EDGE_ID) { continue }
@@ -7214,30 +5629,16 @@ function Show-WDWindow {
     }.GetNewClosure()
     $syncStripsRef.Fn = $syncStrips
 
-    # ----------------------------------------------------- the index rail ---
-    #
-    # AN INDEX INTO THE PAGE, NEVER A ROUTER. Clicking scrolls to a heading and
-    # the highlight follows the scroll; nothing is swapped and nothing is hidden.
-    # That is the whole design: this page's promise is that everything about to
-    # happen to the machine is ON it, and a nav that shows one category at a time
-    # breaks the promise while looking tidier.
-    #
-    # THE COUNTS ARE LOAD-BEARING, not decoration. Without them this is a plain
-    # jump list, carrying the long page's cost and none of a sidebar's one real
-    # compensation - that the work in front of you looks finite and countable.
+    # The index rail.
     $indexEntries = New-Object System.Collections.Generic.List[psobject]
     $indexSpy     = @{ Offsets = $null; Active = $null; Busy = $false }
 
-    # A jump card. Every order builds its own set, so this is rebuilt rather than
-    # hidden and re-shown - a rail listing categories while the page lists letter
-    # ranges is worse than no rail.
+    # A jump card. Every order builds its own set, so this is rebuilt rather
+    # than hidden and re-shown.
     $indexRowFor = {
         param([string]$Name, $Head, $Rows)
-        # Copied in for the hover handlers below, exactly as $makeItemRow does
-        # it. This block is itself a closure, so a handler built inside it
-        # captures this block's locals and nothing else - reaching for $Ref
-        # directly captured $null, and moving the pointer onto any rail card
-        # threw from the dispatcher and took the window with it.
+        # Copied in for the hover handlers below: this block is itself a
+        # closure.
         $setBrush = $Ref
         $b = New-Object Windows.Controls.Border
         $b.Padding      = '8,5'
@@ -7263,16 +5664,7 @@ function Show-WDWindow {
         $content = $ui.AdvContent
         $target = $Head
         # Computed at click time rather than read from the cache: one
-        # TransformToAncestor is cheap, and it cannot be stale.
-        #
-        # Two guards, both of them things a filter makes true. A heading the
-        # filter has emptied is Collapsed, and a collapsed element has no
-        # layout - TransformToAncestor throws on it, which the catch swallowed,
-        # so under a filter roughly a third of the rail was cards that did
-        # nothing when clicked and said nothing about why. And UpdateLayout,
-        # because a filter pass collapses two hundred rows and the measurement
-        # has to come after the page has been re-laid rather than describing
-        # where the heading was before it.
+        # TransformToAncestor is cheap and cannot be stale.
         $b.Add_MouseLeftButtonUp({
             try {
                 if (-not $target.IsDescendantOf($content)) { return }
@@ -7285,13 +5677,13 @@ function Show-WDWindow {
         $b.Add_MouseEnter({ if ($this.Tag -ne 'on') { & $setBrush $this 'Background' 'RowHover' } }.GetNewClosure())
         $b.Add_MouseLeave({ if ($this.Tag -ne 'on') { & $setBrush $this 'Background' 'Flat' } }.GetNewClosure())
 
-        # Key, not Name, is this entry's identity - see $add in $railRef.Rebuild.
+        # Key, not Name, is this entry's identity.
         [pscustomobject]@{ Kind = 'jump'; Key = ''; Name = $Name; Head = $Head; Rows = $Rows
                            Panel = $b; Label = $nm; Count = $cnt }
     }.GetNewClosure()
 
-    # A separator. Not a card and not clickable: it marks where removals stop and
-    # additions begin, which is a fact about the page rather than a place to go.
+    # Not a card and not clickable: it marks where removals stop and additions
+    # begin, which is a fact about the page rather than a place to go.
     $indexSepFor = {
         param([string]$Text)
         $t = New-Object Windows.Controls.TextBlock
@@ -7304,16 +5696,7 @@ function Show-WDWindow {
     }.GetNewClosure()
 
     # What the current grouping is not showing, said on the rail and nowhere
-    # else. Deliberately not a card: there is nothing to scroll to, so a hand
-    # cursor and a hover tint would be promising a jump that cannot happen. It
-    # is also deliberately not a warning - nothing is wrong, a lens is a lens -
-    # so it is dimmed muted text at the foot of the list, in the one place
-    # somebody looking for a missing name would look.
-    #
-    # One line under the heading, not a paragraph. The first version explained
-    # why a bloat rating cannot describe software you have not got, which is
-    # true, interesting and three lines longer than the rail is wide - a rail is
-    # a map, and a map that argues with you is not one.
+    # else. Deliberately not a card: there is nothing to scroll to.
     $indexOmitFor = {
         param([string]$Title, [int]$Count, [string]$Where)
         $sp = New-Object Windows.Controls.StackPanel
@@ -7334,17 +5717,8 @@ function Show-WDWindow {
                            Panel = $sp; Label = $h; Count = $null }
     }.GetNewClosure()
 
-    # Blocks that are on the page under every grouping and are not made of item
-    # rows. They get cards WITHOUT counts - there is nothing to count - and they
-    # are why the rail is a map of the PAGE rather than of the list.
-    #
-    # NeedsSection marks the one that belongs to a SECTION rather than to the run.
-    # Default behaviors, Authority, and App Options are things the run does or the
-    # application is, so they are always on the page. The browser picker is a
-    # choice drawn inside the Add box, and where Add is not laid out there is
-    # nothing for it to be inside - under a sectionless grouping it was the one
-    # thing keeping the Add box open, an "Add" heading holding a single card while
-    # the forty real Add rows sat scattered through the risk bands.
+    # Blocks on the page under every grouping that are not made of item rows.
+    # Cards without counts, because a 0/0 would read as "nothing selected here".
     $railFixed = @(
         @{ Key = 'browser';   Name = 'Web browser'; Target = 'BrowserAddBlock'; Where = 'add-top'
            NeedsSection = $true }
@@ -7360,10 +5734,8 @@ function Show-WDWindow {
         $indexEntries.Clear()
         $indexSpy.Active = $null
 
-        # KEYED BY POSITION, NOT BY LABEL. Keyed by label, two blocks with the same
-        # title were one entry as far as the scroll spy was concerned - under Risk
-        # there was a "Risky" card per section, and one scroll position lit all
-        # three. Position is unique by construction.
+        # Keyed by position, not by label: keyed by label, two blocks with the
+        # same title were one entry as far as the scroll spy was concerned.
         $add = {
             param($Entry)
             $Entry.Key = 'rail' + $indexEntries.Count
@@ -7375,18 +5747,13 @@ function Show-WDWindow {
             foreach ($f in $railFixed) {
                 if ($f.Where -ne $Where) { continue }
                 # A section's own block is off the page entirely when the
-                # grouping lays out no sections, so it gets no card rather than a
-                # dimmed one. Dimmed is for something that is on the page and has
-                # nothing in it; this is not on the page at all.
+                # grouping lays out no sections.
                 if ($f.NeedsSection -and -not $Sectioned) { continue }
                 & $add (& $indexRowFor ([string]$f.Name) $ui[[string]$f.Target] @())
             }
         }
         # A plain local rather than $SEC_LABEL, which is declared with the
-        # filter three hundred lines below this. GetNewClosure captures the
-        # local scope at the point the block is written, so reaching forward for
-        # it would capture $null and every section title on the rail would come
-        # out blank - the trap this file keeps a section about.
+        # filter three hundred lines below.
         $secTitle = @{ remove = 'Remove'; add = 'Add'; extras = 'Extras' }
 
         if ($Sectioned) {
@@ -7401,21 +5768,13 @@ function Show-WDWindow {
                 & $fixedFor "$($sec.K)-end"
             }
         } else {
-            # No section titles: this grouping has no sections. The fixed blocks
-            # are still on the page, so they are still on the rail - but under a
-            # heading that says what they are, rather than sitting among the
-            # letter ranges as though "Authority" were one of them. That was the
-            # complaint: an alphabetical list with a card called Authority in it
-            # looks like alphabetical order has gone wrong, when what is really
-            # true is that Authority is not in the list at all.
+            # No section titles: this grouping has no sections.
             foreach ($g in $Groups) { & $add (& $indexRowFor $g.Name $g.Head $g.Rows) }
             & $add (& $indexSepFor 'Also on this page')
             foreach ($w in @('remove-end','add-top','extras-top','extras-end')) { & $fixedFor $w }
         }
-        # Last, under everything, whichever shape the rail took: a grouping that
-        # does not lay out a whole section says so here rather than leaving
-        # somebody to conclude the rows were never there. The count is measured
-        # off $rows, not guessed, so it cannot drift from the page.
+        # Last, under everything: a grouping that does not lay out a whole
+        # section says so here rather than dropping the rows silently.
         foreach ($sec in @($Omitted)) {
             if (-not $sec) { continue }
             $n = @($rows | Where-Object { [string]$_.Section -eq [string]$sec }).Count
@@ -7425,66 +5784,32 @@ function Show-WDWindow {
         if ($indexRef.Paint) { & $indexRef.Paint }
     }.GetNewClosure()
 
-    # Counts, and the graying. A group the filter has emptied is dimmed and
-    # kept, never removed: a rail whose entries come and go as you type reads as
-    # a broken control, and the position of the thing you were about to click
-    # moving under the pointer is worse than a dim label.
-    #
-    # The fraction counts what the filter has left, not the group's whole
-    # membership. Under a filter the two readings disagree by design and only
-    # one of them is about the page in front of you: a Games card reading 4/17
-    # while four rows are on screen is quoting a denominator nobody can see, and
-    # the footer three inches below it says "4 of 4 selected (filtered)" at the
-    # same moment.
-    #
-    # A block with nothing on screen is dimmed and stops being clickable, in
-    # every grouping and for the row-less blocks too. Dimming a card while
-    # leaving it live is the worst of both: the pointer still changes over it,
-    # and the click lands on a collapsed heading that has no position to scroll
-    # to.
+    # A group the filter has emptied is dimmed and kept, never removed: a rail
+    # whose entries come and go as you type reads as broken.
     $paintIndex = {
         foreach ($e in $indexEntries) {
             if ($e.Kind -ne 'jump') { continue }
             $total = @($e.Rows).Count
             if (-not $total) {
-                # A fixed block - Default behaviors, Authority, App Options. It
-                # has no rows, so a count would be a zero that means "nothing
-                # here" rather than "nothing selected", but it can still be off
-                # the page: every one of them stands down under a filter,
-                # because a filter narrows the choices and none of these is one.
+                # A fixed block has no rows, so a count would be a zero meaning
+                # "nothing here" rather than "nothing selected".
                 $live = [bool]($e.Head -and $e.Head.Visibility -eq 'Visible')
                 $e.Count.Text = ''
                 & $Ref $e.Label 'Foreground' $(if ($live) { 'Sub' } else { 'Muted' })
                 $e.Panel.Opacity = $(if ($live) { 1.0 } else { 0.45 })
                 # Inert rather than merely dimmed: IsHitTestVisible takes the
-                # hover tint and the hand cursor with it in one property, and
-                # those two are the page's own signal that a thing can be
-                # clicked.
+                # hover tint and the hand cursor with it in one property.
                 $e.Panel.IsHitTestVisible = $live
                 continue
             }
-            # THE DENOMINATOR IS DECISIONS, NOT ROWS, and filtering is not part of
-            # it. A filter narrows what is on screen and does not change how many
-            # choices there are - a denominator that shrank as somebody typed
-            # would turn "14 of 26 done" into a number that cannot be compared
-            # with the one they saw a moment ago.
-            #
-            # A row whose box refuses a tick is in NEITHER half, or the block
-            # becomes unreachable: "25/26" over a category where every choice has
-            # been made and there is nothing left to click.
-            #
-            # Asked of the BOX (-not IsEnabled), not of $r.Absent. There are four
-            # ways a box refuses - absent, already installed, already set, and
-            # gated by another tick - and only the first was being honoured. All
-            # four mean the same thing to a fraction, so one question answers them.
+            # The denominator is decisions, not rows, and filtering is not part
+            # of it: a denominator that shrank as somebody typed could not be
+            # compared with the one they saw a moment ago.
             $tot = 0; $on = 0; $vis = 0
             foreach ($r in $e.Rows) {
                 if ($r.Panel.Visibility -eq 'Visible') { $vis++ }
-                # Unless it is ticked anyway. A clean-up that turns out to free
-                # nothing is disabled where it stands but left ticked if it
-                # already was, and the run will still act on it - so it is
-                # something selected, and dropping it out of both halves would
-                # understate what this block is going to do.
+                # Unless it is ticked anyway: a clean-up that turns out to free
+                # nothing is disabled where it stands but still acted on.
                 if (-not $r.Check.IsEnabled -and -not $r.Check.IsChecked) { continue }
                 $tot++
                 if ($r.Check.IsChecked) { $on++ }
@@ -7492,13 +5817,10 @@ function Show-WDWindow {
             $e.Count.Text = "$on/$tot"
             $visOn = $on
             # Dimming still follows the filter - that is about whether there is
-            # anything on the page to jump to, which is a different question
-            # from how many choices the block holds.
+            # anything to jump to.
             $dim = ($vis -eq 0)
             # Green when there is nothing left in it. A full block is a settled
-            # state rather than a busy one, and Accent - which every other live
-            # fraction wears - says "there is something here", which is the
-            # opposite of what N/N means.
+            # state, and Accent says "there is something here".
             $full = ($tot -gt 0 -and $on -eq $tot)
             & $Ref $e.Label 'Foreground' $(if ($dim) { 'Muted' } else { 'Sub' })
             & $Ref $e.Count 'Foreground' $(if ($dim) { 'Muted' } elseif ($full) { 'Ok' } elseif ($visOn) { 'Accent' } else { 'Muted' })
@@ -7508,10 +5830,8 @@ function Show-WDWindow {
     }.GetNewClosure()
     $indexRef.Paint = $paintIndex
 
-    # The highlight. Offsets are measured once into a table and reused, because
-    # transforming twenty-three headers on every scroll tick is exactly how this
-    # ships janky and gets blamed on the archetype rather than the arithmetic.
-    # The table is thrown away whenever the layout could have moved.
+    # Offsets are measured once into a table and reused: transforming
+    # twenty-three headers on every scroll tick is how this ships janky.
     $indexRef.Invalidate = { $indexSpy.Offsets = $null }.GetNewClosure()
 
     $spyIndex = {
@@ -7519,21 +5839,13 @@ function Show-WDWindow {
         $indexSpy.Busy = $true
         try {
             if (-not $indexSpy.Offsets) {
-                # A PAGE THAT IS NOT ON SCREEN HAS NO LAYOUT, so every heading
-                # transforms to Y=0 - and a table of zeros is still a table, so it
-                # is cached and nothing measures again. The highlight then names
-                # the first category for the rest of the session. Not an edge case
-                # either: the page is ALWAYS built before it is shown, and both
-                # routes end in $applyFilter, which ends here.
-                #
-                # Two conditions, catching different halves. Collapsed covers a
-                # rebuild while the operator is on another page, where the elements
-                # keep whatever they were last arranged at. Zero height covers a
-                # page that has never been arranged at all.
+                # A page that is not on screen has no layout, so every heading
+                # transforms to Y=0 - and a table of zeros is still a table, so
+                # it was cached and the highlight named the first entry for the
+                # rest of the session.
                 if ($ui.PageAdvanced.Visibility -ne 'Visible') { return }
                 # UpdateLayout first, because this runs from $applyFilter and
-                # the rows it collapsed have not been re-measured yet - without
-                # it the table records where every heading was a moment ago.
+                # the rows it collapsed have not been re-measured.
                 $ui.AdvContent.UpdateLayout()
                 if ([double]$ui.AdvContent.ActualHeight -le 0) { return }
                 $tbl = @{}
@@ -7541,11 +5853,8 @@ function Show-WDWindow {
                     try {
                         if ($e.Kind -ne 'jump' -or -not $e.Head) { continue }
                         if (-not $e.Head.IsDescendantOf($ui.AdvContent)) { continue }
-                        # A heading the filter has emptied is not on the page, and
-                        # a collapsed element has no layout - its transform is
-                        # whatever it was before it went away. Leaving those in
-                        # the table is what put the highlight on a category three
-                        # above the one that was clicked.
+                        # A heading the filter has emptied is not on the page,
+                        # and a collapsed element has no layout.
                         if ($e.Head.Visibility -ne 'Visible') { continue }
                         $tbl[$e.Key] = $e.Head.TransformToAncestor($ui.AdvContent).Transform(
                             (New-Object Windows.Point 0, 0)).Y
@@ -7554,9 +5863,8 @@ function Show-WDWindow {
                 if (-not $tbl.Count) { return }
                 $indexSpy.Offsets = $tbl
             }
-            # The last heading at or above the top of the viewport, plus a
-            # little slack so a heading sitting just under the edge counts as
-            # the one you are reading.
+            # The last heading at or above the top of the viewport, plus slack
+            # so one sitting just under the edge counts.
             $y = [double]$ui.AdvScroll.VerticalOffset + 24
             $best = $null; $bestY = [double]::NegativeInfinity
             foreach ($e in $indexEntries) {
@@ -7582,16 +5890,14 @@ function Show-WDWindow {
     $ui.AdvScroll.Add_ScrollChanged({ & $spyIndex }.GetNewClosure())
     $indexRef.Spy = $spyIndex
 
-    # The rail's width, restored and remembered. Clamped to the column's own
-    # bounds rather than trusted: a saved file is editable and a rail of 4000px
-    # would put the list off the page with no way back to the splitter.
+    # Clamped to the column's own bounds rather than trusted: a saved file is
+    # editable.
     $savedRail = [int](Get-Prop $UiState 'railWidth' 0)
     if ($savedRail -ge [int]$ui.IndexCol.MinWidth -and $savedRail -le [int]$ui.IndexCol.MaxWidth) {
         $ui.IndexCol.Width = New-Object Windows.GridLength ([double]$savedRail)
     }
     # The Compare rail, same treatment and the same clamp. Its column is set
-    # from $cmpRail.W on every rebuild rather than here, because the page
-    # collapses that column when it has nothing to index.
+    # from $cmpRail.W on every rebuild.
     $savedCmpRail = [int](Get-Prop $UiState 'cmpRailWidth' 0)
     if ($savedCmpRail -ge [int]$ui.CmpIndexCol.MinWidth -and $savedCmpRail -le [int]$ui.CmpIndexCol.MaxWidth) {
         $cmpRail.W = $savedCmpRail
@@ -7602,8 +5908,7 @@ function Show-WDWindow {
         if ($w -gt 0) { $cmpRail.W = $w }
         & $saveUiState
         # The comparison is narrower now, so the cards re-wrap and every heading
-        # below the first has moved. The offsets the spy measured describe where
-        # they were.
+        # below the first has moved.
         if ($cmpSpyRef.Fn) { $cmpSpy.Offsets = $null; & $cmpSpyRef.Fn }
     }.GetNewClosure())
     # DragCompleted, not DragDelta: the second fires per mouse-move and would
@@ -7611,16 +5916,15 @@ function Show-WDWindow {
     $ui.IndexSplit.Add_DragCompleted({
         & $saveUiState
         # Every heading has moved sideways, which does not change a vertical
-        # offset - but the rows re-wrap, so the ones below the fold have not.
+        # offset - but the rows re-wrap, so the ones below the fold have.
         if ($indexRef.Invalidate) { & $indexRef.Invalidate }
         if ($indexRef.Spy) { & $indexRef.Spy }
     }.GetNewClosure())
-    # There was a note here offering the way back to category order, shown
-    # whenever the rail had nothing to list. Every order builds groups now, so
-    # the rail is never empty and the note had nothing left to say.
+    # There was a note here offering the way back to category order. Every order
+    # builds groups now.
 
     # Every order is full-width blocks down the left panel, so the section's own
-    # right column is never used. $applyOrder decides this again on each pass.
+    # right column is never used.
     foreach ($g in @(@{ Grid = $ui.AdvColumns;   R = $ui.ColRight },
                      @{ Grid = $ui.AddColumns;   R = $ui.AddRight },
                      @{ Grid = $ui.ExtraColumns; R = $ui.ExtraRight })) {
@@ -7629,7 +5933,7 @@ function Show-WDWindow {
         $g.Grid.ColumnDefinitions[2].Width = New-WDGridLength 0
     }
 
-    # ---- the account picker, under the run-behavior switches --------------
+    # The account picker, under the run-behavior switches.
     $syncAccounts = {
         $on = @(& $accountKeys)
         $names = @($accountList | Where-Object { $_.Key -in $on -and $_.Kind -eq 'account' } | ForEach-Object { [string]$_.Name })
@@ -7678,10 +5982,8 @@ function Show-WDWindow {
         $ui.LblAccounts.Visibility     = 'Collapsed'
     }
 
-    # ---- the browser, at the top of the Add section ------------------------
-    # Always here, whatever Edge is doing: installing a browser is a thing
-    # somebody might want on its own. Picking one here and picking one under
-    # Edge removal are the same act, and both strips show the same answer.
+    # Always here, whatever Edge is doing: installing a browser is a thing to
+    # want on a machine that is keeping Edge.
     $bh = New-Object Windows.Controls.StackPanel
     $bh.Orientation = 'Horizontal'; $bh.Margin = '0,0,0,4'
     $bhg = New-Object Windows.Controls.TextBlock
@@ -7699,26 +6001,16 @@ function Show-WDWindow {
     $bhr.Height = 1; & $Ref $bhr 'Background' 'Line'; $bhr.Opacity = 0.6; $bhr.Margin = '0,0,0,6'
     $null = $ui.BrowserAddBlock.Children.Add($bhr)
     $null = $ui.BrowserAddBlock.Children.Add((& $makeBrowserPicker 'add'))
-    # Paint both pickers once now. Nothing is chosen yet, and a strip with a
-    # blank label and no button marked reads as broken rather than as "None".
+    # Paint both pickers once now: a strip with a blank label and no button
+    # marked reads as broken rather than as "None".
     & $setBrowsers @($state.BrowserChoices) $false
 
-    # Where the block lives when it is where it belongs, captured while it still
-    # is. Under Name (A-Z) it is taken out of the Add section and filed under W
-    # with everything else beginning with W, so something has to remember the way
-    # back - and asking the element for its parent after it has been moved is
-    # asking the wrong thing.
+    # Captured while the block is still where it belongs: under A-Z it is taken
+    # out of the Add section and filed under W.
     $browserHome = $ui.BrowserAddBlock.Parent
 
     # The browser picker as a member of a group, so the alphabet can hold it.
-    #
-    # A choice rather than a tick, so it is NOT in $rows - no count, filter pass,
-    # or preset touches it. This is the smallest shim that lets $sortMembers place
-    # it and $fillColumns lay it out.
-    #
-    # Its Check reports disabled and unticked, and both are TRUE rather than
-    # convenient: the rail's denominator, Select all, and a group Reset all ask
-    # IsEnabled, so saying it once answers all three.
+    # Not in $rows, so no count, filter pass, or preset touches it.
     $browserRow = [pscustomobject]@{
         Id       = '__browser-block'
         Panel    = $ui.BrowserAddBlock
@@ -7732,7 +6024,7 @@ function Show-WDWindow {
     }
 
     & $say 'Building the interface' 'Protected inventory'
-    # ---- protected inventory, pinned below the two columns ----------------
+    # Protected inventory, pinned below the two columns.
     if ($Scan -and @($Scan.Protected).Count) {
         $hp = New-Object Windows.Controls.StackPanel
         $hp.Orientation = 'Horizontal'; $hp.Margin = '0,0,0,6'
@@ -7775,21 +6067,9 @@ function Show-WDWindow {
         $null = $ui.ProtectedBlock.Children.Add($wrap)
     }
 
-    # ---- what the run does whatever is ticked ------------------------------
-    #
-    # Resolve-WDPlan appends two steps to every plan rather than offering them:
-    # closing revival paths, and restarting Explorer. Being in the plan makes them
-    # previewable, which is one gesture away; being on this PAGE makes them
-    # findable, which is the difference between "the tool told me" and "the tool
-    # would have told me if I had pressed Preview".
-    #
-    # ROWS WITHOUT CHECK BOXES, because there is nothing to decide. The
-    # alternative is a tick that is always on and cannot be cleared, which is a
-    # control that lies about being one.
-    #
-    # There is a THIRD row here that is not a plan step: closing programs that are
-    # in the way, which four executors do on their own when a removal is refused.
-    # It never gets a preview row, so this block is the only place it is stated.
+    # What the run does whatever is ticked. Rows without a tick, rather than a
+    # tick that is always on and cannot be cleared - a control that cannot be
+    # operated lies about being one.
     $alwaysSteps = @(
         @{ Name = 'Close revival paths'
            Text  = @('WHAT THIS CHANGES',
@@ -7810,12 +6090,9 @@ function Show-WDWindow {
                      '  Not conditional on the run having touched the shell: a needless restart is one blink, and a missed one is a change you wrote, cannot see, and reasonably read as broken.',
                      '',
                      'Revertible: nothing to revert') }
-        # Not a plan step, unlike the two above - it is something four of the
-        # executors do on their own, at the moment a removal is refused. It is
-        # here for the same reason they are: it happens on every run, nothing on
-        # this page leads to it, and "the toolkit closed my game" is a thing
-        # somebody has to be able to find an answer to. Listing it is also the
-        # only warning there is, since it never appears as a row of its own.
+        # Not a plan step, unlike the two above: it is something four of the
+        # executors do on their own when a removal is refused, so it never gets
+        # a preview row and this block is the only place it is stated.
         @{ Name = 'Close programs that are in the way'
            Text  = @('WHAT THIS CHANGES',
                      '  Closes a running program when it is what is stopping a removal, and only then.',
@@ -7850,13 +6127,7 @@ function Show-WDWindow {
     $null = $ui.AlwaysBlock.Children.Add($arule)
 
     foreach ($step in $alwaysSteps) {
-        # WrapPanel for the same reason every name-plus-chip line here is one -
-        # see $makeItemRow. These sit in a half-width column and one of them is
-        # a long sentence.
-        # A holder around the line, because the detail opens UNDER it and the
-        # line itself is a WrapPanel - a panel added there would be laid out
-        # beside the chip that opened it rather than below the row. Same shape
-        # as an item row, which is a name line inside a vertical stack.
+        # WrapPanel for the same reason every name-plus-chip line here is one.
         $holder = New-Object Windows.Controls.StackPanel
         $sp = New-Object Windows.Controls.WrapPanel
         $sp.Orientation = 'Horizontal'; $sp.Margin = '0,6,0,2'
@@ -7870,13 +6141,9 @@ function Show-WDWindow {
         $null = $ui.AlwaysBlock.Children.Add($holder)
     }
 
-
         & $say 'Building the interface' 'Filters and preset counts'
-    # ---- filtering: a multi-select drop-down plus free text ----------------
-    # Within a group the boxes are OR-ed, across groups they are AND-ed, so
-    # "Checked only" + "AI" + "Games" reads as "ticked items in AI or Games" -
-    # which is the way people describe what they want. No count in this
-    # sentence: it said five for as long as there were six.
+    # Within a group the boxes are OR-ed, across groups AND-ed, which is what
+    # makes "Checked only + AI + Games" read the way people say it.
     $CHANGED   = 'Changed from preset'
     $CHECKED   = 'Checked only'
     $UNCHECKED = 'Unchecked only'
@@ -7888,61 +6155,40 @@ function Show-WDWindow {
         Risk  = New-Object System.Collections.Generic.HashSet[string]
         Cat   = New-Object System.Collections.Generic.HashSet[string]
         Sec   = New-Object System.Collections.Generic.HashSet[string]
-        # The bloat bands, by name, as a filter rather than only as a grouping.
-        # Grouping by rating answers "show me everything, arranged by how bad it
-        # is"; picking two bands answers "show me only the two worst", which is
-        # a different question and was unaskable - you could arrange the list so
-        # the answer was at the top and then scroll past it into everything
-        # else. It also crosses the other four groups, so "Advertising and
-        # nagging, in the AI category, that I have not ticked" is one gesture.
+        # The bloat bands as a filter rather than only as a grouping: grouping
+        # answers "arranged by how bad it is", picking two bands answers "only
+        # the two worst".
         Bloat = New-Object System.Collections.Generic.HashSet[string]
-        # The boxes that SUBTRACT rows rather than narrowing to them, and the only
-        # ones in the drop-down that do. Every other facet answers "show me only
-        # X"; these answer "stop showing me the ones I cannot use" and "stop
-        # showing me the ones nothing selects", neither of which is expressible as
-        # a positive selection over any group.
-        #
-        # THE ONE GROUP THAT ANDs RATHER THAN ORs, because subtraction composes
-        # that way: hiding two kinds of row hides both, where selecting two kinds
-        # shows both. Which is why the members are asked for BY NAME below rather
-        # than through .Count - that was enough only while this held one box.
+        # The boxes that subtract rows rather than narrowing to them, and the
+        # only ones that do. They AND with each other, because that is how
+        # subtraction composes.
         Avail = New-Object System.Collections.Generic.HashSet[string]
-        # The rows tagged "opt-in" on the page: tier 0, which no mode selects at
-        # any level. Its own group rather than a fourth box under VIEW, because
-        # boxes inside a group are OR-ed and the useful questions here are all
-        # AND-ed ones - "opt-in things I have ticked", "opt-in things in Quality
-        # of life". OR-ing it with "Checked only" would answer a question nobody
-        # asks.
+        # The rows tagged "opt-in": tier 0, which no mode selects. Its own group
+        # rather than a fourth box under VIEW, because boxes in a group are
+        # OR-ed.
         Tier  = New-Object System.Collections.Generic.HashSet[string]
     }
     $HIDE_ABSENT = 'Hide "not on this machine" options'
     # The third subtracting box, and the one somebody with a mode already
     # applied reaches for first: it leaves exactly the rows a run would still
-    # change. Named for the tag it acts on, like the two below.
+    # change.
     $HIDE_APPLIED = 'Hide options already applied'
-    # Both named for the tag they act on. Somebody reaching for either of these
-    # has just read the word off a row.
+    # Both named for the tag they act on: somebody reaching for either has just
+    # read the word off a row.
     $OPT_IN_ONLY = 'Opt-in only'
     $HIDE_OPT_IN = 'Hide opt-in options'
     # The group names, in chip order, written once. Four of them used to be
-    # spelled out in six places - the chip loop, the clear, two "how many
-    # facets are live" sums and the narrowing test - and adding a fifth meant
-    # finding all six. Anything that treats the groups uniformly reads this.
+    # spelled out in six places.
     $FILTER_GROUPS = @('Sec', 'Avail', 'View', 'Tier', 'Risk', 'Cat', 'Bloat')
     # Boxes that are the two halves of one question, so both at once says
-    # exactly what no filter says. Whichever is ticked disables the other, and
-    # the reason it is a table rather than two arms inside $flip is that the
-    # first pair was written in there by name and the second one had nowhere to
-    # go. Named A/B sides rather than nested arrays on purpose: @(@(x,y)) with a
-    # single entry flattens to @(x,y), and a loop over what it thinks are pairs
-    # then iterates the two sides - the shape that has already cost this repo a
-    # module. Hashtables cannot flatten.
+    # exactly what no filter says. Named A/B sides rather than nested arrays,
+    # because a single-element array of arrays flattens.
     $FILTER_PAIRS = @(
         @{ A = @{ Group = 'View'; Name = $CHECKED }
            B = @{ Group = 'View'; Name = $UNCHECKED } }
-        # Opt-in only narrows to tier 0 and Hide opt-in takes tier 0 away, so
-        # together they select nothing at all - and they live in different
-        # groups, which is exactly why this could not be a per-group rule.
+        # Opt-in only narrows to tier 0 and Hide opt-in takes it away, so
+        # together they select nothing - and they live in different groups,
+        # which is why this is a table.
         @{ A = @{ Group = 'Tier';  Name = $OPT_IN_ONLY }
            B = @{ Group = 'Avail'; Name = $HIDE_OPT_IN } }
     )
@@ -7953,15 +6199,8 @@ function Show-WDWindow {
     }.GetNewClosure()
     $filterBoxes = New-Object System.Collections.Generic.List[psobject]
 
-    # "12 of 37 selected" for whatever is ON SCREEN. Two numbers used to exist and
-    # never meet: the count beside the filter said how many rows were visible, the
-    # tally said how many were ticked out of the whole list, and under a filter
-    # neither answers "of the things I am looking at, how many have I taken".
-    #
-    # Derived from LIVE Panel.Visibility and Check.IsChecked, not from
-    # $applyFilter's own tally - which is what lets it be called from the other
-    # side: ticking a row runs $updateTally and never $applyFilter, so a count
-    # computed only during a filter pass freezes the moment anyone ticks a box.
+    # "12 of 37 selected" for whatever is on screen. Two numbers used to exist
+    # and never meet.
     $makeChip = {
         param([string]$Label, [scriptblock]$OnDrop, [string]$Tint)
         $b = New-Object Windows.Controls.Border
@@ -8012,12 +6251,9 @@ function Show-WDWindow {
             $null = $host2.Children.Add((& $makeChip "search: $q" $drop ''))
         }
 
-        # There was a "N selected, not shown" chip here. It went because what it
-        # warned about is not a hazard: a filter narrows what is on screen and
-        # changes nothing about what is selected, and the footer reads "12 of 37
-        # selected (filtered)" on every pass, so no count was claiming to speak
-        # for the whole list. What it added was a warning in the colour this page
-        # uses for RISK, appearing the moment somebody typed three letters.
+        # There was a "N selected, not shown" chip here: a filter narrows what
+        # is on screen and changes nothing about what is selected, which is what
+        # a filter is.
         $host2.Visibility = $(if ($host2.Children.Count) { 'Visible' } else { 'Collapsed' })
     }.GetNewClosure()
 
@@ -8030,34 +6266,27 @@ function Show-WDWindow {
         }
         & $paintChips
         # The rail's counts are a live map of the same rows, so they move with
-        # every tick and every filter pass - the two things that reach here.
+        # every tick and every filter pass.
         if ($indexRef.Paint) { & $indexRef.Paint }
         $picked = & $pickedCount
         $narrowed = ($picked -gt 0 -or [string]$ui.TxtFilter.Text)
         # Unfiltered, the denominator is still the visible set rather than
-        # $rows.Count: dependent rows (PowerToys modules) are hidden until their
-        # parent is ticked, so the full list has never been what is on screen.
+        # $rows.Count: dependent rows are hidden until their parent is ticked.
         $ui.TxtFilterCount.Text = $(if ($narrowed) { "$sel of $vis selected  (filtered)" } else { "$sel of $vis selected" })
         & $Ref $ui.TxtFilterCount 'Foreground' $(if ($vis) { 'Sub' } else { 'Bad' })
         if (-not $vis) { $ui.TxtFilterCount.Text = 'nothing matches' }
     }.GetNewClosure()
 
-    # The checked and unchecked views are snapshots taken the moment the box is
-    # ticked, never live queries. A live one deletes the row you just clicked
-    # out from under the pointer, which makes the list impossible to work
-    # through. Untick and retick to take a fresh one.
+    # Snapshots taken the moment the box is ticked, never live queries: a live
+    # one deletes the row you just clicked.
     $snapChecked   = New-Object System.Collections.Generic.HashSet[string]
     $snapUnchecked = New-Object System.Collections.Generic.HashSet[string]
-    # A closure, not a bare block: this is invoked from a check box handler that
-    # lives two scopes down, and a bare block would resolve these sets to null
-    # from there. The sets and $rows are captured by reference, so mutations
-    # made anywhere are still seen here.
+    # A closure, not a bare block: this is invoked from a check box handler two
+    # scopes down.
     $takeSnapshot = {
         param([string]$Which)
-        # Plain assignment, not "$set = if (...) { $snapChecked }": the value of
-        # an if-expression goes through the pipeline, which unrolls collections,
-        # and an empty HashSet unrolls to nothing at all. $set would be null on
-        # the first use and non-null on every later one.
+        # Plain assignment, not an if-expression: the value goes through the
+        # pipeline, which unrolls collections, and an empty one becomes $null.
         $want = ($Which -eq $CHECKED)
         $set = $snapUnchecked
         if ($want) { $set = $snapChecked }
@@ -8065,11 +6294,7 @@ function Show-WDWindow {
         foreach ($r in $rows) { if ([bool]$r.Check.IsChecked -eq $want) { $null = $set.Add($r.Id) } }
     }.GetNewClosure()
     # The selection lives in the boxes - once there are boxes. Until the item
-    # list is built there is nothing to have edited, so the selection is exactly
-    # the preset, which is what $applyPresetToChecks will tick into the boxes the
-    # moment they exist. Everything that asks what is selected - the storage bar
-    # in the header, the banner, the diff - therefore gets the same answer on
-    # either side of that build, and none of them has to force it.
+    # list is built, the preset is exactly what the boxes will hold.
     $checkedIds = {
         $sel = New-Object System.Collections.Generic.HashSet[string]
         if (-not $rows.Count) {
@@ -8080,20 +6305,13 @@ function Show-WDWindow {
         ,$sel
     }
 
-    # Measured against the preset as *this person has defined it* - the shipped
-    # contents plus anything they made the default with Save. An unsaved edit
-    # stays marked as an edit for as long as it is one, which is for as long as
-    # this window is open; making it the default is both what carries it past
-    # that and what clears the marks, because at that point it has stopped being
-    # a change to anything.
+    # Measured against the preset as this person has defined it: the shipped
+    # contents plus anything promoted with Save.
     $currentDiff = {
         $sel  = & $checkedIds
         $base = New-WDStringSet (& $defaultIds $state.Preset)
-        # A row for something that is not on this machine is never ticked, even
-        # when the mode names it - see $applyPresetToChecks. That is not an edit
-        # the user made, so it must not be marked as one: without this, opening
-        # Advanced on a clean machine painted thirty rows red and offered to
-        # "reset" a preset nobody had touched.
+        # A row for something not on this machine is never ticked even when the
+        # mode names it, and that is not an edit the operator made.
         $gone = New-Object System.Collections.Generic.HashSet[string]
         foreach ($r in $rows) { if ($r.Absent) { $null = $gone.Add([string]$r.Id) } }
         [pscustomobject]@{
@@ -8103,9 +6321,8 @@ function Show-WDWindow {
         }
     }
 
-    # The other comparison: what differs from the version already stored. Only
-    # used to decide whether leaving Advanced is worth a prompt, since the diff
-    # above stays non-zero for as long as the edit exists.
+    # What differs from the version already stored. Only used to decide whether
+    # leaving Advanced is worth a prompt.
     $unsavedEdits = {
         $sel   = & $checkedIds
         $saved = New-WDStringSet (& $effectiveIds $state.Preset)
@@ -8114,16 +6331,10 @@ function Show-WDWindow {
         $false
     }
 
-    # Built once. Creating brushes inside the restyle loop would mean hundreds of
-    # BrushConverter round-trips on every checkbox click.
+    # Built once: creating brushes inside the restyle loop would mean hundreds
+    # of BrushConverter round-trips per click.
 
-    # ---- the storage bar ---------------------------------------------------
-    #
-    # Distinct hues rather than shades of one: a stacked bar is only readable
-    # through its legend, and a legend needs colors that can be told apart at
-    # ten pixels. The two greens are deliberately the same hue - what the
-    # selection does is move bytes from the pale one to the solid one, and then
-    # across into free space, which is why they sit at that boundary.
+    # The storage bar.
     $diskColors = @{
         windows = 'Accent'
         apps    = 'Warn'
@@ -8135,8 +6346,7 @@ function Show-WDWindow {
         grow    = 'Bad'
     }
     # A list filled when the rows exist, not an array taken from them now: this
-    # is read by $paintStorage, which runs from the drive scan's timer and may
-    # well run before anyone opens the page.
+    # is read from the drive scan's timer, which may fire first.
     $storageRows = New-Object System.Collections.Generic.List[psobject]
     $advWork.Add({
         if ($advSay.Fn) { & $advSay.Fn 'Collecting the clean-up rows' }
@@ -8144,17 +6354,12 @@ function Show-WDWindow {
     }.GetNewClosure())
 
     # What the selection does to the drive, per item, without needing a row to
-    # ask. The bar is in the header - it is on screen on every page, including
-    # the one the application opens on - so it cannot wait for the item list to
-    # be built. These are the same four figures a row carries, read from the
-    # same places $makeItemRow reads them.
+    # ask. The bar is in the header and is on screen on every page.
     $sizeFacts = @{}
     foreach ($cat in $Categories) {
         foreach ($item in @(Get-Prop $cat 'items' @())) {
             $id = [string]$item.id
-            # The same two sources $makeItemRow reads, in the same order:
-            # removals size themselves from the uninstall key, installs from the
-            # figure the manifest carries, and an install overrides.
+            # The same two sources $makeItemRow reads, in the same order.
             $d = 0L; $bl = 0
             if ($Presence -and $Presence.ContainsKey($id)) {
                 $d  = -[int64]$Presence[$id].Bytes
@@ -8173,14 +6378,8 @@ function Show-WDWindow {
 
     $diskSlop = @{ measured = 0.05; recorded = 0.25; authored = 0.40 }
 
-    # Everything the current selection would do to the drive, in one pass over
-    # the rows. Three numbers and two lists, and the lists are the honest half:
-    # what has no figure at all is named rather than folded into the total as a
-    # zero, because a zero is an answer and "nobody can know" is not.
-    # What one row does to the drive, signed, from whichever source knows. The
-    # clean-ups only find out when the background measurement lands, so this is
-    # the one place that reconciles the two - the bar, the row tag and the size
-    # filter all have to be answering the same question.
+    # Three numbers and two lists, and the lists are the honest half: what has
+    # no figure at all is named rather than averaged in.
     $rowBytes = {
         param($Row)
         if ($Row.CatId -eq $STORAGE_CAT) {
@@ -8198,13 +6397,11 @@ function Show-WDWindow {
         $adds  = New-Object System.Collections.Generic.List[psobject]
         $blind = New-Object System.Collections.Generic.List[psobject]
 
-        # Over the selection, not over the rows: this has to answer the same
-        # question before the item list has been built and after, and the ids
-        # are what both states have in common. $checkedIds reads the boxes when
-        # there are boxes and the preset when there are not.
+        # Over the selection, not over the rows: this has to answer before the
+        # item list is built and after.
         foreach ($id in (& $checkedIds)) {
             $r = $sizeFacts[[string]$id]
-            # The replacement browser is a picker rather than an item, and it is
+            # The replacement browser is a picker rather than an item, and is
             # counted on its own below.
             if (-not $r) { continue }
             if ($r.CatId -eq $STORAGE_CAT) {
@@ -8226,10 +6423,8 @@ function Show-WDWindow {
                 $free += $b; $slop += $b * $diskSlop.recorded
                 $frees.Add([pscustomobject]@{ Name = [string]$r.Name; Bytes = $b; Kind = 'recorded' })
             }
-            # A Store package has no readable size on this machine at all -
-            # WindowsApps refuses administrators - so it is counted, never
-            # measured, whether or not the same row also removed something with
-            # a figure.
+            # A Store package has no readable size at all - WindowsApps refuses
+            # administrators - so it is counted, never sized.
             if ($r.Blind -gt 0) {
                 $blind.Add([pscustomobject]@{ Name = [string]$r.Name
                                               Why = "$($r.Blind) Store package(s); Windows does not publish their size" })
@@ -8252,9 +6447,8 @@ function Show-WDWindow {
         }
     }
 
-    # $paintDiskCard lived here - the Details drop-down. Removed with the
-    # rest of the storage forensics; the bar and its sentence are the
-    # whole storage story now.
+    # $paintDiskCard lived here - the Details drop-down. Removed with the rest
+    # of the storage forensics.
 
     $paintStorage = {
         $snap = $storage.Snapshot
@@ -8262,9 +6456,8 @@ function Show-WDWindow {
         $bar.ColumnDefinitions.Clear()
         $bar.Children.Clear()
 
-        # The clean-up rows first, and outside everything below, because their
-        # sizes do not depend on the drive having reported a capacity. A volume
-        # that will not say how big it is still has a Recycle Bin worth emptying.
+        # The clean-up rows first and outside everything below, because their
+        # sizes do not depend on the drive having reported a capacity.
         foreach ($r in $storageRows) {
             if (-not $r.SizeTag) { continue }
             if ($snap -and $snap.Items.ContainsKey($r.Id)) {
@@ -8277,9 +6470,8 @@ function Show-WDWindow {
                     $r.SizeTag.Text = 'nothing to free'
                     & $Ref $r.SizeTag 'Foreground' 'Muted'
                     $r.SizeTag.ToolTip = 'Nothing was found to clean up here.'
-                    # Left alone if it is already ticked: taking a choice back
-                    # because the answer turned out to be zero is worse than
-                    # letting the run report that it had nothing to do.
+                    # Left alone if already ticked: taking a choice back because
+                    # the answer turned out to be zero is worse than leaving it.
                     if (-not $r.Check.IsChecked) {
                         $r.Check.IsEnabled = $false
                         & $Ref $r.Name 'Foreground' 'Muted'
@@ -8299,8 +6491,7 @@ function Show-WDWindow {
         $storage.Impact = $hit
 
         # Two different empty states, and saying the wrong one is worse than
-        # saying nothing. Nothing measured yet is the first half-second of every
-        # session; a drive that will not report its size is a real fault.
+        # saying nothing.
         if (-not $snap -or $snap.TotalBytes -le 0) {
             $ui.DiskCap.Text  = ''
             $ui.DiskNote.Text = $(if ($snap) {
@@ -8311,10 +6502,9 @@ function Show-WDWindow {
             return
         }
 
-        # What the selection frees comes out of the used side, and what it
-        # installs comes out of the free side, so the two blocks sit either side
-        # of that boundary. That is the whole point of drawing them there: the
-        # bar shows bytes crossing it in both directions.
+        # What the selection frees comes out of the used side and what it
+        # installs out of the free side, so the two sit either side of the
+        # boundary.
         $picked = [Math]::Min($hit.Freed, $snap.UsedBytes)
         $spare  = [Math]::Max(0L, $snap.Reclaimable - [Math]::Min($hit.Freed, $snap.Reclaimable))
         $newFree = $snap.FreeBytes + $picked
@@ -8332,16 +6522,12 @@ function Show-WDWindow {
                 if ($snap.Denied -gt 0) { $lines += "$($snap.Denied) folder(s) refused to be read and are counted here." }
                 $tip = ($lines -join "`n")
             }
-            # Falls back rather than leaving the color empty: an empty one is
-            # how free space is drawn, so a segment whose key nobody gave a
-            # color would take up its share of the bar and show nothing there.
+            # Falls back rather than leaving the colour empty: an empty one is
+            # how free space is drawn.
             $col = [string]$diskColors[[string]$s.Key]
             if (-not $col) { $col = 'Muted' }
             # Whatever the selection frees has to come out of the blocks it is
-            # leaving, or the bar adds up to more than the drive holds. Taken
-            # off the descriptive blocks in proportion, since a clean-up that
-            # frees from Windows and one that frees from Other are not
-            # distinguishable at this point.
+            # leaving, or the bar adds up to more than the drive holds.
             $blocks.Add([pscustomobject]@{
                 Key = [string]$s.Key; Label = [string]$s.Label; Bytes = [int64]$s.Bytes
                 Color = $col; Alpha = 1.0; Tip = $tip })
@@ -8363,7 +6549,7 @@ function Show-WDWindow {
             Color = ''; Alpha = 1.0; Tip = '' })
 
         # The freed block is drawn out of the descriptive ones, so their total
-        # has to come down by the same amount or the bar overflows the volume.
+        # has to come down by the same amount.
         $known = 0L
         foreach ($b in $blocks) { if ($b.Key -in @('windows','apps','users','other','unknown')) { $known += $b.Bytes } }
         if ($picked -gt 0 -and $known -gt 0) {
@@ -8379,8 +6565,7 @@ function Show-WDWindow {
             $cd = New-Object Windows.Controls.ColumnDefinition
             $cd.Width = New-WDGridLength ([double]$b.Bytes) 'Star'
             # A selection too small to see is still a selection, and a bar that
-            # does not visibly react to a click reads as broken. Three pixels of
-            # a nine-hundred pixel bar is a distortion nobody can measure.
+            # does not visibly react to a click reads as broken.
             if ($b.Key -in @('pick', 'grow')) { $cd.MinWidth = 3 }
             $bar.ColumnDefinitions.Add($cd)
             if ($b.Color) {
@@ -8409,8 +6594,7 @@ function Show-WDWindow {
         $ui.DiskBarFrame.ToolTip = ($caveat -join "`n`n")
 
         # One line, and it has to fit on one line: this sits in the header on
-        # every page, so it says what the selection does and leaves the rest to
-        # Details.
+        # every page.
         if (-not $snap.Priced) {
             $ui.DiskNote.Text = "Measuring what is on $($snap.Drive)."
         } elseif ($hit.Freed -le 0 -and $hit.Added -le 0) {
@@ -8431,21 +6615,12 @@ function Show-WDWindow {
             }
             $ui.DiskNote.Text = $txt + '.'
         }
-        # It shares a line with everything else now, so it will be trimmed on a
-        # narrow window. The whole sentence has to stay reachable.
+        # It shares a line with everything else, so it will be trimmed on a
+        # narrow window and the whole sentence has to stay reachable.
         $ui.DiskNote.ToolTip = $ui.DiskNote.Text
 
-        # The clean-ups have no figure until the drive walk finishes, which is
-        # half a minute after the window opens. A grouping that bands on those
-        # figures has to be re-laid when they arrive, or the biggest saving on
-        # the machine sits in the Inconsequential band reading as zero. Reached
-        # through the holder: $applyOrder is defined further down and a closure
-        # made here would have captured a null.
-        #
-        # The grouping only. Sorting by size went with the other two rankings -
-        # a sort implied a boundary the eye had to find, where a band draws it.
-        # Which also means the fix is a re-partition rather than a re-sort: the
-        # cached bands have to go before the layout is run again.
+        # The clean-ups have no figure until the drive walk finishes, half a
+        # minute after the window opens.
         if ([string]$state.Group -eq 'space' -and $applyOrderRef.Fn) {
             if ($groupsRef.Drop) { & $groupsRef.Drop 'space' }
             & $applyOrderRef.Fn
@@ -8453,10 +6628,8 @@ function Show-WDWindow {
     }
     $storage.Paint = $paintStorage
 
-    # Enforced before anything counts, so the tally, the deltas and the storage
-    # bar all describe the selection that survives the rules rather than the one
-    # that was asked for. Unticking here cannot recurse: the box's own handler
-    # is Add_Click, which a programmatic set does not raise.
+    # Enforced before anything counts, so the tally, the deltas, and the storage
+    # bar all describe the selection that survives the rules.
     $syncExclusions = {
         foreach ($x in $EXCLUSIONS) {
             $src = $rowById[[string]$x.When]
@@ -8473,9 +6646,9 @@ function Show-WDWindow {
                 $dst.Gate.Text       = [string]$x.Why
                 $dst.Gate.Visibility = 'Visible'
             } else {
-                # Absent wins. A row with nothing to act on stays inert whatever
-                # the rules say about it, or clearing an exclusion would hand
-                # back a tick the machine cannot honour.
+                # Absent wins: a row with nothing to act on stays inert whatever
+                # the rules say, or clearing an exclusion would hand back a tick
+                # the machine cannot honour.
                 if (-not $dst.Absent) {
                     $dst.Check.IsEnabled = $true
                     $dst.Panel.Cursor    = 'Hand'
@@ -8486,31 +6659,23 @@ function Show-WDWindow {
         }
     }
 
-    # Edge's extensions follow Edge. Ticking the removal ticks them; backing out
-    # of it takes back exactly the rows this put there, and nothing else - the
-    # same rule the queued browser follows, and for the same reason. Somebody
-    # who ticked an extension deliberately keeps it ticked.
-    #
-    # Acts only on a change of the Edge tick, not on every pass, or clearing one
-    # of these by hand would have the next tally put it straight back.
+    # Ticking Edge removal ticks its extensions; backing out takes back exactly
+    # the rows this put there and nothing else.
     $syncEdgeExtensions = {
         if (-not $edgeExtIds.Count) { return }
         $edgeRow = $rowById[$EDGE_ID]
         # The Advanced rows are built on demand, so this legitimately has
-        # nothing to work with until they exist. Saying nothing is right: the
-        # first tally after the build makes the same decision with rows to hand.
+        # nothing to work with until they exist.
         if (-not $edgeRow) { return }
         $on = [bool]$edgeRow.Check.IsChecked
         if ($on -eq [bool]$state.EdgeExtOn) { return }
         $state.EdgeExtOn = $on
         # A mode was applied, not a box ticked. Where Edge ended up is recorded
-        # so the next real gesture measures from the right place, and nothing is
-        # ticked: choosing Aggressive is not choosing to lose your extensions.
+        # so the next real gesture measures from the right place.
         if ($state.PresetSweep) { return }
 
-        # Suspended around the sets: each one raises Checked, and letting a
-        # dozen of those re-enter the tally is the restyle storm
-        # $applyPresetToChecks exists to avoid.
+        # Suspended around the sets: each raises Checked, and letting a dozen of
+        # those re-enter the tally is the restyle storm.
         $was = $state.Suspend
         $state.Suspend = $true
         try {
@@ -8540,7 +6705,7 @@ function Show-WDWindow {
         $d  = & $currentDiff
         $on = @($d.Selected).Count
         # A strip belongs to its row's tick, and ticking a row runs this rather
-        # than the filter - the same trap the rail counts fell into.
+        # than the filter.
         if ($syncStripsRef.Fn) { & $syncStripsRef.Fn }
 
         # Mark the options themselves, so what you changed is visible in the
@@ -8561,26 +6726,15 @@ function Show-WDWindow {
                 $r.DiffTag.Visibility = 'Collapsed'
             }
         }
-        # Which group headings offer a Reset, off the same two sets that just
-        # marked the rows. Handed them rather than left to build its own, because
-        # this runs on every tick and the diff is the expensive half.
+        # Handed the two sets that just marked the rows, rather than diffing
+        # itself once per group per tick.
         if ($groupResetRef.Fn) { & $groupResetRef.Fn $addedSet $remSet }
 
-        # "Balanced: 96 of 240 options  +5 added  -2 removed", with the deltas
-        # colored so a modified preset is obvious at a glance.
-        #
-        # The denominator used to live in a second count in the far bottom-left
-        # corner, reading "96 of 240 selected" - the same two numbers as this,
-        # a window's diagonal apart, one of them wearing the word "options" and
-        # the other "selected". Two places that have to agree about one fact is
-        # one place plus a way for them to disagree, and the corner it was in is
-        # the last place anybody looks. It is one line now, where the preset it
-        # is counting is named.
+        # The deltas coloured, so a modified preset is obvious at a glance.
         $tb = $ui.TxtActivePreset
         $tb.Inlines.Clear()
-        # Short form here too. The badge shares one toolbar row with a scrolling
-        # button strip and a Reset button, and it is the one element on the row
-        # that sizes to its content.
+        # Short form here too: the badge shares one toolbar row with a scrolling
+        # button strip.
         $shown = [string](& $shortPreset ([string]$state.Preset))
         $ui.PresetBadge.ToolTip = $(if ($shown -ne [string]$state.Preset) { [string]$state.Preset } else { $null })
         $head = New-Object Windows.Documents.Run ("${shown}: $on of $($rows.Count) options")
@@ -8600,15 +6754,12 @@ function Show-WDWindow {
         & $Ref $ui.PresetBadge 'Background' $(if ($modified) { 'Card' } else { 'CardSel' })
         $state.Modified = $modified
         # Offered only when there is something to undo, and scoped to the mode
-        # in front of you - Reset presets on the mode screen wipes all of them.
+        # in front of you.
         $ui.BtnResetOne.Content    = "Reset $shown"
         $ui.BtnResetOne.Visibility = if ($modified) { 'Visible' } else { 'Collapsed' }
-        # Save follows it, for the same reason from the other direction: with
-        # nothing changed from the preset there is nothing to keep, and all
-        # three of its answers - make this the default, write it to a file,
-        # cancel - are about a change that has not been made. The pair on the
-        # mode screen has always worked this way; the toolbar's Save was the one
-        # that stood there offering to save nothing.
+        # Save follows it from the other direction: with nothing changed there
+        # is nothing to keep, and all three of its answers are about a change
+        # that has not been made.
         $ui.BtnSave.Visibility = $ui.BtnResetOne.Visibility
         & $paintAdvancedPresets
         # Last, so the browser notice appears over a list that already reflects
@@ -8616,19 +6767,16 @@ function Show-WDWindow {
         $edge = $rowById[$EDGE_ID]
         if ($edge) { & $syncBrowser ([bool]$edge.Check.IsChecked) }
         # The bar is a view of the selection, so it is repainted wherever the
-        # selection changes rather than on a timer that would lag behind a click.
+        # selection changes.
         & $paintStorage
         # Not $applyFilter, which would rewrite Visibility on three hundred rows
-        # on every click. This walks them and writes one string.
+        # on every click.
         & $paintFilterCount
     }
     $updateTallyRef.Fn = $updateTally
-    # Bound here, at the function's own scope, and reused for every row. It used
-    # to be re-bound per row from inside the loop, which was the same thing while
-    # the loop ran here - but the loop is deferred now, and .GetNewClosure() on
-    # an existing scriptblock re-binds it to whatever scope calls it. Rebound
-    # from inside the deferred block it would have captured that block's half
-    # dozen locals instead of the function's, and the first tick would throw.
+    # Bound here at the function's own scope and reused for every row: re-bound
+    # per row from inside the loop, GetNewClosure re-binds the block to the
+    # calling scope.
     $rowTally = $updateTally.GetNewClosure()
     $advWork.Add({
     if ($advSay.Fn) { & $advSay.Fn 'Wiring the rows up' }
@@ -8638,22 +6786,16 @@ function Show-WDWindow {
         $r.Check.Add_Unchecked($rowTally)
     }
 
-    # Dependent rows: unticking the parent takes its children with it, and the
-    # filter is what puts them back on screen. Doing the hiding here rather than
-    # in the filter alone would fight it - $applyFilter runs on its own for
-    # reasons that have nothing to do with this.
+    # Unticking the parent takes its children with it, and the filter is what
+    # puts them back on screen.
     $dependants = @{}
     foreach ($r in $rows) {
         if (-not $r.Requires) { continue }
         if (-not $dependants.ContainsKey($r.Requires)) { $dependants[$r.Requires] = New-Object System.Collections.Generic.List[psobject] }
         $dependants[$r.Requires].Add($r)
     }
-    # $parentId, NOT $pid. $PID is a READONLY automatic variable, so
-    # `foreach ($pid in ...)` throws "Cannot overwrite variable PID because it is
-    # read-only or constant" on its first iteration - and it is never zero
-    # iterations, because the five PowerToys options all require add-powertoys.
-    # Inside an $advWork entry that throw stops the pre-warm and leaves this
-    # wiring unattached, so unticking the parent left its children ticked.
+    # $parentId, not $pid: $PID is a readonly automatic variable, and foreach
+    # over it throws.
     foreach ($parentId in $dependants.Keys) {
         $parent = $rowById[$parentId]
         if (-not $parent) { continue }
@@ -8663,8 +6805,7 @@ function Show-WDWindow {
         $pidKey = [string]$parentId
         $sync = {
             # Nothing is withdrawn when the parent is already on the machine:
-            # its box is off because there is nothing to install, not because
-            # the thing is absent.
+            # its box is off because there is nothing to install.
             if (-not $this.IsChecked -and -not $inst.Contains($pidKey)) {
                 foreach ($k in $kids) { $k.Check.IsChecked = $false }
             }
@@ -8675,17 +6816,13 @@ function Show-WDWindow {
     }
     }.GetNewClosure())
 
-    # Selection changes made on this page, oldest first. One entry per gesture,
-    # so clearing a whole section takes one Undo rather than thirty.
+    # One entry per gesture, so clearing a whole section takes one Undo rather
+    # than thirty.
     $advUndo = New-Object System.Collections.Generic.List[psobject]
-    # What was ticked when this page was last handed a preset - which is what
-    # "as it was when you opened it" means, since opening Advanced applies one.
-    # An empty stack and an unchanged page have to be the same state, or Undo
-    # sits there offering to reverse a gesture whose effect has already gone.
+    # What was ticked when this page was last handed a preset, which is what "as
+    # it was when you opened it" means.
     $advBase = New-Object System.Collections.Generic.HashSet[string]
-    # Whether the boxes are back where the baseline left them. Cheap enough to
-    # ask on every gesture: it is one pass over ~240 booleans, and the tally
-    # above it already makes two.
+    # Cheap enough to ask on every gesture: one pass over ~240 booleans.
     $advAtBase = {
         $n = 0
         foreach ($r in $rows) {
@@ -8695,9 +6832,8 @@ function Show-WDWindow {
         }
         ($n -eq $advBase.Count)
     }.GetNewClosure()
-    # One gesture, in the words somebody would use for it. A gesture is a list
-    # of rows that moved together, so a heading click and a single tick are the
-    # same shape and read differently only because of how many they carry.
+    # A gesture is a list of rows that moved together, so a heading click and a
+    # single tick are the same shape.
     $advSayGesture = {
         param($Changes)
         $c = @($Changes)
@@ -8707,8 +6843,8 @@ function Show-WDWindow {
             $nm = [string]$(if ($r) { $r.Name.Text } else { $c[0].Id })
             return $(if ([bool]$c[0].Was) { "Cleared $nm" } else { "Selected $nm" })
         }
-        # Was = the value before the gesture, so a batch that was mostly off is
-        # a batch that has just been turned on.
+        # Was is the value before the gesture, so a batch that was mostly off is
+        # one that has just been turned on.
         $on = @($c | Where-Object { -not [bool]$_.Was }).Count
         if ($on -eq $c.Count) { return "Selected $($c.Count) items" }
         if ($on -eq 0)        { return "Cleared $($c.Count) items" }
@@ -8716,9 +6852,7 @@ function Show-WDWindow {
     }.GetNewClosure()
     $showAdvUndo = {
         # Back where it started means there is nothing to take back, whatever
-        # the stack still holds. Ticking a box and unticking it again used to
-        # leave two gestures queued and an Undo button offering to reverse a
-        # page that had not changed.
+        # the stack still holds.
         if ($advUndo.Count -and (& $advAtBase)) { $advUndo.Clear() }
         $ui.BtnAdvUndo.Content    = $(if ($advUndo.Count -gt 1) { "Undo ($($advUndo.Count))" } else { 'Undo' })
         $ui.BtnAdvUndo.Visibility = $(if ($advUndo.Count) { 'Visible' } else { 'Collapsed' })
@@ -8756,81 +6890,40 @@ function Show-WDWindow {
         # Reset preset names the mode on screen, so switching mode re-asks
         # whether there is anything to reset.
         & $recount
-        # The stack describes edits to the boxes as they were. A preset switch
-        # replaces every one of them, so the entries no longer refer to
-        # anything the user would recognize as their own change.
+        # The stack describes edits to the boxes as they were, and a preset
+        # switch replaces every one.
         $advUndo.Clear()
         & $showAdvUndo
         $want = New-WDStringSet (& $effectiveIds $name)
-        # SUSPEND WHILE BULK-SETTING, or each of ~200 boxes restyles all ~200 rows.
-        #
-        # An absent row stays unticked whatever the mode says, because it is also
-        # unclickable - and a mode that ticks a box nobody can untick has taken the
-        # decision away. The run loses nothing: that item would report "nothing to
-        # do" for the price of a lookup.
-        #
-        # PresetSweep is the general seam for anything that answers a GESTURE
-        # rather than a state, which $updateTally cannot tell apart from inside.
-        # Edge's extensions are the case: ticking the removal by hand should take
-        # them, picking Aggressive should not - a mode has no business deciding
-        # about somebody's extensions, and a preset that silently ticked three
-        # extra rows would read as edited the moment it was selected.
+        # Suspend while bulk-setting, or each of ~200 boxes restyles all ~200
+        # rows.
         $state.PresetSweep = $true
         try {
             $state.Suspend = $true
             try   { foreach ($r in $rows) { $r.Check.IsChecked = ($want.Contains($r.Id) -and -not $r.Absent) } }
             finally { $state.Suspend = $false }
             # This is the page as it was opened, so it is the baseline Undo
-            # measures against. Taken off the boxes rather than off $want,
-            # because $want names rows that are absent and never ticked.
+            # measures against. Taken off the boxes, because an absent row is
+            # never ticked whatever the mode says.
             $advBase.Clear()
             foreach ($r in $rows) { if ($r.Check.IsChecked) { $null = $advBase.Add([string]$r.Id) } }
             & $updateTally
         } finally { $state.PresetSweep = $false }
         # A wholesale preset change makes a checked/unchecked snapshot a view of
-        # what *used* to be ticked, so the snapshot has to be re-taken. It used
-        # to untick the two boxes instead, which answered the staleness and cost
-        # more than it bought: picking a different mode silently threw away a
-        # filter the user had set, and did it while they were looking at the
-        # narrowed page. Re-snapshotting keeps the filter they asked for and
-        # points it at the selection that now exists.
+        # what used to be ticked.
         foreach ($b in $filterBoxes) {
             if ($b.Group -eq 'View' -and $b.Name -in @($CHECKED, $UNCHECKED) -and $b.Box.IsChecked) {
                 & $takeSnapshot ([string]$b.Name)
             }
         }
         # "Changed from preset" is computed live against the preset that was on
-        # screen when it was last applied, and nothing above re-runs the filter -
-        # $updateTally deliberately repaints the count only, because re-filtering
-        # three hundred rows on every click is what that avoids. So a preset
-        # switch left the page showing the previous mode's changed rows while the
-        # footer counted the new mode's selection. Only when a view filter is
-        # actually live, so the ordinary switch stays cheap.
+        # screen, and nothing above re-runs the filter.
         if ($filterSel.View.Count -and $applyFilterRef.Fn) { & $applyFilterRef.Fn }
         # Selected first is a layout, not a paint, so nothing above moves a row.
-        # Switching preset re-ticks every box and the page kept the arrangement
-        # from the mode before it: rows the new mode had just selected stayed
-        # sitting at the back of their block, under rows it had just cleared.
-        # Only bulk changes re-run this. Doing it per tick would yank the row
-        # out from under the pointer that had just ticked it.
         if ([string]$state.Sort -in @('selected', 'unselected') -and $applyOrderRef.Fn) { & $applyOrderRef.Fn }
     }
-    # ---- saying that the button did something ------------------------------
-    #
-    # A preset switch is the largest single thing anybody can do here and it
-    # announced itself the least: two hundred boxes change at once, which is too
-    # much to perceive as one event, and the badge swaps its numbers on the
-    # opposite side of the window. Two people who had never seen the application
-    # both clicked a mode and then asked whether it had done anything.
-    #
-    # It deliberately does NOT restate the badge's count - one fact in two places
-    # is one place plus a way for them to disagree. It says the two things nothing
-    # else on the page can: how far the count MOVED, and what became of any edit,
-    # which $switchPreset otherwise folds into an override without a word.
-    #
-    # The timer is built HERE, at function scope, so its Tick closure can see what
-    # it reads. Created inside $sayPresetSwitch - itself a closure - it would
-    # capture that invocation's locals and nothing else.
+    # Saying that the button did something: two hundred boxes change at once,
+    # which is too much to perceive as one event.
     $presetNote = @{ Timer = (New-Object Windows.Threading.DispatcherTimer) }
     $presetNote.Timer.Interval = [TimeSpan]::FromSeconds(6)
     $presetNote.Timer.Add_Tick({
@@ -8847,7 +6940,7 @@ function Show-WDWindow {
         param([string]$To, [string]$From, [int]$Before, [int]$After, [int]$Kept)
         $tb = $ui.TxtPresetNote
         # An animation holds the property it last wrote, so it has to be
-        # released before the opacity can be set back by hand.
+        # released before the opacity can be set by hand.
         $tb.BeginAnimation([Windows.UIElement]::OpacityProperty, $null)
         $tb.Opacity = 1
         $tb.Inlines.Clear()
@@ -8856,10 +6949,9 @@ function Show-WDWindow {
         & $Ref $lead 'Foreground' 'Sub'
         $null = $tb.Inlines.Add($lead)
         $name = New-Object Windows.Documents.Run ([string]$To)
-        # Asked for, never assumed. $presetColor is keyed by preset name and a
-        # dropped or renamed file leaves nothing behind it; handing $Ref an
-        # empty key throws from inside a click handler, which is how the Details
-        # panel came to report "no theme key" on a page that had built fine.
+        # Asked for, never assumed: $presetColor is keyed by name and a dropped
+        # or renamed file leaves nothing behind it, and handing $Ref an empty
+        # key throws from inside a click handler.
         $tint = [string]$presetColor[[string]$To]
         if (-not $tint) { $tint = 'Text' }
         & $Ref $name 'Foreground' $tint
@@ -8877,8 +6969,7 @@ function Show-WDWindow {
             $said = ". $n fewer option$(if ($n -ne 1) { 's' }) selected."
         }
         # Only when it happened, and it is the half nobody would guess: leaving
-        # a preset mid-edit keeps the edit rather than discarding it, and until
-        # now the only evidence was the marks reappearing if you went back.
+        # a preset mid-edit keeps the edit rather than discarding it.
         if ($Kept -gt 0) {
             $said += $(if ($Kept -eq 1) { " Your 1 change to $From was kept." }
                        else            { " Your $Kept changes to $From were kept." })
@@ -8888,21 +6979,17 @@ function Show-WDWindow {
         $null = $tb.Inlines.Add($rest)
         $tb.Visibility = 'Visible'
 
-        # Held long enough to read, then faded rather than snapped away - a line
-        # that vanishes reads as something missed, and a line that fades reads
-        # as one that is finished. No timer at all under the harness: it sets
-        # the text and asserts on it in the next statement, and a note that had
-        # already faded would fail a check that is not about the delay.
+        # Held long enough to read, then faded: a line that vanishes reads as
+        # something missed.
         if ($state.NoPrompts) { return }
-        # Restart, not start: a second switch inside the six seconds re-arms the
-        # hold rather than inheriting the remainder of the first one's.
+        # Restart, not start: a second switch inside the hold re-arms it rather
+        # than inheriting the remainder.
         $presetNote.Timer.Stop()
         $presetNote.Timer.Start()
     }.GetNewClosure()
 
     # Switching preset in Advanced keeps whatever you had changed, exactly as
-    # leaving the page does. Without this, comparing two modes mid-edit throws
-    # the edit away, and the loss is silent.
+    # leaving the page does.
     $switchPreset = {
         param([string]$name)
         $from = [string]$state.Preset
@@ -8920,12 +7007,7 @@ function Show-WDWindow {
         & $sayPresetSwitch $name $from $before $after $kept
     }
     # Drops the edit for this mode only, saved or not. No confirmation: it is
-    # one mode, and re-making the edit costs the same as it did the first time.
-    #
-    # Named rather than assumed. The Advanced toolbar's Reset speaks for the
-    # preset on that page and passes nothing, which still means the selected
-    # one; the mode screen's cards each speak for themselves, and one of those
-    # can be reset without being selected first.
+    # one mode, and re-making the edit costs what it did the first time.
     $resetOnePreset = {
         param([string]$Name = '')
         if (-not $Name) { $Name = [string]$state.Preset }
@@ -8933,23 +7015,15 @@ function Show-WDWindow {
         $overrides.Remove($Name)
         & $recount
             & $repaintModeGrid
-        # Only when it is the preset the boxes are currently showing. Re-ticking
-        # them for a preset nobody is looking at would silently move the Advanced
-        # page onto it.
+        # Only when it is the preset the boxes are showing: re-ticking them for
+        # one nobody is looking at would move the page under them.
         if ($Name -eq [string]$state.Preset) { & $applyPresetToChecks $Name }
         & $saveUiState
     }
     $ui.BtnResetOne.Add_Click({ & $resetOnePreset }.GetNewClosure())
 
-    # The toolbar's preset buttons, rebuilt whenever the list of presets
-    # changes - which now happens while the window is open, every time a
-    # selection is loaded from a file or dropped.
-    #
-    # $ui keeps BtnConservative and its four siblings pointing at the real
-    # buttons. They were XAML elements until the row became dynamic, and about
-    # forty lines of the interaction pass press them by name; re-pointing the
-    # entries is one line and a rename would have been churn everywhere to say
-    # exactly the same thing.
+    # Rebuilt whenever the list of presets changes, which now happens while the
+    # window is open.
     $advBtnNames = @{ Conservative = 'BtnConservative'; Balanced = 'BtnBalanced'
                       Aggressive = 'BtnAggressive'; Extreme = 'BtnExtreme'; Custom = 'BtnCustom' }
     $buildAdvPresetRow = {
@@ -8961,9 +7035,7 @@ function Show-WDWindow {
         $map.Clear()
         foreach ($n in $presetNames) {
             $b = New-Object Windows.Controls.Button
-            # The short form: this is a row of buttons that grows by one for
-            # every file loaded, so it is one of the two places the twelve-
-            # character cap exists for.
+            # The short form: this row grows by one for every file loaded.
             $b.Content = [string](& $shortPreset ([string]$n))
             $b.Padding = '12,5'; $b.Margin = '0,0,6,0'
             if ($tips.ContainsKey($n)) { $b.ToolTip = [string]$tips[$n] }
@@ -8980,24 +7052,8 @@ function Show-WDWindow {
     }.GetNewClosure()
     & $buildAdvPresetRow
 
-    # ---- grouping and sorting: two questions, two controls -----------------
-    #
-    # The filter decides WHAT is on the page; these decide how it is arranged -
-    # which blocks the page divides into, and the order of rows inside a block.
-    #
-    # This was one drop-down called "List by" holding five mutually exclusive
-    # choices that were not mutually exclusive: four were groupings and the fifth
-    # was a sort wearing a grouping's coat, so "the AI category, biggest saving
-    # first" and "worst offenders, alphabetically" were both unsayable.
-    #
-    # One multi-select with the bad combinations grayed out was considered. Two
-    # pickers beat it: gating needs rules to explain, a grayed entry raises a
-    # question the control cannot answer, and THERE IS NO PAIR HERE THAT HAS TO BE
-    # FORBIDDEN. Every combination means something.
-    #
-    # This RE-PARENTS rows, so it is careful about three things: a category header
-    # is a positional sibling rather than a container, a dependent row must stay
-    # directly under its parent, and the browser strip must stay under the Edge row.
+    # Grouping and sorting are two questions, two controls. There is no pair of
+    # these that has to be forbidden, so nothing is grayed out.
     $GROUPS = [ordered]@{
         'category' = 'Category'
         'bloat'    = 'Bloat rating'
@@ -9005,80 +7061,35 @@ function Show-WDWindow {
         'alpha'    = 'Name (A-Z)'
         'space'    = 'Storage savings'
     }
-    # Two entries; it held four plus a check box. Worst rating first, Riskiest
-    # first, and Biggest saving first are gone and none is missed, for the same
-    # reason each time: EVERY ONE WAS ALSO A GROUPING, so the two controls asked
-    # the same question twice - and the ranking a sort produces is strictly worse
-    # than the grouping's answer, because a ranked list of 250 rows has no line in
-    # it saying where risky stops and cautious starts.
-    #
-    # What is left is the only question a sort has once the page is arranged:
-    # alphabetical, or what have I got so far.
-    #
-    # "Selected first" is an ENTRY rather than the separate check box it was. It
-    # was genuinely a modifier on top of a sort, and that cost a third control, a
-    # state nothing else reflected, and combinations nobody asked for. Its mirror
-    # answers the other half: ticked rows to the top says "what have I got",
-    # the opposite says "what have I not looked at yet".
+    # Two entries; it held four plus a check box. Three of the four were also
+    # groupings, and a ranked list of 250 rows has no line saying where risky
+    # stops.
     $SORTS = [ordered]@{
         'name'     = 'Name (A-Z)'
         'selected' = 'Selected first'
         'unselected' = 'Selected last'
     }
-    # Which grouping keeps the Remove / Add / Extras split. Only Category, and
-    # for one reason: a section is itself a way of grouping, so any other
-    # grouping crossed with it produces the same band three times over. That
-    # was not a theory - "Risky" appeared once per section, all three rail cards
-    # lit up together because the rail keyed them by title, and the bloat bands
-    # could not be told which of their three copies an item was in.
+    # Which grouping keeps the Remove / Add / Extras split. Only Category: a
+    # section is itself a way of grouping, so any other crossed with it produces
+    # the same band three times.
     $GROUP_SECTIONED = @{ category = $true; alpha = $false; risk = $false; bloat = $false; space = $false }
-    # Sections a grouping does not lay out at all, as opposed to folding into
-    # one of its bands. Only Bloat rating, and only Add: a bloat rating answers
-    # "how bad is it that this is on the machine", and there is no answer to
-    # that about software the machine does not have. Those rows used to land in
-    # the unrated band, which put "Install PowerToys" and "Install Python" in a
-    # list of things to get rid of and made the band a bin for two unrelated
-    # kinds of row.
-    #
-    # This is the one place the page stops showing everything, so it is also
-    # the one place the rail has to speak: $railOmitted turns each entry here
-    # into a dimmed, unclickable card naming what is not listed, how many there
-    # are, and the grouping that shows them. A page that quietly drops forty
-    # rows is a page that lies; one that says which forty and where they went
-    # is a lens.
+    # Sections a grouping does not lay out at all, as opposed to folding into a
+    # band. Only Bloat rating, and only Add: there is no answer to "how bad is
+    # it that this is here" about software the machine does not have.
     $GROUP_OMITS = @{ bloat = @('add') }
-    # The bloat bands, $bandName, $YOUR_APP_CATS and $bandOf are declared far
-    # above, before the mode page, because the mode columns' bullet lists are
-    # built from them. Everything about them is documented there.
-    #
-    # Below this an item's contribution to a storage decision is noise. Items
-    # under it are still listed, in a band of their own, rather than hidden -
-    # this is a list of what the run will do, and dropping rows from it because
-    # they are small would be the page lying about its own contents.
+    # The bloat bands and $bandOf are declared far above, before the mode page,
+    # because the mode columns read them too.
     $SPACE_FLOOR = 500MB
 
-    # There was an $orderKey here, mapping a sort mode to a number - negative
-    # risk, the bloat rating with 0 pushed to the end, signed bytes. It went
-    # with the three sorts that used it: every one of them was also a grouping,
-    # and a grouping says where the boundary is while a ranking only implies
-    # it. Both remaining sorts key off the name, so there is nothing left to
-    # look up.
+    # There was an $orderKey here mapping a sort mode to a number. It went with
+    # the three sorts that were also groupings.
 
     # The order rows run in inside one block, and the one structural rule that
     # outranks it.
-    #
-    # That rule: a dependent row means nothing away from its parent - "Always on
-    # top" is a PowerToys setting, not something you can install on its own - so
-    # it sorts on its parent's key and then falls in directly behind it. Doing
-    # that with keys rather than by re-nesting the list is what keeps this a
-    # single Sort-Object; the alternative was rebuilding the parent/child tree
-    # on every re-order.
     $sortMembers = {
         param($Rows, [string]$SortMode)
         # "Selected first" floats the ticked rows to the top of each block, and
-        # the alphabet still holds inside each half - it is a sort of two
-        # halves, not an unordered pile followed by another one. "Selected last"
-        # is the same sort with the two halves swapped.
+        # the alphabet still holds inside each half.
         $selFirst = ($SortMode -eq 'selected')
         $selLast  = ($SortMode -eq 'unselected')
         $byId = @{}
@@ -9088,21 +7099,7 @@ function Show-WDWindow {
             if ($R.Requires -and $byId.ContainsKey([string]$R.Requires)) { $byId[[string]$R.Requires] } else { $R }
         }
         # A dependent row takes its parent's half, which is why this reads the
-        # anchor's box rather than its own: half a PowerToys block at the top of
-        # the group and half at the bottom is not a sort of anything.
-        #
-        # THREE bands, not two, and the third is the fix for "Selected last"
-        # opening with a wall of rows nobody can tick. A row whose box refuses a
-        # tick - target not on this machine, already installed, already set,
-        # ruled out by another option - is not selected, but it is not an
-        # outstanding decision either, and "Selected last" exists to put the
-        # outstanding decisions in front of you. Sorting it as merely unselected
-        # promoted every one of them to the top of its block. It goes last under
-        # both sorts, because under neither is it the thing being asked about.
-        #
-        # Asked of the box, and ticked-anyway still counts as selected: a
-        # clean-up that turned out to free nothing is disabled where it stands
-        # and the run will still act on it.
+        # anchor's box rather than its own.
         $band = {
             param($R)
             $box = (& $anchorOf $R).Check
@@ -9115,9 +7112,8 @@ function Show-WDWindow {
             if (-not ($selFirst -or $selLast)) { return 0 }
             & $band $R
         }
-        # Sort-Object is not stable in 5.1, so the name is always a key - without
-        # it rows shuffle every time the order is re-applied and the page appears
-        # to twitch for no reason.
+        # Sort-Object is not stable in 5.1, so the name is always a key -
+        # without it rows shuffle every time the order is re-applied.
         @($Rows | Sort-Object `
             @{ E = { [int](& $half $_) } },
             @{ E = { [string](& $anchorOf $_).Name.Text } },
@@ -9126,31 +7122,20 @@ function Show-WDWindow {
     }.GetNewClosure()
 
     # Every grouping is a list of full-width group blocks, exactly like
-    # Category. A group is a category, a letter range, a risk level, a bloat
-    # band or a size band depending on the grouping; the page and the rail
-    # neither know nor care which. That is what gives every grouping a working
-    # index instead of only one.
-    #
-    # Built once per grouping and kept: the blocks are cheap, the rows inside
-    # them are not, and rebuilding on every switch would re-create ~30 headings
-    # for nothing. Only the partition is cached - which rows are in which block.
-    # The order inside a block is the sort, which is a separate control and is
-    # applied at layout time by $applyOrder.
+    # Category.
     $groupCache = @{}
     $liveGroups = New-Object System.Collections.Generic.List[psobject]
 
     # A WPF element has exactly one parent, so a block has to be emptied before
-    # anything else can claim its rows. Collapsed as well as emptied: a block
-    # that is not laid out is not on the page, but it keeps whatever Visibility
-    # it had when it last was, and a detached block still reporting Visible is a
-    # lie anything reading the blocks has to know not to believe.
+    # anything else can claim its rows. Collapsed as well, because a parentless
+    # block reporting Visible is a lie.
     $letGoGroup = {
         param($G)
         $G.L.Children.Clear(); $G.R.Children.Clear()
         $G.Head.Visibility = 'Collapsed'; $G.Rule.Visibility = 'Collapsed'; $G.Block.Visibility = 'Collapsed'
     }.GetNewClosure()
 
-    # Drop a cached partition, rows first. See $groupsRef for why this exists.
+    # Drop a cached partition, rows first.
     $groupsRef.Drop = {
         param([string]$Mode)
         if (-not $groupCache.ContainsKey($Mode)) { return }
@@ -9163,33 +7148,16 @@ function Show-WDWindow {
         if ($groupCache.ContainsKey($Mode)) { return }
 
         $out = New-Object System.Collections.Generic.List[psobject]
-        # Every row. Recurring used to be excluded here, because it was built by
-        # hand into a block of its own and so could not be re-parented into a
-        # group - which meant no grouping but Category could list it, and the
-        # rail filed it under "Also on this page" as though it were not part of
-        # the list. It is an ordinary category now and needs no exception.
-        #
-        # A section the grouping does not lay out is dropped here rather than at
-        # layout time, so nothing downstream has to know: the group blocks are
-        # simply built without those rows, and $applyOrder collapses whatever
-        # was left over.
+        # Every row. Recurring used to be excluded, because it was hand-built
+        # into a block of its own and could not be re-parented.
         $omit = @()
         if ($GROUP_OMITS.ContainsKey($Mode)) { $omit = @($GROUP_OMITS[$Mode]) }
-        # A row hosted in one of the fixed blocks is never grouped, in any
-        # arrangement. It is already parented there and $fillColumns would tear
-        # it out of the block and file it under a letter or a band.
+        # A row hosted in a fixed block is never grouped: it is already parented
+        # there and $fillColumns would tear it out.
         $all = @($rows | Where-Object { [string]$_.Section -notin $omit -and -not $_.HostBlock })
 
-        # A dependent row means nothing away from its parent - "Always on top" is
-        # a PowerToys setting, not a thing you can install - so it never gets a
-        # group of its own. Grouping runs over parents only, and the dependants
-        # are put back beside their parent afterwards, wherever that landed.
-        # Letters were where this showed: PowerToys is under P and Always on top
-        # is under A, and the alphabet does not care that one owns the other.
-        # Set lookups, not a Where-Object per row: this used to be
-        # @($all | Where-Object { $_.Id -eq $r.Requires }) inside a loop over
-        # every row, which is 330 x 330 comparisons per order and took the self
-        # test from 40 seconds to 166.
+        # A dependent row means nothing away from its parent, so it never gets a
+        # group of its own.
         $idsHere = New-Object 'System.Collections.Generic.HashSet[string]'
         foreach ($r in $all) { $null = $idsHere.Add([string]$r.Id) }
         $hasParent = New-Object 'System.Collections.Generic.HashSet[string]'
@@ -9217,9 +7185,8 @@ function Show-WDWindow {
         }
 
         if ($Mode -eq 'space') {
-            # One ranked list, and one honest admission underneath it. Sorting
-            # 250 rows by size and calling the bottom 200 of them an answer is
-            # what the size filter used to do before it was taken out.
+            # One ranked list and one honest admission underneath: sorting 250
+            # rows by size and calling the bottom 200 an answer is not one.
             $big  = @($lead | Where-Object { [int64](& $rowBytes $_) -le -$SPACE_FLOOR })
             $rest = @($lead | Where-Object { [int64](& $rowBytes $_) -gt -$SPACE_FLOOR })
             & $addGroup ("Frees " + (Format-WDBytes $SPACE_FLOOR) + " or more") '' 'remove' $big
@@ -9230,28 +7197,14 @@ function Show-WDWindow {
             }
         } elseif ($Mode -eq 'bloat') {
             # $BLOAT_BAND is worst-first with the two non-ratings last, so the
-            # bands come out of it in the order they are read in.
+            # bands come out in reading order.
             foreach ($band in $BLOAT_BAND) {
                 $b = $band.B
                 & $addGroup ([string]$band.N) '' 'remove' @($lead | Where-Object { (& $bandOf $_) -eq $b })
             }
         } else {
             # Letters merged into ranges while a range stays short: one card per
-            # letter is 26 cards for 250 rows, most holding two. ONE run down the
-            # whole list, not three per section - three alphabets means a name
-            # could be in any of them, which is what an alphabetical list exists
-            # to stop.
-            #
-            # Written out rather than through a $flush closure: a GetNewClosure
-            # block gets its OWN copy of what it captured, so "$run = New-Object
-            # List" inside one resets the closure's copy and leaves the caller's
-            # list untouched - every group after the first re-listed the rows
-            # before it, and the second to claim a row hit WPF's one-parent rule.
-            #
-            # THE BROWSER PICKER IS FILED UNDER W. It is a choice rather than a
-            # row, so under every other grouping it has nowhere to be - a band
-            # called "Risky" has no answer about which browser you would like. An
-            # alphabet does, and it is where its name says.
+            # letter is 26 cards for 250 rows, most holding two.
             $sorted = @(@($lead) + @($browserRow) | Sort-Object @{ E = { [string]$_.Name.Text } })
             $run = New-Object System.Collections.Generic.List[psobject]
             $first = ''; $last = ''
@@ -9283,9 +7236,7 @@ function Show-WDWindow {
 
         # Which rows this grouping does not lay out. Recorded before anything
         # moves, because two things downstream have to tell "not on the page"
-        # from "filtered away": the filter collapses these so no count can
-        # include a row nobody can see, and the not-shown chip skips them so it
-        # does not offer to drop filters that were never the reason.
+        # from "filtered away".
         $state.OffPage.Clear()
         $omitSecs = @()
         if ($GROUP_OMITS.ContainsKey($mode)) { $omitSecs = @($GROUP_OMITS[$mode]) }
@@ -9301,24 +7252,16 @@ function Show-WDWindow {
             extras = @{ L = $ui.ExtraLeft; R = $ui.ExtraRight; G = $ui.ExtraColumns }
         }
 
-        # Which groups this order lays out. Plain assignment, not an
-        # if-expression: the value is a collection and an if-expression unrolls
-        # it, which is the trap this file keeps a section about.
+        # Plain assignment, not an if-expression: the value is a collection and
+        # an if-expression unrolls it.
         $groups = $catHeaders
         if ($mode -ne 'category') {
             & $buildGroups $mode
             $groups = $groupCache[$mode]
         }
 
-        # A WPF element has exactly one parent, so everything has to be let go
-        # before anything is re-homed.
-        #
-        # Every group ever built, not just the ones $liveGroups says are on the
-        # page: after the build the rows sit in the category blocks and nothing
-        # has recorded that yet, so opening straight into a saved non-category
-        # order found every row still parented and threw on the first re-home.
-        # Clearing an already-empty panel costs nothing. $applyFilter turns the
-        # live ones back on a few lines below, from $liveGroups.
+        # A WPF element has exactly one parent, so everything is let go before
+        # anything is re-homed.
         foreach ($g in $catHeaders) { & $letGoGroup $g }
         foreach ($k in @($groupCache.Keys)) {
             foreach ($g in $groupCache[$k]) { & $letGoGroup $g }
@@ -9327,94 +7270,60 @@ function Show-WDWindow {
         foreach ($sec in @('remove','add','extras')) {
             $p = $panels[$sec]
             $p.L.Children.Clear(); $p.R.Children.Clear()
-            # Every order is full-width blocks down the left panel now, so the
-            # section's own second column is never used by anything.
+            # Every order is full-width blocks down the left panel, so the
+            # section's second column is never used.
             $p.G.ColumnDefinitions[1].Width = New-WDGridLength 0
             $p.G.ColumnDefinitions[2].Width = New-WDGridLength 0
         }
 
         # The browser picker is filed under W by Name (A-Z) and sits at the top
-        # of Add under everything else, so it changes parent with the grouping.
-        # Detached unconditionally first: $fillColumns throws on an element that
-        # still has one, and the block's home is not a group panel, so none of
-        # the clearing above reaches it.
+        # of Add otherwise, so it changes parent with the grouping.
         $bblk = $ui.BrowserAddBlock
         if ($bblk.Parent -is [Windows.Controls.Panel]) { $null = $bblk.Parent.Children.Remove($bblk) }
         if ($mode -ne 'alpha') { $browserHome.Children.Insert(0, $bblk) }
 
         foreach ($g in $groups) {
             # Kept on the block, because $rebalanceGroups has to re-lay this out
-            # after a filter pass and re-sorting every block to do it would mean
-            # a $sortMembers call per group per keystroke. The sort is a separate
-            # control; nothing about hiding a row changes the order.
+            # after a filter pass.
             $g.Ordered = @(& $sortMembers $g.Rows $sortBy)
             & $fillColumns $g.Ordered $g.L $g.R $g.Grid
-            # Forced stale, so the rebalance at the end of the $applyFilter below
-            # always runs once for a freshly laid-out block. This fill balanced
-            # on whatever visibility the rows happened to be carrying from the
-            # previous order, which is not what the filter is about to leave them
-            # holding.
+            # Forced stale, so the rebalance at the end of $applyFilter always
+            # runs once for a freshly laid-out block.
             $g.VisN = -1
-            # A block coming back from the cache keeps whatever the last grouping
-            # left it folded to, and a group that opens collapsed with no filter
-            # on reads as a page that failed to draw.
+            # A block from the cache keeps whatever the last grouping folded it
+            # to, and one that opens collapsed reads as a page that failed to
+            # draw.
             if ($g.Toggle) { & $setGroupOpen $g.Grid $g.Note $g.Toggle $true $g.Rows }
             $host2 = $(if ($sectioned) { $panels[$g.Section].L } else { $panels['remove'].L })
             $null = $host2.Children.Add($g.Block)
             $liveGroups.Add($g)
         }
-        # These blocks are new to the page, so nothing has yet decided which of
-        # them have been changed from the mode. Computed here rather than handed
-        # in: $applyOrder has no diff of its own and this runs once per re-lay,
-        # not once per tick.
+        # These blocks are new to the page, so nothing has yet decided which
+        # have been changed from the mode.
         if ($groupResetRef.Fn) { & $groupResetRef.Fn $null $null }
 
-        # The Remove banner speaks for the whole list when there are no sections,
-        # so it says what the list is instead of claiming everything under it is
-        # a removal.
+        # The Remove banner speaks for the whole list when there are no
+        # sections, so it says what the list is.
         $ui.RemoveHead.Text = $(if ($sectioned) { 'Remove' } else { [string]$GROUPS[$mode] })
 
-        # There were two loops here stamping Head.Tag.Ordered on every block ever
-        # built, so that $applyFilter could tell a heading belonging to this
-        # grouping from one belonging to another. It walks $liveGroups now, which
-        # is the same fact held directly instead of mirrored onto ~90 blocks, and
-        # the call below re-runs the filter - so every heading on the page is
-        # decided one line later, and the blocks that are not on the page do not
-        # need deciding.
+        # There were two loops here stamping a flag on every block ever built.
+        # $applyOrder records what it laid out instead.
         if ($railRef.Rebuild) { & $railRef.Rebuild $groups $sectioned $omitSecs }
-        # Every row has just been re-parented, so every cached heading offset is
-        # now describing a layout that no longer exists.
+        # Every row has just been re-parented, so every cached heading offset
+        # describes a layout that no longer exists.
         if ($indexRef.Invalidate) { & $indexRef.Invalidate }
         if ($applyFilterRef.Fn) { & $applyFilterRef.Fn }
     }.GetNewClosure()
     $applyOrderRef.Fn = $applyOrder
 
-    # ---- the category names the filter offers -------------------------------
-    #
-    # PAGE ORDER, not alphabetical, for the same reason as the rail: these are the
-    # same twenty-odd names, and two lists of the same things in two different
-    # orders is a worse picker than either order alone.
-    #
-    # A List filled in place, never an array reassigned: the drop-down is built
-    # from it inside a closure, and += would leave that closure holding the empty
-    # one it captured.
+    # The category names the filter offers.
     $catNames = New-Object System.Collections.Generic.List[string]
     $advWork.Add({
         if ($advSay.Fn) { & $advSay.Fn 'Listing the categories' }
         foreach ($h in $catHeaders) { $catNames.Add([string]$h.Name) }
     }.GetNewClosure())
 
-    # ---- the group headings' own Reset, and Collapse/Expand all -------------
-    #
-    # Which headings offer a Reset. Given the two sets $updateTally has already
-    # built, because that is the one place that knows what differs from the mode
-    # and rebuilding it per group per tick would be the same walk ninety times.
-    # It computes them itself when handed nothing, which is what $applyOrder does
-    # after laying out a grouping whose blocks are new.
-    #
-    # Only rows the reset could actually move are counted. A row whose box refuses
-    # a tick cannot be put back by this, so letting one light the button up would
-    # produce a Reset that appears, gets pressed, and changes nothing.
+    # The group headings' own Reset, and Collapse/Expand all.
     $syncGroupResets = {
         param($AddedSet, $RemSet)
         if ($null -eq $AddedSet) {
@@ -9427,13 +7336,8 @@ function Show-WDWindow {
             $changed = $false
             foreach ($r in $g.Rows) {
                 # Disabled rows are not decisions and so are not things to put
-                # back - EXCEPT a gated one, which is disabled only because
-                # another tick is holding it down and becomes a decision again
-                # the moment that tick goes. Skipping those was half of why
-                # Reset did nothing on the group holding "Make this run
-                # permanent" and "Write a rollback script": the group's only
-                # visible change was the blocker, and the row that had actually
-                # moved was invisible to both this and the reset itself.
+                # back - except a gated one, which is disabled only because
+                # another tick is holding it down.
                 if (-not $r.Check.IsEnabled -and -not $r.Gated) { continue }
                 $id = [string]$r.Id
                 if ($AddedSet.Contains($id) -or $RemSet.Contains($id)) { $changed = $true; break }
@@ -9443,35 +7347,23 @@ function Show-WDWindow {
     }.GetNewClosure()
     $groupResetRef.Fn = $syncGroupResets
 
-    # And what it does: this group's rows back to the mode's own selection, as one
-    # undo entry. Measured against $defaultIds, not $effectiveIds - the same
-    # baseline the green and red marks use, so pressing Reset clears exactly the
-    # marks in this group and no others.
+    # This group's rows back to the mode's own selection, as one undo entry.
+    # Measured against $defaultIds, not $effectiveIds.
     $resetGroupRows = {
         param($Rows)
         $want = New-WDStringSet (& $defaultIds $state.Preset)
         $list = @($Rows)
-        # Read off the boxes before anything moves. Working out what changed
-        # afterwards is the only way to be right here, because the two passes
-        # below can hand a tick back to a row that was not even available to be
-        # set when the pass started.
+        # Read off the boxes before anything moves: working out what changed
+        # afterwards is the only way to be right, because the second pass can
+        # set a row the first could not.
         $before = @{}
         foreach ($r in $list) { $before[[string]$r.Id] = [bool]$r.Check.IsChecked }
 
         # Suspend, or every box restyles all ~200 rows on the way past.
         $state.Suspend = $true
         try {
-            # OFF first, then the rules, then ON. Not one pass in row order, and
-            # that is the whole of the bug this replaces.
-            #
-            # A row can be disabled *because* another row is ticked - "Make this
-            # run permanent" blocks "Write a rollback script" - so with both
-            # changed, a single pass unticked the blocker and skipped the
-            # blocked row as not-a-decision, leaving the group half reset and
-            # Reset looking broken on exactly the case that needed it. Clearing
-            # the blocker is what makes the other row settable, so the clearing
-            # has to finish, and $syncExclusions has to run, before anything is
-            # ticked back on.
+            # Off first, then the rules, then on. One pass in row order is wrong
+            # whenever a group holds both halves of an exclusion.
             foreach ($r in $list) {
                 if ($r.Check.IsEnabled -and $r.Check.IsChecked -and -not $want.Contains([string]$r.Id)) {
                     $r.Check.IsChecked = $false
@@ -9497,7 +7389,7 @@ function Show-WDWindow {
     $groupResetRef.Do = $resetGroupRows
 
     # Every group at once. One gesture, so the rail's offsets are thrown away
-    # once at the end rather than ninety times on the way through.
+    # once rather than ninety times.
     $setAllGroups = {
         param([bool]$Open)
         foreach ($g in $liveGroups) {
@@ -9510,21 +7402,11 @@ function Show-WDWindow {
     $ui.BtnCollapseAll.Add_Click({ & $setAllGroups $false }.GetNewClosure())
     $ui.BtnExpandAll.Add_Click({   & $setAllGroups $true  }.GetNewClosure())
     # Through the holder: $refreshAdvanced cannot be written until every page's
-    # elements exist, and this row of buttons is wired thousands of lines above
-    # that point.
+    # elements exist.
     $ui.BtnRefresh.Add_Click({ if ($refreshRef.Adv) { & $refreshRef.Adv } }.GetNewClosure())
 
-    # Re-lay each block's two columns, for the blocks whose VISIBLE row count has
-    # actually moved. $fillColumns balances on visible rows at layout time, before
-    # the filter has decided what is visible, so its break is right for the page
-    # as it stood and wrong the moment anything is hidden.
-    #
-    # Guarded on the count rather than run unconditionally because $applyFilter
-    # fires on every keystroke and every tick: re-parenting 200 row panels per
-    # keystroke is a layout storm for nothing.
-    #
-    # Reads $g.Ordered rather than re-sorting - the sort is a separate control and
-    # hiding a row does not change the order.
+    # Re-lay each block's two columns, for the blocks whose visible row count
+    # has actually moved.
     $rebalanceGroups = {
         foreach ($g in $liveGroups) {
             $n = 0
@@ -9554,94 +7436,44 @@ function Show-WDWindow {
         $offPage = $state.OffPage
         foreach ($r in $rows) {
             # A row this grouping does not lay out is not on the page, and every
-            # count on the page is taken off Visibility. Deciding it here rather
-            # than leaving the row Visible-but-parentless is what keeps "N of M
-            # selected", the rail counts and the group headings from all
-            # speaking for forty rows nobody can see.
+            # count is taken off Visibility.
             $ok = -not $offPage.Contains([string]$r.Id)
             if ($ok -and $null -ne $viewIds) { $ok = $viewIds.Contains($r.Id) }
             # A row that only means something under another one is not on the
-            # page at all until that one is ticked - or is already installed,
-            # which is the same condition met a different way. Configuring
-            # PowerToys on a machine that already has it is the normal case, not
-            # an edge one.
+            # page until that one is ticked - or is already installed.
             if ($ok -and $r.Requires) {
                 $parent = $rowById[[string]$r.Requires]
                 $ok = [bool]($installedIds.Contains([string]$r.Requires) -or ($parent -and $parent.Check.IsChecked))
             }
-            # A row whose whole meaning depends on something else being true -
-            # "make your other browser the default" means nothing on a machine
-            # with no other browser and none queued for install.
+            # A row whose whole meaning depends on something else being true.
             if ($ok -and $rowGate.ContainsKey([string]$r.Id)) { $ok = [bool](& $rowGate[[string]$r.Id]) }
-            # The three boxes that subtract. Every other facet below narrows to
-            # what was ticked; these take away what they name, and they AND with
-            # each other rather than OR-ing the way a selective group does -
-            # hiding three kinds of row hides all three. Asked by name rather
-            # than through .Count, which was enough only while the group held one
-            # box and would now have made any of them do the work of all.
+            # The three boxes that subtract. Every other facet narrows to what
+            # was ticked; these take away what they name, and they AND with each
+            # other.
             if ($ok -and $filterSel.Avail.Contains($HIDE_ABSENT))  { $ok = -not [bool]$r.Absent }
             if ($ok -and $filterSel.Avail.Contains($HIDE_APPLIED)) { $ok = -not [bool]$r.Applied }
             if ($ok -and $filterSel.Avail.Contains($HIDE_OPT_IN))  { $ok = ([int]$r.Tier -ne 0) }
-            # The tier the manifest ships, which is what the "opt-in" tag beside
-            # the name is drawn from - not a live "is this id in any preset's
-            # effective set" query. Promoting an opt-in row into Balanced leaves
-            # the tag saying opt-in, and a filter that disagreed with the tag it
-            # names would be the harder thing to explain.
+            # The tier the manifest ships, which is what the "opt-in" tag is
+            # drawn from - not a live "is this in any preset" query, or the
+            # filter would disagree with the label it is named after.
             if ($ok -and $filterSel.Tier.Count) { $ok = ([int]$r.Tier -eq 0) }
             if ($ok -and $filterSel.Sec.Count)  { $ok = $filterSel.Sec.Contains([string]$SEC_LABEL[[string]$r.Section]) }
             if ($ok -and $filterSel.Risk.Count) { $ok = $filterSel.Risk.Contains([string]$riskLabel[[int]$r.Risk]) }
             if ($ok -and $filterSel.Cat.Count)  { $ok = $filterSel.Cat.Contains([string]$r.Category) }
             # Through $bandOf, not $r.Bloat: the filter and the grouping have to
-            # agree about which band a row is in, and only one of them can be
-            # allowed to know the rules. Picking "Not a removal - unrated" would
-            # otherwise miss every Extras row, which carries whatever number it
-            # was authored with and is unrated by virtue of its section.
+            # agree about which band a row is in.
             if ($ok -and $filterSel.Bloat.Count) { $ok = $filterSel.Bloat.Contains([string]$bandName[[string](& $bandOf $r)]) }
             if ($ok -and $q)             { $ok = $r.Search.Contains($q) }
             $r.Panel.Visibility = if ($ok) { 'Visible' } else { 'Collapsed' }
             if ($ok) { $shown++ }
         }
         # Hide a heading once everything under it is filtered away.
-        #
-        # $liveGroups, NOT $catHeaders - that is the category blocks only, so under
-        # every other grouping this decided the visibility of blocks that were not
-        # on the page and said nothing about the ones that were: searching under
-        # Bloat rating left every band standing over nothing. $liveGroups is
-        # whatever $applyOrder last laid out.
-        #
-        # Decided BEFORE the blocks are measured. Under Name (A-Z) the picker is a
-        # member of the W block, so that block asks whether it is visible while
-        # counting what is under it - computed afterwards, it reads last pass's
-        # answer, which is how a heading survives one keystroke too long.
-        #
-        # THREE BLOCKS HOLD NO ROWS and so cannot be spoken for by the loop below:
-        # the browser picker in Add, and the always-done list and the run-behaviour
-        # switches in Extras. A section filter still applies, but anything that
-        # narrows by ITEM has nothing to say about them.
-        #
-        # Avail is deliberately not in this list, unlike every other item facet:
-        # none of those three blocks is a row or has a target, so standing them
-        # down would be answering something nobody asked of them.
         $narrowed = [bool]$q -or $filterSel.Risk.Count -or $filterSel.Cat.Count -or $filterSel.View.Count -or $filterSel.Bloat.Count -or $filterSel.Tier.Count
         $secOk = {
             param([string]$Key)
             (-not $filterSel.Sec.Count) -or $filterSel.Sec.Contains([string]$SEC_LABEL[$Key])
         }
-        # The Add section can be off the page, and its picker goes with it - a
-        # browser choice under a heading that is not there would be the one Add row
-        # a bloat grouping still showed.
-        #
-        # TWO WAYS FOR THAT, and only the first was honoured. Bloat rating drops Add
-        # outright ($GROUP_OMITS). But every grouping except Category lays out no
-        # sections at all - the bands go down the Remove panel and $liveSec['add']
-        # is zero by construction - so under Risk the Add box was open only because
-        # $showBrowser forced it, holding nothing but the picker while the forty
-        # real Add rows were spread through Risky, Caution, and No risk.
-        #
-        # Name (A-Z) is the one exception: it DOES lay the picker out, under W, as a
-        # member of a letter block rather than a section's standing question. So the
-        # picker can show while the Add BOX stays shut, which is why $addAsSec is
-        # asked twice below.
+        # The Add section can be off the page and its picker goes with it.
         $addOmit   = @($GROUP_OMITS[[string]$state.Group]) -contains 'add'
         $addAsSec  = [bool]$GROUP_SECTIONED[[string]$state.Group]
         $addAlpha  = ([string]$state.Group -eq 'alpha')
@@ -9650,8 +7482,7 @@ function Show-WDWindow {
         $ui.BrowserAddBlock.Visibility  = if ($showBrowser) { 'Visible' } else { 'Collapsed' }
         $ui.RunOptionsBlock.Visibility  = if ($showRunOpts) { 'Visible' } else { 'Collapsed' }
         # What the run always does is not a choice, so nothing that narrows the
-        # choices has anything to say about it. It follows the Extras section
-        # and nothing else.
+        # choices has anything to say about it.
         $ui.AlwaysBlock.Visibility      = if ($showRunOpts) { 'Visible' } else { 'Collapsed' }
 
         $liveSec = @{ remove = 0; add = 0; extras = 0 }
@@ -9660,22 +7491,13 @@ function Show-WDWindow {
             $vis = if ($any) { 'Visible' } else { 'Collapsed' }
             $ch.Head.Visibility = $vis
             $ch.Rule.Visibility = $vis
-            # The block is what actually occupies the page, and it carries its
-            # own margins. Collapsing only the heading and the rule left an
-            # emptied category as a band of blank space with nothing in it.
+            # The block is what occupies the page and carries its own margins:
+            # collapsing only the heading and the rule left an empty gap.
             $ch.Block.Visibility = $vis
             if ($any) { $liveSec[[string]$ch.Section] += $any }
         }
         # There was a second count here for Recurring alone, because it was the
-        # one category built outside the column loop and so had no group block
-        # for the loop above to speak for. Without it, filtering to Recurring
-        # reported "3 of 235 items" over an empty page. It is a category now and
-        # the loop covers it.
-        #
-        # The Add box opens for the picker only where the picker is IN it. Under
-        # Name (A-Z) the picker is down the Remove panel inside a letter block,
-        # so opening an Add heading over nothing is exactly the bug the note
-        # above describes, arriving from the other side.
+        # one category built outside the column loop.
         foreach ($s in @(@{ K = 'remove'; Head = 'RemoveHeadBlock'; Box = 'RemoveBox'; Extra = $false },
                          @{ K = 'add';    Head = 'AddHeadBlock';    Box = 'AddBox';    Extra = ($showBrowser -and $addAsSec) },
                          @{ K = 'extras'; Head = 'ExtraHeadBlock';  Box = 'ExtraBox';  Extra = $showRunOpts })) {
@@ -9693,60 +7515,46 @@ function Show-WDWindow {
         $unfiltered = (-not $picked -and -not $q)
         # An inventory of what will never be touched, not a list to search.
         $ui.ProtectedBlock.Visibility = if ($unfiltered) { 'Visible' } else { 'Collapsed' }
-        # Settings for the application itself. They belong to no section and no
+        # Settings for the application itself. They belong to no section, and no
         # filter can have anything to say about them.
         $ui.AppOptBox.Visibility = if ($unfiltered) { 'Visible' } else { 'Collapsed' }
         $ui.BtnFilter.Content = if ($picked) { "Filter ($picked)" } else { 'Filter' }
         & $paintFilterCount
         # Hiding rows changes where the two columns should break, so the blocks
-        # that lost or gained one are laid out again. Before the rail is
-        # invalidated, not after: rebalancing moves every heading below it, and
-        # measuring offsets against a layout that is about to change is what
-        # made a rail entry scroll to the right place and light up the wrong
-        # card.
+        # that lost or gained one are laid out again.
         & $rebalanceGroups
         # Filtering moves the page as surely as re-ordering it does - every
-        # collapsed row takes its height with it, so every heading below the
-        # first hidden one is somewhere new. Only $applyOrder used to say so,
-        # which is why clicking a rail entry with a filter on scrolled to the
-        # right place and then lit up whichever entry had been at that offset
-        # before the filter ran.
+        # collapsed row takes its height with it.
         if ($indexRef.Invalidate) { & $indexRef.Invalidate }
         if ($indexRef.Spy) { & $indexRef.Spy }
     }.GetNewClosure()
     $applyFilterRef.Fn = $applyFilter
 
-    # Builds the drop-down. Boxes are created once; ticking one mutates the sets
-    # above and re-filters.
+    # Boxes are created once; ticking one mutates the sets above and re-filters.
     $buildFilterPanel = {
         $onFilter = $applyFilter
         $snap     = $takeSnapshot
         $sel      = $filterSel
         $boxes    = $filterBoxes
-        # First of the two hops. $section copies this again, and $flip reads that
-        # copy - GetNewClosure sees one scope up and no further, so a table left
-        # here alone arrives in the handler as null.
+        # First of the two hops. $section copies this again, and $flip reads
+        # that copy - GetNewClosure sees one scope up and no further.
         $pairList = $FILTER_PAIRS
         $panel = $ui.FilterPanel
         $panel.Children.Clear()
         $boxes.Clear()
 
         $section = {
-            # $Names is untyped on purpose. It was [string[]], which quietly
-            # cast every @{ Group; Name } pair below to the string
-            # "System.Collections.Hashtable" and built two boxes named that in
-            # the wrong group - the cast is silent, and the drop-down looked
-            # right until something asked for a box by name.
+            # $Names is untyped on purpose: [string[]] quietly cast every @{
+            # Group; Name } pair to its type name.
             param([string]$Title, [string]$Group, $Names, [string]$Note)
-            # Second hop down the scope chain, so the handler's dependencies have
-            # to be copied again here: GetNewClosure below only sees this scope,
-            # and anything it reaches for in $buildFilterPanel arrives as null.
+            # Second hop down the scope chain, so the handler's dependencies are
+            # copied again here.
             $onSel   = $onFilter
             $snapNow = $snap
             $sets    = $sel
             $changed = $CHANGED
-            # For the pairs below. $boxes is a List captured by reference, so the
-            # handler sees every box however late it was added.
+            # $boxes is a List captured by reference, so the handler sees every
+            # box however late it was added.
             $allBoxes  = $boxes
             $pairs     = $pairList
             $h = New-Object Windows.Controls.TextBlock
@@ -9761,11 +7569,9 @@ function Show-WDWindow {
                 $null = $panel.Children.Add($n)
             }
             foreach ($entry in $Names) {
-                # A plain string belongs to this section's own group. A pair
-                # carries its own, which is how two boxes sit under the VIEW
-                # heading without joining the VIEW group - a heading is where
-                # somebody looks for a thing and a group is how the answers
-                # combine, and those are not the same question. See $filterSel.
+                # A plain string belongs to this section's own group; a pair
+                # carries its own, which is how two boxes sit under VIEW and
+                # answer to different groups.
                 $g  = [string]$Group
                 $nm = $entry
                 if ($entry -is [hashtable]) { $g = [string]$entry.Group; $nm = [string]$entry.Name }
@@ -9782,11 +7588,7 @@ function Show-WDWindow {
                         $null = $sets[$t.Group].Remove($t.Name)
                     }
                     # Two boxes that are the halves of one question take each
-                    # other out of play rather than being quietly ignored -
-                    # Checked only against Unchecked only, which together are
-                    # every row, and Opt-in only against Hide opt-in, which
-                    # together are none of them. Driven off the table, so a third
-                    # pair is a table entry rather than a third arm in here.
+                    # other out of play rather than being quietly ignored.
                     foreach ($pair in $pairs) {
                         $other = $null
                         if     ($t.Group -eq $pair.A.Group -and $t.Name -eq $pair.A.Name) { $other = $pair.B }
@@ -9807,19 +7609,8 @@ function Show-WDWindow {
         }
 
         & $section 'SECTION' 'Sec' @($SEC_LABEL.Values) $null
-        # A HEADING IS NOT A GROUP. Five boxes under VIEW belonging to three
-        # groups: all five answer "which of these rows am I looking at", so VIEW is
-        # where somebody looks for any of them - and two headings of one box each
-        # were two headings saying "view" in other words.
-        #
-        # They stay in SEPARATE groups because boxes within a group are OR-ed:
-        # Opt-in only joined to View would read "everything ticked plus everything
-        # nobody ticks", and the Hide boxes subtract, so OR-ing either with
-        # anything is not a sentence. Apart they AND, and "opt-in things I have not
-        # ticked that are actually here" is one gesture.
-        #
-        # Hide opt-in sits directly under Opt-in only, the pair it rules out: the
-        # box that goes gray has to be the one your eye is already on.
+        # A heading is not a group: five boxes under VIEW belong to three
+        # groups, because boxes in a group are OR-ed and these have to AND.
         & $section 'VIEW' 'View' @($CHECKED, $UNCHECKED, $CHANGED,
                                    @{ Group = 'Tier';  Name = $OPT_IN_ONLY },
                                    @{ Group = 'Avail'; Name = $HIDE_OPT_IN },
@@ -9827,25 +7618,13 @@ function Show-WDWindow {
                                    @{ Group = 'Avail'; Name = $HIDE_APPLIED }) $null
         & $section 'RISK' 'Risk' @('No risk', 'Caution', 'Risky') $null
         # The rated bands only. "Not a removal - unrated" and "Your apps" are
-        # exceptions to rating rather than degrees of it - the first means the
-        # question does not apply and the second means nobody has answered it -
-        # so offering them here would be offering two categories under a heading
-        # that says rating. They are still bands in the grouping, where they
-        # describe the page rather than filter it.
-        #
-        # No note under the heading. It carried one distinguishing a rating from
-        # a risk, which is a real distinction and the wrong place to make it -
-        # it was the only paragraph in a drop-down of twenty-five tick boxes,
-        # and the band names say what they mean.
+        # exceptions to rating rather than degrees of it.
         & $section 'BLOAT RATING' 'Bloat' @($BLOAT_RATED | ForEach-Object { [string]$_.N }) $null
         & $section 'CATEGORY' 'Cat' $catNames $null
 
         # There was a SIZE box here - a signed number, negative for "frees at
-        # least", positive for "installs at least". It went with the rest of the
-        # storage detail: it answered a question nobody was asking of a debloat
-        # list, and it was the one filter the two row-less blocks could not speak
-        # for, so it had its own exception in the narrowing test. Ordering by
-        # "Frees the most" survives and covers the real use.
+        # least". It went with the rest of the storage forensics; "show me the
+        # big ones" is a sort.
     }
     # The category boxes are one per heading, so this waits for the headings.
     $advWork.Add({
@@ -9859,43 +7638,28 @@ function Show-WDWindow {
         & $applyFilter
     }.GetNewClosure()
 
-    # WHATEVER WAS JUST DONE SHOWS NOW; THE EXPENSIVE CONSEQUENCE CATCHES UP.
-    #
-    # A TextChanged handler runs synchronously inside the input event, so a 200ms
-    # filter pass over 240 rows is 200ms in which the character just typed is not
-    # on screen and the next keystroke is queued behind it. The list is what a
-    # search box is FOR, but the letters are what the person is watching, and they
-    # were arriving in bursts. So the handler RESTARTS a timer and returns.
-    #
-    # Same rule as the Compare hand-over button painting itself before its
-    # rebuild, and the splash bar advancing before the step it names. Anything
-    # bound to rapid input belongs on one of those two shapes.
+    # Whatever was just done shows now; the expensive consequence catches up.
     $newDebounce = {
         param([int]$Ms, [scriptblock]$Work)
-        # The harness sets the text and asserts on the result in the next
-        # statement. A timer that has not ticked yet would fail every one of
-        # those checks on a delay that is not what any of them is about, so it
-        # gets the work straight through.
+        # The harness sets the text and asserts in the next statement, so a
+        # timer that has not ticked would fail checks that are not about the
+        # delay.
         if ($state.NoPrompts) { return $Work }
         $box = @{ Timer = (New-Object Windows.Threading.DispatcherTimer); Work = $Work }
         $box.Timer.Interval = [TimeSpan]::FromMilliseconds($Ms)
         $box.Timer.Add_Tick({ $box.Timer.Stop(); & $box.Work }.GetNewClosure())
         # Restart, not start: every keystroke pushes the deadline out, so the
-        # pass runs once at the end rather than once per letter.
+        # pass runs once at the end.
         { $box.Timer.Stop(); $box.Timer.Start() }.GetNewClosure()
     }
 
-    # Bound as closures: a bare scriptblock loses sight of this function's locals
-    # once the event fires from the dispatcher rather than from here.
+    # Bound as closures: a bare scriptblock loses sight of this function's
+    # locals once the event fires from the dispatcher.
     $ui.TxtFilter.Add_TextChanged((& $newDebounce 180 $applyFilter))
 
-    # NO brushes on this control, and that is the fix rather than an omission.
-    # A ComboBox keeps the system chrome exactly as a Button does - the closed
-    # box is drawn by a template that ignores Background - so setting Foreground
-    # to the dark theme's near-white text painted white on white, which is the
-    # trap this file already documents for buttons. Left to the system it is a
-    # light control with dark text on a dark page: readable, and consistent with
-    # every button beside it.
+    # No brushes on this control, and that is the fix rather than an omission: a
+    # ComboBox draws its closed bar from SelectionBoxItem in its own foreground
+    # and its popup on the system window brush.
     foreach ($k in $GROUPS.Keys) {
         $it = New-Object Windows.Controls.ComboBoxItem
         $it.Content = $GROUPS[$k]; $it.Tag = $k
@@ -9931,16 +7695,8 @@ function Show-WDWindow {
     $ui.BtnFilterClear.Add_Click($clearFilters.GetNewClosure())
     $ui.BtnFilterDone.Add_Click({ $ui.BtnFilter.IsChecked = $false }.GetNewClosure())
 
-    # The two halves of Save, as seams the self test can drive: what the dialog
-    # asks is which of these to run, and a MessageBox would block the harness.
-    #
-    # This half is now only the file dialog. What happens to the file afterwards
-    # - loaded, selected, and the mode it came from put back - is one function
-    # for every route that writes one, reached through the holder because
-    # $saveOutAndLoad is written below this line. It used to write the file and
-    # stop, with a message box telling you to run it with -ProfilePath: the
-    # selection you had just built existed only on disk, and the mode you built
-    # it on stayed edited.
+    # The two halves of Save, as seams the self test can drive: a MessageBox
+    # would block the harness.
     $tickedIds = { @($rows | Where-Object { $_.Check.IsChecked } | ForEach-Object { $_.Id }) }
     $saveToFile = {
         $dlg = New-Object Windows.Forms.SaveFileDialog
@@ -9954,8 +7710,8 @@ function Show-WDWindow {
         & $editActions.SaveOut ([string]$state.Preset) ([string]$dlg.FileName) (& $tickedIds)
     }
     $saveAsDefault = {
-        # Whatever is ticked right now becomes this preset, so the pending edit
-        # has to be recorded before it can be promoted.
+        # Whatever is ticked becomes this preset, so the pending edit has to be
+        # recorded before it can be promoted.
         if (& $unsavedEdits) {
             $d = & $currentDiff
             & $setOverride $state.Preset @($d.Added) @($d.Removed)
@@ -9964,15 +7720,8 @@ function Show-WDWindow {
         & $applyPresetToChecks $state.Preset
         $did
     }
-    # THREE BUTTONS WHOSE LABELS ARE THE ANSWERS. A MessageBox came first, since
-    # three answers is what YesNoCancel does - but the answers here are "make it
-    # the default", "write it to a file", and "neither", and Yes/No cannot say
-    # either of the first two. The message then spent three lines explaining which
-    # button meant what, which is a dialog explaining its own controls.
-    #
-    # $Options is @{ L = label; D = one line saying what it does }. Everything but
-    # Cancel carries a description: "Default" and "File" are clear once you know
-    # what the dialog is for and say nothing at all before that.
+    # Three buttons whose labels are the answers. YesNoCancel was the obvious
+    # fit and the answers here are not yes and no.
     $askThree = {
         param([string]$Title, [string]$Message, $Options)
         $dlg = New-Object Windows.Window
@@ -9983,17 +7732,11 @@ function Show-WDWindow {
         $dlg.ShowInTaskbar = $false
         $dlg.Owner = $win
         # Called rather than captured: these builders are closures, and a
-        # closure resolves a variable against the scope it was written in but a
-        # command against the module - which is why Get-WDAppIcon is exported.
+        # closure resolves a variable against the scope it was written in.
         $dlgIcon = Get-WDAppIcon
         if ($dlgIcon) { $dlg.Icon = $dlgIcon }
-        # A separate Window is a separate resource scope. A DynamicResource
-        # resolves by walking up from the element to its own window and then to
-        # the application, and this window is in neither tree - so every key
-        # this dialog asked for came back empty and it opened as a black
-        # rectangle with three system-drawn buttons floating in it. The buttons
-        # were visible because they are the one thing here that is left with the
-        # system chrome.
+        # A separate Window is a separate resource scope: a DynamicResource
+        # walks up to its own window and stops.
         if (-not $dlg.Resources.MergedDictionaries.Contains($themeDict)) {
             $dlg.Resources.MergedDictionaries.Add($themeDict)
         }
@@ -10041,22 +7784,11 @@ function Show-WDWindow {
 
     $ui.BtnSave.Add_Click({
         if ($state.NoPrompts) { return }
-        # BOTH SCREENS ASK THIS THROUGH ONE FUNCTION. A file-backed preset gets
-        # "the same file" or "another one": Default is meaningless for it, and this
-        # page used to offer it anyway and then write a nameless copy the preset
-        # was never pointed at, leaving the edit marks standing.
-        #
-        # The pending tick-box edit is recorded FIRST so the shared route reads it
-        # back through $effectiveIds. Not a new side effect - leaving this page
-        # does the same thing, no questions asked.
-        #
-        # Through $editActions rather than by name: the flow is written below this
-        # line, and a closure captures its scope as it stands.
+        # Both screens ask this through one function. A file-backed preset gets
+        # "the same file" or "another one": Default is meaningless for it.
         if ($loadedPresets.Contains([string]$state.Preset)) {
             # Same file overwrites through $effectiveIds, so the pending
-            # tick-box edit has to be recorded before it can be read back. Not a
-            # new side effect: leaving this page does exactly this, no questions
-            # asked, so Cancel costs a moment's earliness and nothing else.
+            # tick-box edit has to be recorded before it can be read back.
             if (& $unsavedEdits) {
                 $d = & $currentDiff
                 & $setOverride $state.Preset @($d.Added) @($d.Removed)
@@ -10083,17 +7815,7 @@ function Show-WDWindow {
         }
     }.GetNewClosure())
 
-    # ---- Save, from the mode screen ----------------------------------------
-    #
-    # Same decision as Advanced's Save, different answers, because the thing being
-    # saved is different: Advanced saves the TICK BOXES, this saves the PRESET
-    # through $effectiveIds - which matters because the mode screen can be the only
-    # page anybody opens, and the boxes do not exist on that path.
-    #
-    # $Extra is for the route that does more than write a file: saving to a new one
-    # also loads it, selects it, and resets the preset it came from. Two of those
-    # three are invisible from where the button was pressed, and the only other
-    # evidence is a preset list nobody has looked at yet.
+    # Save, from the mode screen.
     $savedNote = {
         param([string]$Name, [string]$Path, [int]$Count, [string]$Extra)
         if ($state.NoPrompts) { return }
@@ -10102,11 +7824,7 @@ function Show-WDWindow {
         Show-WDMessage ($msg, 'Saved', 'OK', 'None') | Out-Null
     }
     # Overwrite the file this preset came from. The edit is consumed: the file
-    # now holds what the preset holds, so it is no longer a change to anything.
-    #
-    # $Path is a parameter rather than read off the preset so the self test can
-    # drive this without a file dialog, and so the caller and the dialog it
-    # showed cannot disagree about which file was meant.
+    # now holds what the preset holds.
     $saveLoadedTo = {
         param([string]$Name, [string]$Path)
         $sel = @(& $effectiveIds $Name)
@@ -10117,13 +7835,12 @@ function Show-WDWindow {
             return
         }
         # Without this the row goes on reading "changed from preset" against a
-        # preset the file no longer matches, and Reset would undo an edit that
-        # has been saved.
+        # preset the file no longer matches.
         $loadedPresets[$Name].Path  = [string]$Path
         $loadedPresets[$Name].Ids   = $sel
         $loadedPresets[$Name].Total = @($sel).Count
         # Nothing was dropped on the way in this time - the selection came from
-        # this session, so every id in it is one this machine already knows.
+        # this session.
         $loadedPresets[$Name].Dropped = @()
         $baseIds[$Name] = $sel
         foreach ($h in @($presetDefaults, $overrides)) { if ($h.ContainsKey($Name)) { $h.Remove($Name) } }
@@ -10131,22 +7848,10 @@ function Show-WDWindow {
         & $selectPreset $Name
         & $savedNote $Name $Path @($sel).Count
     }
-    # WRITING A NEW FILE IS THREE THINGS IN ONE GESTURE, and this is all of them:
-    # write it, load it as a preset of its own, select it, and reset the preset it
-    # came from. Every route that writes a file it is not already pointed at ends
-    # here, from either screen.
-    #
-    # Saving used to write the file and stop - the selection existed only on disk,
-    # the mode stayed marked as edited, and a message box suggested -ProfilePath.
-    # The edit had nowhere to be except somewhere the application could not see.
-    #
-    # ORDER MATTERS TWICE. $registerLoaded runs before the reset, because reading
-    # the file back is what proves there is somewhere for the edit to go. And the
-    # reset runs before the selection, because it re-ticks the boxes for the preset
-    # it reset - after, it would put Advanced back on the mode being left.
-    #
-    # $Selected is the caller's truer answer: Advanced passes its tick boxes, the
-    # mode screen passes null because the boxes may not exist there yet.
+    # Writing a new file is three things in one gesture: write it, load it as a
+    # preset of its own, select it, and reset the preset it came from.
+    # Order matters twice: registering proves there is somewhere for the edit to
+    # go, and the reset runs before the select because it re-ticks the boxes.
     $saveOutAndLoad = {
         param([string]$Name, [string]$Path, $Selected)
         $sel = $(if ($null -ne $Selected) { @($Selected) } else { @(& $effectiveIds $Name) })
@@ -10156,12 +7861,8 @@ function Show-WDWindow {
             Show-WDMessage ("Nothing was written to`n`n$Path", 'Save failed', 'OK', 'Error') | Out-Null
             return
         }
-        # Writing over a file some other preset was loaded from. That preset now
-        # names a file holding something else, and registering this one beside
-        # it would put one file on the list twice with the two entries
-        # disagreeing about its contents. Taken off and loaded again, so there
-        # is exactly one preset per file and it holds what the file holds. It
-        # goes to the end of the list, which is the cost of a rare gesture.
+        # Writing over a file some other preset was loaded from: that preset now
+        # names a file holding something else.
         foreach ($k in @($loadedPresets.Keys)) {
             if ([string]$k -eq [string]$Name) { continue }
             if ([string]$loadedPresets[$k].Path -eq [string]$Path) { & $dropLoaded ([string]$k) }
@@ -10173,30 +7874,21 @@ function Show-WDWindow {
             return
         }
         # The edit has a home now, so it stops being an edit of the mode it was
-        # made on. Only the override goes - anything promoted with Save > Default
-        # is that preset's default and is not what this was about.
-        #
-        # Before $selectPreset, because $resetOnePreset re-ticks the boxes for
-        # the preset it reset when that is the one on screen. Doing it after
-        # would put the Advanced page back on the mode we are leaving.
+        # made on. Only the override goes.
         & $resetOnePreset $Name
         & $loadedRefresh
         & $selectPreset $new
         # And the tick boxes, which $selectPreset does not touch - it paints the
-        # mode screen. Without this the Advanced page keeps the boxes it had
-        # while its banner names the new preset, so every row that differs reads
-        # as an edit to a file that was just written from those very rows. A
-        # no-op before the item list is built, which is the mode screen's case.
+        # mode screen.
         & $applyPresetToChecks $new
         & $savedNote $new $Path @($sel).Count `
             "$Name was reverted to its default state, $new is loaded and selected."
         $new
     }
     $editActions.SaveOut = $saveOutAndLoad
-    # The dialog both screens show for a preset that came from a file, and the
-    # reason it is a holder entry rather than a name: the Advanced page's Save
-    # is wired up above this line, and a closure there would capture the name as
-    # $null.
+    # A holder entry rather than a name, because the Advanced page's Save is
+    # wired two thousand lines above this and a closure captures its scope as it
+    # stands.
     $editActions.SaveLoaded = {
         param([string]$Name, $Selected)
         $name = [string]$Name
@@ -10220,32 +7912,22 @@ function Show-WDWindow {
                 } catch { }
                 if ($dlg.ShowDialog() -ne 'OK') { return }
                 # Picking the file it already came from is the other answer,
-                # however it was arrived at. Registering it as a second preset
-                # would put the same file on the list twice.
+                # however it was arrived at.
                 if ([string]$dlg.FileName -eq $here) { & $saveLoadedTo $name $here }
                 else { & $saveOutAndLoad $name ([string]$dlg.FileName) $Selected }
             }
         }
     }
-    # Named, not "whatever is selected". Each card's Save speaks for its own
-    # card, so an edit to Aggressive can be kept without first selecting
-    # Aggressive - and selecting a preset is not a neutral act on a screen whose
-    # other button previews it.
-    # $Selected is what to write when the caller has a truer answer than the
-    # preset does. The mode screen never does - it may be the only page anybody
-    # opens, and the tick boxes do not exist on that path - so it leaves it null
-    # and everything below reads through $effectiveIds. Advanced passes its
-    # boxes.
+    # Named, not "whatever is selected": each card's Save speaks for its own
+    # card.
     $editActions.Save = {
         param([string]$Name, $Selected)
         if ($state.NoPrompts) { return }
         $name = [string]$Name
         if (-not $name) { return }
 
-        # A preset that came from a file gets "the same file" and "another one"
-        # rather than "default" and "file" - see $editActions.SaveLoaded, which
-        # the Advanced page's Save reaches through as well so the two screens
-        # cannot drift.
+        # A preset from a file gets "the same file" and "another one" rather
+        # than "default" and "file".
         if ($loadedPresets.Contains($name)) {
             & $editActions.SaveLoaded $name $Selected
             return
@@ -10292,22 +7974,16 @@ function Show-WDWindow {
         & $restoreFactory
         & $applyPresetToChecks $state.Preset
         # A destructive action that appears to do nothing is indistinguishable
-        # from one that failed, and this one is deliberately quiet on screen -
-        # the page it restores usually looks much as it did.
+        # from one that failed.
         Show-WDMessage (
             $(if ($n) { "$n mode(s) put back to what this toolkit ships with, and every unsaved edit dropped." }
               else    { 'Every unsaved edit dropped. No mode had been redefined.' }),
             'Restore factory defaults', 'OK', 'None') | Out-Null
     }.GetNewClosure())
 
-    # Deleting old logs is one action taken now, not a step in a run, and that is
-    # why it is a button rather than the manifest row it used to be: a permanent,
-    # irreversible deletion does not belong behind a tick that has to survive a
-    # preview and an Apply before it happens.
-    #
-    # The handler's own preview builds the confirmation, so the number in the
-    # question comes from the same code that does the deleting rather than from a
-    # second count that could disagree with it.
+    # One action taken now, not a step in a run, which is why it is a button
+    # rather than the manifest row it used to be: a permanent deletion behind a
+    # tick that survives a preview is the wrong shape.
     $clearLogs = {
         $ctx = [pscustomobject]@{ Preview = $true; ItemId = 'clear-logs'; Session = $Session; DefaultHive = $null }
         $look = Invoke-WDScriptAction -Action ([pscustomobject]@{ handler = 'ClearRunLogs' }) -Context $ctx
@@ -10331,21 +8007,8 @@ function Show-WDWindow {
         $null = & $clearLogs
     }.GetNewClosure())
 
-    # The theme switch is a REPAINT, not a rebuild. Everything carrying a colour
-    # points at a theme key, so writing new brushes under those keys repaints
-    # ~200 elements in about 150 ms with nothing re-created, re-parented, or
-    # re-measured - and the page keeps its scroll position, filters, and edits
-    # because they were never touched. It used to hand control back to the caller
-    # to rebuild the whole page in the other palette, three seconds behind an
-    # overlay.
-    #
-    # Three things a resource reference cannot speak for, all handled here: the
-    # button's own label, the title bar (a DWM attribute, not a brush), and $pal
-    # for the few remaining $pal.Dark readers.
-    #
-    # The detail-popup setting lives on $state because the chips CAPTURE $state -
-    # 240 chips built with a copy of the answer would all have to be found again
-    # to change it.
+    # The theme switch is a repaint, not a rebuild: everything carrying a colour
+    # points at a theme key.
     $ui.ChkDetailPopup.IsChecked = [bool]$state.DetailPopup
     $ui.ChkDetailPopup.Add_Click({
         $state.DetailPopup = [bool]$ui.ChkDetailPopup.IsChecked
@@ -10353,10 +8016,7 @@ function Show-WDWindow {
     }.GetNewClosure())
 
     # Through the holder, because the pass it runs cannot be written until every
-    # page's elements exist and this is wired thousands of lines above that.
-    # The box reads the other way up from the flag: ticked is verbose, which is
-    # NOT terse. Named ChkTerse still because forty lines of harness press it by
-    # name, and renaming a control to match a label is churn that breaks tests.
+    # page's elements exist.
     $ui.ChkTerse.IsChecked = (-not [bool]$state.Terse)
     $ui.ChkTerse.Add_Click({
         $state.Terse = (-not [bool]$ui.ChkTerse.IsChecked)
@@ -10371,12 +8031,11 @@ function Show-WDWindow {
         $pal = Get-WDPalette -Theme $state.Theme
         & $paintTheme $pal
         # The dialogs read the same dictionary, so their brushes follow on their
-        # own; what they cannot work out is which way the title bar should go.
+        # own; what they cannot work out is the title bar.
         Set-WDDialogHost -Dark ([bool]$pal.Dark)
         $ui.BtnTheme.Content = $(if ($pal.Dark) { 'Switch to light theme' } else { 'Switch to dark theme' })
         # The icon follows the palette, so it is rebuilt and reassigned here.
-        # Cached per theme, so the second switch back is free; the taskbar
-        # button picks the new one up from Window.Icon without being asked.
+        # Cached per theme, so switching back is free.
         try {
             $newIcon = Get-WDAppIcon -Theme $state.Theme
             if ($newIcon) { $win.Icon = $newIcon }
@@ -10393,54 +8052,36 @@ function Show-WDWindow {
         if ($win.Tag.Busy) { & $win.Tag.Busy.Retheme $pal }
     }.GetNewClosure())
 
-    # Two doors into the item list - the footer button here, and the one on the
-    # selected mode card - so what opening it MEANS lives in one place. A second
-    # copy would be a second answer to "does this build the page, re-tick the
-    # boxes, and invalidate the rail", and the card's door was added precisely
-    # because people were not finding the footer's.
-    #
-    # Reached through the holder, not by name: $buildModeGrid runs thousands of
-    # lines above this and its closures would capture a variable declared here
-    # as $null. Same device as $advRef.Ensure beside it.
+    # Two doors into the item list, so what opening it means lives in one place.
     $openAdvanced = {
-        # The first click is what builds the page. Everything after it is the
-        # cheap half - re-ticking the boxes for whichever mode is now on screen.
+        # The first click is what builds the page. Everything after is the cheap
+        # half.
         if ($advRef.Ensure) { & $advRef.Ensure }
         & $applyPresetToChecks $state.Preset
         & $showPage 'PageAdvanced'
-        # Everything above this line ran against a page with no layout, so the
-        # rail's offsets - if anything measured them at all - describe a page
-        # that was never arranged. This is the first moment they can be true.
+        # Everything above ran against a page with no layout, so the rail's
+        # offsets describe a page that was never arranged.
         if ($indexRef.Invalidate) { & $indexRef.Invalidate }
         if ($indexRef.Spy) { & $indexRef.Spy }
     }.GetNewClosure()
-    # Filled, not wired. There is no $ui.BtnAdvanced to hang a handler on any
-    # more - the button is one of three on whichever mode card is selected, and
-    # they were all built long before this line runs. $selectPreset points the
-    # old name at the selected card's button so the harness can still press it.
+    # Filled, not wired: there is no $ui.BtnAdvanced to hang a handler on - the
+    # button is one of three on whichever mode card is selected.
     $advRef.Open = $openAdvanced
     $ui.BtnBackModes.Add_Click({
-        # Edits are kept, no questions asked. What gets stored is the whole
-        # divergence from the shipped preset, which is what the override means
-        # and what keeps the marks correct on the way back in. Reset presets in
-        # the mode footer is the way out.
+        # Edits are kept, no questions asked. What is stored is the whole
+        # divergence from the shipped preset.
         if (& $unsavedEdits) {
             $d = & $currentDiff
             & $setOverride $state.Preset @($d.Added) @($d.Removed)
         }
         # Whichever preset was being edited becomes the one selected on the mode
-        # screen, so the two views never disagree about what is active.
+        # screen, so the two views never disagree.
         & $selectPreset $state.Preset
         & $showPage 'PageModes'
     }.GetNewClosure())
 
-    # One mode, the one whose card the button is standing on. Resetting every
-    # mode at once was a footgun dressed as a convenience: the button that
-    # undoes an edit you can see should not also undo four you cannot.
-    #
-    # Filled into the holder the cards' buttons read at click time. They are
-    # built before this line runs - the mode grid is drawn during setup - so
-    # they cannot capture the scriptblock itself.
+    # One mode, the one whose card the button stands on. Resetting every mode at
+    # once was a footgun dressed as a convenience.
     $editActions.Reset = {
         param([string]$Name)
         if (-not $overrides.ContainsKey($Name)) { return }
@@ -10451,30 +8092,20 @@ function Show-WDWindow {
         & $resetOnePreset $Name
     }.GetNewClosure()
 
-    # ===================================================== COMPARE PAGE ====
-    #
-    # "What does Aggressive actually do that Balanced doesn't?" is the question
-    # the mode grid's per-category counts can only answer approximately. This
-    # names the items, both directions, grouped by category.
-    # $cmpState is declared with the loaded-preset tables at the top of this
-    # function - see the note there.
+    # The Compare page: two presets side by side, with every difference handed
+    # across.
     $cmpButtons = @{ A = @{}; B = @{} }
-    # The two picker blocks, built once by $buildCompareRows and placed into the
-    # comparison grid by $buildCompare.
+    # The two picker blocks, built once and placed into the comparison grid by
+    # $buildCompare.
     $cmpHead    = @{ A = $null; B = $null }
     $itemName = @{}
     $itemDesc = @{}
     $itemRisk = @{}
     $itemNote = @{}
-    # The manifest object itself, for anything that needs more than a field of
-    # it: the answer file's payload split, and the preview page's "what exactly
-    # will this change" - both of which read the item's actions rather than its
-    # description. Built here because this is where the manifest is already
-    # being walked; used from three pages.
+    # The manifest object itself, for anything needing more than a field of it.
     $itemById = @{}
-    # Which bloat band, and the text a search runs over. Both here rather than
-    # worked out at build time, because this page rebuilds on every keystroke in
-    # the search box and $bandOf is not free.
+    # Both here rather than worked out at build time, because this page rebuilds
+    # on every keystroke in the search box.
     $itemBand   = @{}
     $itemSearch = @{}
     foreach ($cat in $Categories) {
@@ -10485,11 +8116,8 @@ function Show-WDWindow {
             $itemRisk[$id] = [int](Get-Prop $item 'risk' 0)
             $itemNote[$id] = [string](Get-Prop $item 'riskNote' '')
             $itemById[$id] = $item
-            # $bandOf reads a row, and this page has manifest items rather than
-            # rows - so it gets the three fields it actually looks at. Through
-            # $bandOf rather than off the item's own number, because the two
-            # pages have to agree about which band an item is in and only one of
-            # them is allowed to know the rules.
+            # $bandOf reads a row and this page has manifest items, so it gets
+            # the three fields it actually looks at.
             $itemBand[$id] = [string](& $bandOf ([pscustomobject]@{
                 Bloat   = [int](Get-Prop $item 'bloat' 0)
                 CatId   = [string]$cat.id
@@ -10499,24 +8127,13 @@ function Show-WDWindow {
         }
     }
 
-    # The gutter the pinned header must leave for the scrollbar below it, plus the
-    # page's own right inset - the cards get that as CmpScroll's Padding, and the
-    # header, not being inside it, has to add it for itself.
-    #
-    # OUR WIDTH, NOT THE SYSTEM'S. SystemParameters answers what the SYSTEM's bar
-    # would be (17.33 here) while the bars in this window are retemplated to
-    # $WD_VBAR. The two disagreeing put every card that difference away from its
-    # own heading: 5.8px at 11.5, 1.3px at 16, zero now.
+    # The gutter the pinned header must leave for the scrollbar below it, plus
+    # the page's own right inset. Without both, a scrollbar appearing moves the
+    # cards out from under their heading.
     $CMP_EDGE   = 20
     $CMP_GUTTER = [double]$script:WDVBarWidth + $CMP_EDGE
 
-    # ---- narrowing and arranging, the same three controls as Advanced -------
-    #
-    # This page could hold eighty cards and offered scrolling. The three
-    # questions somebody has of a difference list are which ones are risky, what
-    # kind of thing they are, and where a particular one is - which is exactly
-    # what a filter, a grouping and a search answer. Deliberately the same
-    # controls, in the same order, with the same labels as the Advanced toolbar.
+    # Narrowing and arranging, the same three controls as Advanced.
     $CMP_GROUPS = [ordered]@{
         'category' = 'Category'
         'bloat'    = 'Bloat rating'
@@ -10535,45 +8152,27 @@ function Show-WDWindow {
         foreach ($g in $CMP_FACETS) { $n += $cmpSel[$g].Count }
         $n
     }.GetNewClosure()
-    # Whether an item is something anybody could actually take here, today.
-    # Nothing to do with the filter: the filter narrows a list of choices, this
-    # decides what counts as a choice at all.
-    #
-    # Handing an item across is an edit exactly like ticking its box in Advanced,
-    # so the two pages have to agree about which boxes can be ticked - and they
-    # did not. Advanced disables an absent row, disables an already-installed Add
-    # row, and takes the default-browser row off the page entirely; every one of
-    # those was sitting here behind a live "Add to Balanced" button. ADVANCED IS
-    # THE PAGE THAT SHOWS EVERYTHING; COMPARE IS A PAGE OF DECISIONS, and a
-    # decision that cannot be carried out is not one.
-    #
-    # Applied to the two SELECTIONS before anything is compared, not to the cards
-    # afterwards, so the headline counts and the difference lists count the same
-    # set the page is showing.
+    # Whether an item is something anybody could take here, today. Nothing to do
+    # with the filter: applied to both selections before anything is compared,
+    # so the counts and the cards agree.
     $cmpLive = {
         param([string]$Id)
         # Every target this item names was looked for and none of them is here.
         if ($Presence -and $Presence.ContainsKey($Id) -and $false -eq $Presence[$Id].Present) { return $false }
-        # A row whose whole meaning depends on a live condition - "make your
-        # other browser the default" on a machine that has no other browser.
+        # A row whose whole meaning depends on a live condition.
         if ($rowGate.ContainsKey($Id) -and -not [bool](& $rowGate[$Id])) { return $false }
         $item = $itemById[$Id]
         if ($item) {
             # Already installed, or already set: ticking it queues work that
-            # reports "nothing to do", which is what Advanced grays it out to
-            # avoid.
+            # reports nothing to do.
             if ([string](& $alreadyDone $item ([int](Get-WDItemTier -Item $item)))) { return $false }
         }
         $true
     }.GetNewClosure()
 
-    # And the other half of the same question, which is per-pair rather than per
-    # item: two options that write the same policy cannot both be selected, so
-    # one of them is unavailable while the other is. Advanced shows that row
-    # with its box disabled and the reason under it, and this does the same to
-    # the button - the item IS a real difference between the two presets, so
-    # hiding the card would be hiding a fact, and offering a button that quietly
-    # does nothing is worse than either.
+    # The other half, per pair rather than per item: two options writing the
+    # same policy cannot both be selected, so the card stays and the button is
+    # disabled with the reason.
     $cmpExcluded = {
         param([string]$Id, [string]$Target)
         foreach ($x in $EXCLUSIONS) {
@@ -10583,9 +8182,8 @@ function Show-WDWindow {
         ''
     }.GetNewClosure()
 
-    # Whether one item survives what is set. Within a facet the boxes are OR-ed
-    # and across facets they are AND-ed, which is the rule the Advanced filter
-    # follows and the way people describe what they want.
+    # Within a facet OR, across facets AND - the same rule the Advanced filter
+    # follows.
     $cmpKeep = {
         param([string]$Id)
         if ($cmpSel.Risk.Count  -and -not $cmpSel.Risk.Contains([string]$riskLabel[[int]$itemRisk[$Id]])) { return $false }
@@ -10602,62 +8200,30 @@ function Show-WDWindow {
         $true
     }.GetNewClosure()
 
-    # $buildCompare is a closure, so it captures what exists when it is made -
-    # and the button it builds has to call back into it. The holder is filled in
-    # afterwards; capturing the hashtable is enough because its contents are
-    # read at click time, not at capture time.
+    # $buildCompare is a closure and the button it builds has to call back into
+    # it.
     $cmpRefs = @{ Build = $null }
-    # Every "add to the other mode" button on the page, so the self test can
-    # click one without digging through nested panels to find it.
+    # Every hand-over button on the page, so the self test can click one without
+    # digging through nested panels.
     $cmpAddButtons = New-Object System.Collections.Generic.List[psobject]
-    # REPAINT RATHER THAN REBUILD. Cards are kept between rebuilds, keyed by the
-    # three things that decide what one looks like: item, side, and the mode its
-    # button offers. A card is ~15 WPF elements at ~15 ms, and this page rebuilt
-    # itself completely on a hand-over, a side switch, a filter box, and every
-    # keystroke - when almost every card was the same card as a moment before.
-    #
-    # Three things genuinely change: the "you added this" tag, the blocked reason,
-    # and the button's state. Those are built ALWAYS, collapsed, and repainted - a
-    # card whose parts must be CONSTRUCTED to appear is a card that must be
-    # rebuilt to change. See $newCard and $paintCard.
-    #
-    # Cleared by $buildCompareRows, the one event that changes how a kept card
-    # should look without changing its key: a preset renamed, dropped, or loaded
-    # moves the short names on the buttons and the colours the cards are edged in.
+    # Repaint rather than rebuild. Cards are kept between rebuilds, keyed by the
+    # three things that decide what one looks like: item, side, and target mode.
     $cmpCards = @{}
-    # Every description on a Compare card, so Non-verbose can reach them. The
-    # cards outlive a rebuild, so this is added to rather than rebuilt - a card
-    # kept from the last comparison still owns the TextBlock it was built with.
+    # The cards outlive a rebuild, so this is added to rather than rebuilt.
     $cmpDescEls = New-Object System.Collections.Generic.List[psobject]
-    # The Details chip on each card, handed out rather than left to be found by
-    # walking the card. It is what the risk badge's click became, so something
-    # has to be able to say the note is still reachable - and a check that
-    # descends through panels to find a control is a description of this layout
-    # rather than of the card. Same reason $cmpDescEls is a list.
+    # The Details chip on each card, handed out rather than found by walking the
+    # card.
     $cmpChips = New-Object System.Collections.Generic.List[psobject]
 
-    # ---- the rail's scroll spy ---------------------------------------------
-    #
-    # The same highlight the Advanced rail has, and it belongs here for a
-    # stronger reason than symmetry: this rail is the only thing on the page
-    # that names the category you are reading. Advanced repeats its headings
-    # down the middle of the list, so scrolling past one leaves the next in
-    # sight; here the two columns are cards and the headings are small, so ten
-    # cards down there was nothing on screen saying which category they were.
-    #
-    # One entry per rail card that has somewhere to go. Rebuilt with the rail,
-    # which is every build, so the offsets go with it. $cmpSpy itself is
-    # declared with $cmpRail at the top of this function - see the note there.
+    # The rail's scroll spy.
     $cmpSpyRows = New-Object System.Collections.Generic.List[psobject]
     $spyCompare = {
         if ($cmpSpy.Busy) { return }
         $cmpSpy.Busy = $true
         try {
             if (-not $cmpSpyRows.Count) { return }
-            # Measured once into a table and reused, because transforming two
-            # dozen headings on every scroll tick is how this ships janky.
-            # Thrown away by every rebuild, which is the only thing that moves
-            # them.
+            # Measured once into a table and reused: transforming two dozen
+            # headings on every scroll tick is how this ships janky.
             if (-not $cmpSpy.Offsets) {
                 $ui.CompareGrid.UpdateLayout()
                 $tbl = @{}
@@ -10671,9 +8237,8 @@ function Show-WDWindow {
                 if (-not $tbl.Count) { return }
                 $cmpSpy.Offsets = $tbl
             }
-            # The last heading at or above the top of the viewport, plus a little
-            # slack so a heading sitting just under the edge counts as the one
-            # you are reading.
+            # The last heading at or above the top of the viewport, plus slack
+            # so one just under the edge counts.
             $y = [double]$ui.CmpScroll.VerticalOffset + 24
             $best = $null; $bestY = [double]::NegativeInfinity
             foreach ($e in $cmpSpyRows) {
@@ -10695,15 +8260,12 @@ function Show-WDWindow {
     }.GetNewClosure()
     $cmpSpyRef.Fn = $spyCompare
     $ui.CmpScroll.Add_ScrollChanged({ & $spyCompare }.GetNewClosure())
-    # Hand-overs made during this visit to the page, oldest first. Emptied on
-    # the way in, so Undo never reaches back past a trip to the mode screen -
-    # by then the edits belong to the presets, not to a page you are reading.
+    # Hand-overs made during this visit, emptied on the way in - a stack that
+    # outlived the page would offer to reverse changes nobody can see.
     $cmpDone = New-Object System.Collections.Generic.List[psobject]
     $CHECK = New-WDGlyph 0x2713
 
-    # Handing an item across is an edit to the receiving preset, stored exactly
-    # as one made in Advanced - so Reset preset undoes it, the mode grid counts
-    # it, and Advanced shows it ticked and marked.
+    # An edit to the receiving preset, stored exactly as one made in Advanced.
     $compareEdit = {
         param([string]$Id, [string]$Target, [bool]$Undo)
         $cur     = $overrides[$Target]
@@ -10718,16 +8280,14 @@ function Show-WDWindow {
             elseif ($inBase)          { $null = $removed.Add($Id) }
         } else {
             # Two reasons a preset can be missing an item: it never shipped with
-            # it, or the user took it out. Undoing the removal is the honest
-            # edit for the second - listing it as an addition would leave both
-            # halves of the override claiming the same id.
+            # it, or the user took it out. Always appending to Added leaves both
+            # halves naming the same id, and Removed is applied first.
             if ($removed.Contains($Id)) { $null = $removed.Remove($Id) }
             else                        { $null = $added.Add($Id) }
         }
         & $setOverride $Target @($added) @($removed)
     # A closure, because the card buttons fire it from a scope that knows
-    # nothing of this function - and it calls $setOverride, which in turn needs
-    # $recount and $buildModeGrid. Capturing here is what carries all three.
+    # nothing of this function.
     }.GetNewClosure()
 
     # Note text is set after the rebuild, because the rebuild is what clears it.
@@ -10746,8 +8306,8 @@ function Show-WDWindow {
         & $cmpSayNote "Added $nm to $Target." 'Ok'
     }.GetNewClosure()
 
-    # Take one back by name rather than by position: the button on the card
-    # undoes its own hand-over, whatever else has happened since.
+    # By name rather than by position: the button on the card undoes its own
+    # hand-over.
     $compareRemove = {
         param([string]$Id, [string]$Target)
         for ($i = $cmpDone.Count - 1; $i -ge 0; $i--) {
@@ -10765,26 +8325,15 @@ function Show-WDWindow {
         & $compareRemove $e.Id $e.Target
     }.GetNewClosure()
 
-    # What a hand-over button looks like in each of its two directions, in one
-    # place, because two things get it there by different routes: $paintCard on
-    # a rebuild, and the button's own click handler a moment before that rebuild
-    # starts. Everything it needs is on the button's Tag, so it can be called
-    # from either without reaching into a scope it cannot see.
+    # What a hand-over button looks like in each direction, in one place,
+    # because two things get it there by different routes.
     $paintCmpButton = {
         param($Btn, [bool]$Done)
         $t = $Btn.Tag
         $t.Done = $Done
         if ($Done) {
-            # Green because the item is in, and still a button because the thing
-            # you most likely want next is to change your mind about this one -
-            # not about whichever was most recent.
-            #
-            # No Foreground, and it stays that way. The reason it was written -
-            # a Button kept the system chrome, a light face in both themes, so
-            # the dark palette's green on it measured 1.43:1 - went away when
-            # the buttons were retemplated. What is left is that the tick glyph
-            # and the border say it better than a colored label would, and that
-            # this is what $paintPresetButton does everywhere else.
+            # Green because the item is in, and still a button because the next
+            # likely thing is changing your mind about this one.
             $Btn.Content = "$CHECK In $($t.Short) - remove"
             & $Ref $Btn 'BorderBrush' 'Ok'
             $Btn.BorderThickness = New-Object Windows.Thickness 1
@@ -10797,12 +8346,9 @@ function Show-WDWindow {
         }
     }.GetNewClosure()
 
-    # Puts the frame that has just been laid out on the screen before the thread
-    # goes back to work. Render priority rather than $pumpFrame's Background: it
-    # flushes layout and drawing and stops there, so nothing at Input priority
-    # runs and a click cannot re-enter the handler that called this. That
-    # distinction is the whole reason this is not $pumpFrame - which is declared
-    # a thousand lines below here anyway.
+    # Render priority rather than Background: it flushes layout and drawing and
+    # stops, so nothing at Input priority runs and a second click cannot
+    # re-enter the handler.
     $showNowFast = {
         param($El)
         try { $El.Dispatcher.Invoke([action]{}, [Windows.Threading.DispatcherPriority]::Render) } catch { }
@@ -10810,36 +8356,30 @@ function Show-WDWindow {
     $ui.BtnCompareUndo.Add_Click({ & $compareUndo }.GetNewClosure())
 
     $buildCompare = {
-        # Copied into this scope on purpose. $makeCard runs a scope down from
-        # here and builds handlers of its own, and this file's standing rule is
-        # that anything a nested builder needs is copied first rather than
-        # reached for through the chain.
+        # Copied into this scope on purpose: $makeCard runs a scope down and
+        # builds handlers of its own.
         $chipFn    = $makeDetailChip
         $itemsById = $itemById
         $cardCache = $cmpCards
-        # One entry per heading on the page, in page order, filled by whichever
-        # of the two layout branches runs and turned into the rail at the end.
+        # One entry per heading in page order, filled by whichever layout branch
+        # runs.
         $railList  = New-Object System.Collections.Generic.List[psobject]
         $g = $ui.CompareGrid
         $g.Children.Clear(); $g.RowDefinitions.Clear(); $g.ColumnDefinitions.Clear()
         # Any rebuild - a side switch as much as an edit - moves the page past
-        # whatever the note was describing. The Undo button is not the note's
-        # to hide: it belongs to the whole visit, so it follows the stack.
+        # whatever the note was describing.
         $cmpAddButtons.Clear()
         $ui.TxtCompareNote.Text = ''
         $ui.BtnCompareUndo.Content    = $(if ($cmpDone.Count -gt 1) { "Undo ($($cmpDone.Count))" } else { 'Undo' })
         $ui.BtnCompareUndo.Visibility = $(if ($cmpDone.Count) { 'Visible' } else { 'Collapsed' })
-        # The pinned header, and it has to be laid out exactly like the grid
-        # under it or a heading stands over the wrong column. Same three columns,
-        # same order, and the gutter on the right for the scrollbar the cards
-        # below always reserve.
+        # The pinned header, laid out exactly like the grid under it or a
+        # heading stands over the wrong column.
         $head = $ui.CompareHead
         $head.Children.Clear(); $head.RowDefinitions.Clear(); $head.ColumnDefinitions.Clear()
         $head.Margin = New-Object Windows.Thickness -ArgumentList 0, 0, $CMP_GUTTER, 0
         # Three real columns: left half, the rule, right half. Everything below
-        # still speaks in logical columns 0 and 1 and a span of 2, and $place
-        # translates - which keeps twenty call sites out of the business of
-        # knowing there is a divider in the middle.
+        # speaks in logical columns 0 and 1 with a span of 2, and $place
+        # translates.
         $threeCols = {
             param($Grid)
             foreach ($w in @(1, 0, 1)) {
@@ -10867,24 +8407,20 @@ function Show-WDWindow {
 
         $a = $cmpState.A; $b = $cmpState.B
         # Narrowed to what can actually be selected here before anything is
-        # compared - see $cmpLive. Every count below, including the tally in the
-        # footer, is then counting the same set the page is showing.
+        # compared.
         $setA = New-WDStringSet @(@(& $effectiveIds $a) | Where-Object { & $cmpLive $_ })
         $setB = New-WDStringSet @(@(& $effectiveIds $b) | Where-Object { & $cmpLive $_ })
         $diffA = @($setA | Where-Object { -not $setB.Contains($_) })
         $diffB = @($setB | Where-Object { -not $setA.Contains($_) })
 
         # An item handed over stops being a difference, but its card stays put
-        # with the button marked done. A card that disappeared on click left
-        # nothing to show for the click and nothing obvious to take back.
+        # with the button marked done.
         $doneA = New-WDStringSet @($cmpDone | Where-Object { $_.From -eq $a -and $_.Target -eq $b } | ForEach-Object { $_.Id })
         $doneB = New-WDStringSet @($cmpDone | Where-Object { $_.From -eq $b -and $_.Target -eq $a } | ForEach-Object { $_.Id })
         $allA = @($diffA) + @($doneA | Where-Object { $diffA -notcontains $_ })
         $allB = @($diffB) + @($doneB | Where-Object { $diffB -notcontains $_ })
-        # What the filter and the search leave. Kept separate from $allA/$allB
-        # so the footer can go on quoting the real difference between the two
-        # modes - narrowing the view does not change what they differ by, and a
-        # tally that moved with the search box would be measuring the search.
+        # What the filter and search leave, kept separate from the real
+        # difference so the footer goes on quoting the modes.
         $onlyA = @($allA | Where-Object { & $cmpKeep $_ })
         $onlyB = @($allB | Where-Object { & $cmpKeep $_ })
         $narrowed = ((& $cmpPicked) -gt 0 -or [bool]([string]$ui.TxtCmpSearch.Text).Trim())
@@ -10901,17 +8437,15 @@ function Show-WDWindow {
             }
         }
 
-        # Items a mode only removes because they were ticked in Advanced. Worth
-        # flagging: a difference you created yourself is not a difference
-        # between the modes as shipped.
+        # Items a mode only removes because they were ticked in Advanced: a
+        # difference you created yourself is worth flagging.
         $addedIn = @{}
         foreach ($n in @($a, $b)) {
             $addedIn[$n] = New-WDStringSet $(if ($overrides.ContainsKey($n)) { @($overrides[$n].Added) } else { @() })
         }
 
-        # The heading an item sits under, in whichever arrangement is chosen.
-        # One function, so the two sides and the two layouts below cannot
-        # disagree about where something belongs.
+        # One function, so the two sides and the two layouts cannot file the
+        # same item differently.
         $keyOf = {
             param([string]$Id)
             switch ([string]$cmpGroup.Mode) {
@@ -10937,28 +8471,17 @@ function Show-WDWindow {
         $catA = & $groupByCat $onlyA
         $catB = & $groupByCat $onlyB
         # Every heading the two modes touch at all, and separately the ones they
-        # actually differ under. The rail lists the first and colors by the
-        # second: a category both modes handle the same way is a real answer to
-        # "what is the difference here", and leaving it off the rail made the
-        # only page in the application that can say "these two agree about this"
-        # the one page that never did. It also left the rail listing eleven
-        # categories out of twenty-six with no way to tell an agreement from a
-        # category this machine simply has nothing in.
-        #
-        # Off the selections rather than off the differences, so a category
-        # neither mode touches stays off - there is nothing being compared there,
-        # and a "0 | 0" against it would be answering a question nobody asked.
+        # actually differ under.
         $coveredKeys = @{}
         foreach ($id in @($setA)) { $coveredKeys[[string](& $keyOf $id)] = $true }
         foreach ($id in @($setB)) { $coveredKeys[[string](& $keyOf $id)] = $true }
-        # Before the filter, deliberately. Whether the modes agree is a fact
-        # about the modes; whether anything is on screen is a fact about the
-        # search box, and the rail has to be able to tell them apart.
+        # Before the filter, deliberately: whether the modes agree is a fact
+        # about the modes, whether anything is on screen is a fact about the
+        # search box.
         $diffKeys = @{}
         foreach ($id in (@($allA) + @($allB))) { $diffKeys[[string](& $keyOf $id)] = $true }
-        # Bands and risk levels have a meaningful order that is not alphabetical,
-        # so the headings run in it. Categories keep the page order they have
-        # everywhere else.
+        # Bands and risk levels have a meaningful order that is not
+        # alphabetical.
         $keyOrder = @()
         switch ([string]$cmpGroup.Mode) {
             'bloat' { $keyOrder = @($BLOAT_BAND | ForEach-Object { [string]$_.N }) }
@@ -10978,10 +8501,8 @@ function Show-WDWindow {
             param([string]$Cat, [int]$Count)
             $sp = New-Object Windows.Controls.StackPanel
             $sp.Orientation = 'Horizontal'; $sp.Margin = '0,12,0,4'
-            # A glyph only where there is one to fetch. Under the other two
-            # groupings the heading is a band or a risk level, and looking those
-            # up in the category table returns nothing - which rendered as a
-            # blank the width of an emoji in front of every heading.
+            # A glyph only where there is one to fetch: under the other
+            # groupings the heading is a band or a risk level.
             $gid = [string]$(if ($catIdByName.ContainsKey($Cat)) { $catIdByName[$Cat] } else { '' })
             if ([string]$cmpGroup.Mode -eq 'category' -and $gid) {
                 $gl = New-Object Windows.Controls.TextBlock
@@ -11000,23 +8521,14 @@ function Show-WDWindow {
         }
 
         # An Advanced-style row: name over description, edged in the mode's
-        # color, with a green tag when the item is there because of an edit.
-        #
-        # Everything below is built once per card and kept - see $cmpCards. The
-        # three things that can be different on the next build are made here
-        # regardless and left collapsed, so $paintCard has something to show
-        # rather than something to construct: a card whose parts appear and
-        # disappear between builds is a card that cannot be reused.
+        # colour, with a green tag when the item is there because of an edit.
         $newCard = {
             param([string]$Id, [string]$Preset, [string]$Target)
             $card = New-Object Windows.Controls.Border
             $card.CornerRadius = 4; $card.Padding = '10,6,10,7'; $card.Margin = '0,0,8,4'
             & $Ref $card 'Background' 'Card'
-            # Half strength at rest, full color under the pointer - the same
-            # answer the Details chip got, for the same complaint. Eighty cards
-            # each carrying a saturated 3px stripe turned the page into a wall
-            # of color competing with the names on it, when all the stripe has
-            # to do is say which side a card is on.
+            # Half strength at rest, full colour under the pointer: eighty
+            # saturated stripes down a page is not a comparison.
             & $Ref $card 'BorderBrush' ($presetColor[$Preset] + 'Soft')
             $card.BorderThickness = New-Object Windows.Thickness -ArgumentList 3, 1, 1, 1
             $cardKeys = @{ Soft = $presetColor[$Preset] + 'Soft'; Full = $presetColor[$Preset] }
@@ -11026,12 +8538,8 @@ function Show-WDWindow {
             $card.Add_MouseLeave({ & $paint $this 'BorderBrush' $this.Tag.Soft }.GetNewClosure())
             $inner = New-Object Windows.Controls.StackPanel
 
-            # WrapPanel, not a horizontal StackPanel - see $makeItemRow for the
-            # whole of it. This page is where it showed: two columns inside a
-            # window that is not always maximized leaves a card about three
-            # hundred pixels wide, and "Documents, Pictures, Videos, and the file
-            # system" pushed its own Details chip off the card and under the
-            # hand-over button.
+            # WrapPanel, not a horizontal StackPanel - this page is where it
+            # showed, two columns inside a window.
             $line = New-Object Windows.Controls.WrapPanel
             $line.Orientation = 'Horizontal'
             $nm = New-Object Windows.Controls.TextBlock
@@ -11051,28 +8559,15 @@ function Show-WDWindow {
                 $bt.Text = $riskStyle[$rk].Label; $bt.FontSize = 10.5
                 & $Ref $bt 'Foreground' $riskStyle[$rk].Col
                 $bd.Child = $bt
-                # A MARKER, NOT A CONTROL. It was clickable while the risk note
-                # lived nowhere else, which was right then; the note is the FIRST
-                # thing in the Details panel now, on both pages, so the badge has
-                # nothing left to say that its colour and word do not. Advanced's
-                # stopped being a control when that happened and this one did not,
-                # which left one badge answering a click on one page and ignoring it
-                # on the other. Same treatment the rail gives an inert entry.
+                # A marker, not a control: it was clickable while the risk note
+                # lived nowhere else, and the note is the first thing in the
+                # Details panel now.
                 $null = $line.Children.Add($bd)
             }
 
-            # There was a "not on this machine" tag here, mirroring the one on
-            # the Advanced row. It is gone because the case is: $cmpLive takes
-            # those ids out of both selections before the comparison is drawn,
-            # so nothing on this page can be one. A tag that can never render is
-            # worse than no tag - it reads as a guarantee the page is still
-            # checking.
-            #
-            # Built whether or not it applies right now, and collapsed when it
-            # does not: whether an item is in a preset because somebody put it
-            # there is exactly the sort of thing that changes on the next click,
-            # and a tag that has to be constructed to appear is a card that has
-            # to be rebuilt to change.
+            # There was a "not on this machine" tag here. It is gone because the
+            # case is: $cmpLive takes those off the page entirely, and a tag
+            # that can never render reads as a guarantee.
             $ad = New-Object Windows.Controls.Border
             $ad.CornerRadius = 3; $ad.Padding = '5,0,5,1'; $ad.Margin = '7,1,0,0'
             $ad.VerticalAlignment = 'Center'
@@ -11085,16 +8580,8 @@ function Show-WDWindow {
             & $Ref $at 'Foreground' 'Ok'
             $ad.Child = $at
             $null = $line.Children.Add($ad)
-            # The same Details chip every Advanced row carries. This page is
-            # where somebody decides whether to take an item on, and it could
-            # say what the item was and not what it would do - the one question
-            # that actually settles the decision. Last on the line, as it is in
-            # Advanced, so the two pages read the same way.
-            #
-            # $inner, not $line: the panel opens under the card's name line, and
-            # $line is the WrapPanel that line is made of. A card grows when one
-            # is opened, which is what a comparison of two columns should do -
-            # the row that was asked about is the row that moves.
+            # The same Details chip every Advanced row carries: this page is
+            # where somebody decides whether to take an item on.
             if ($itemsById.ContainsKey($Id)) {
                 $chipEl = & $chipFn ([string]$nm.Text) $itemsById[$Id] $inner $state
                 $null = $line.Children.Add($chipEl)
@@ -11103,9 +8590,8 @@ function Show-WDWindow {
             $null = $inner.Children.Add($line)
 
             # Collapsed rather than skipped under Non-verbose: these cards are
-            # cached and repainted rather than rebuilt, so a description that had
-            # to be constructed to appear is one the option could not turn back
-            # on without throwing the cache away.
+            # cached and repainted, so a description that had to be constructed
+            # could not come back.
             $ds = [string]$itemDesc[$Id]
             if ($ds) {
                 $dt = New-Object Windows.Controls.TextBlock
@@ -11116,66 +8602,37 @@ function Show-WDWindow {
                 $null = $cmpDescEls.Add($dt)
             }
 
-            # Why the button is refusing, when it is. Same treatment the Advanced
-            # row gets: the item stays listed, because it is a real difference
-            # between these two presets, but it is not offered, because taking it
-            # would be undone by the very thing that blocks it. The reason goes
-            # under the name rather than in a tooltip - a disabled control with no
-            # visible reason is the page refusing without saying why.
-            #
-            # Built collapsed for the same reason the tag above is: which pairs
-            # rule each other out changes with the selection, so this can arrive
-            # and leave between two builds of the same card.
+            # Why the button is refusing. The item stays listed because it is a
+            # real difference; hiding the card would hide a fact.
             $gate = New-Object Windows.Controls.TextBlock
             $gate.FontSize = 11.5; $gate.TextWrapping = 'Wrap'; $gate.Margin = '0,3,0,0'
             $gate.Visibility = 'Collapsed'
             & $Ref $gate 'Foreground' 'Warn'
             $null = $inner.Children.Add($gate)
 
-            # The whole point of reading the two lists side by side is deciding
-            # you want something from the other one, so the decision is offered
-            # where it is made rather than back in Advanced.
-            #
-            # One handler that reads its own Tag, rather than one of two handlers
-            # chosen when the card was made. Which way this button points is the
-            # thing that changes most often about a card, and a card whose button
-            # has to be re-wired to change direction is a card that has to be
-            # rebuilt - which is the whole cost this page was paying.
+            # The whole point of reading two lists side by side is deciding you
+            # want something from the other one.
             $add  = $compareAdd
             $drop = $compareRemove
             # Copied in for the click handler below, which is a closure and sees
             # only this scope.
             $flip = $paintCmpButton
             $now  = $showNowFast
-            # The short form on the button, the long one in the tooltip. This
-            # button sits inside a card two hundred pixels wide and there is one
-            # on every card, so a fifty-character preset name here is the whole
-            # column.
+            # The short form on the button, the long one in the tooltip: this
+            # button sits inside a card two hundred pixels wide.
             $tgt = [string](& $shortPreset $Target)
             $go = New-Object Windows.Controls.Button
             $go.FontSize = 12; $go.Padding = '10,3'; $go.Margin = '10,0,0,0'
             $go.VerticalAlignment = 'Top'
-            # Id, Target, From and Done are the four the rest of the application
-            # and the self test read off this button. Short, Gate and Mark are
-            # the three $paintCard needs and would otherwise have to find by
-            # walking back up through the card.
+            # Id, Target, From, and Done are what the rest of the application
+            # and the self test read off this button.
             $go.Tag = @{ Id = $Id; Target = $Target; From = $Preset; Done = $false
                          Short = $tgt; Gate = $gate; Mark = $ad }
             $go.Add_Click({
                 $t   = $this.Tag
                 $was = [bool]$t.Done
-                # The button answers before the page does. Everything else here -
-                # the counts, the headings, the rail, the footer tally - follows
-                # from a rebuild, and a rebuild is a fifth of a second even now
-                # that it reuses its cards. A control that sits still for that
-                # long reads as a click that did not register, and the second
-                # click somebody then gives it undoes the first.
-                #
-                # Not a guess at the outcome: this is the same state $paintCard
-                # is about to set through the same function, so at worst it
-                # arrives early. The one case where the rebuild disagrees - an
-                # exclusion turning the button Unavailable - is a case $paintCard
-                # corrects a moment later, which is the right way round.
+                # The button answers before the page does: everything else here
+                # follows from a rebuild that takes a fifth of a second.
                 & $flip $this (-not $was)
                 & $now $this
                 if ($was) { & $drop $t.Id $t.Target }
@@ -11183,24 +8640,21 @@ function Show-WDWindow {
             }.GetNewClosure())
 
             # DockPanel, not the title line: the name wraps, and a button parked
-            # after a wrapping TextBlock lands wherever the text happens to end.
+            # after a wrapping TextBlock lands wherever the text ends.
             $dock = New-Object Windows.Controls.DockPanel
             $dock.LastChildFill = $true
             [Windows.Controls.DockPanel]::SetDock($go, 'Right')
             $null = $dock.Children.Add($go)
             $null = $dock.Children.Add($inner)
             $card.Child = $dock
-            # The button is what every repaint and every test reaches for, and
-            # digging it back out of two nested panels is the kind of lookup that
-            # breaks when somebody adds a wrapper. It rides on the card.
+            # The button is what every repaint and every test reaches for, so it
+            # is handed out rather than dug back out of two nested panels.
             $card.Tag.Go = $go
             $card
         }
 
-        # The three things about a card that can be different from one build to
-        # the next. Everything here is set on every pass, in both directions -
-        # a repaint that only knows how to turn something on leaves the card
-        # wearing whatever the last comparison left it wearing.
+        # The three things about a card that can differ from one build to the
+        # next. Everything here is set on every pass, in both directions.
         $paintCard = {
             param($Card, [string]$Id, [string]$Preset, [string]$Target, [bool]$Done)
             $go = $Card.Tag.Go
@@ -11216,11 +8670,9 @@ function Show-WDWindow {
                 $go.ToolTip   = $blockWhy
                 $t.Gate.Text       = $blockWhy
                 $t.Gate.Visibility = 'Visible'
-                # ClearValue, not $null: these are the chrome's own defaults, and
-                # a Button with BorderBrush set to nothing is a Button with no
-                # edge rather than a Button with its usual one. This is the state
-                # a freshly built blocked card was in, and a card coming back
-                # from Done or from Add has to land in exactly the same place.
+                # ClearValue, not $null: these are the chrome's own defaults,
+                # and a Button with BorderBrush set to nothing is a Button with
+                # no border.
                 $go.ClearValue([Windows.Controls.Control]::BorderBrushProperty)
                 $go.ClearValue([Windows.Controls.Control]::BorderThicknessProperty)
                 $go.ClearValue([Windows.Controls.Control]::FontWeightProperty)
@@ -11228,23 +8680,19 @@ function Show-WDWindow {
                 $t.Gate.Text       = ''
                 $t.Gate.Visibility = 'Collapsed'
                 $go.IsEnabled      = $true
-                # The same function the button's own click handler calls a moment
-                # earlier, so the optimistic paint and the authoritative one
-                # cannot say different things.
+                # The same function the button's own click handler calls a
+                # moment earlier, so the optimistic paint and the authoritative
+                # one cannot disagree.
                 & $paintCmpButton $go $Done
             }
-            # Only the ones that can be pressed. This list exists so the self
-            # test can click a real hand-over without digging through nested
-            # panels for one, and a disabled button in it would fail the test
-            # for the one reason the page is right about.
+            # Only the ones that can be pressed: this list exists so the self
+            # test can click a real hand-over.
             if ($go.IsEnabled) { $cmpAddButtons.Add($go) }
         }
 
-        # One card, built or found. The detach is the same trap the two pickers
-        # have a paragraph about: $g.Children.Clear() drops the STACK from the
-        # grid and leaves the cards inside it, so a reused card is still the
-        # logical child of a panel nobody can see, and WPF refuses to reparent it
-        # - "Specified element is already the logical child of another element".
+        # The detach is the same trap the two pickers have: Children.Clear()
+        # drops the stack from the grid and does not touch what the stack is
+        # holding.
         $makeCard = {
             param([string]$Id, [string]$Preset, [string]$Target, [bool]$Done)
             $key  = "$Id|$Preset|$Target"
@@ -11263,7 +8711,7 @@ function Show-WDWindow {
             param([string]$Preset, [int]$Count, [int]$Handed, [string]$Other, [int]$HiddenByFilter)
             $sp = New-Object Windows.Controls.StackPanel
             # Under the picker now rather than over it, so the space belongs
-            # below this rather than above.
+            # below.
             $sp.Margin = '0,4,0,10'
             $h = New-Object Windows.Controls.TextBlock
             $h.Text = "Only $Preset removes these"
@@ -11271,12 +8719,8 @@ function Show-WDWindow {
             & $Ref $h 'Foreground' $presetColor[$Preset]
             $null = $sp.Children.Add($h)
             $s = New-Object Windows.Controls.TextBlock
-            # Three things this line has to be able to say, and the third is why
-            # it takes a filter count. An empty column means "this mode removes
-            # nothing the other does not" - unless the page is filtered, in
-            # which case it means "not among what you are looking at", and
-            # claiming the first while the second is true is the page reporting
-            # on its own state as though it were the machine's.
+            # Three things this line has to say, and the third is why it takes a
+            # filter count.
             $s.Text = $(if ($Count) { "$Count item(s)" }
                         elseif ($HiddenByFilter) { "$HiddenByFilter item(s), all hidden by the filter" }
                         else { "Nothing - $Other removes everything $Preset does" }) +
@@ -11286,45 +8730,16 @@ function Show-WDWindow {
             $sp
         }
 
-        # ---- one layout, always two columns ---------------------------------
-        #
-        # There was a wide layout: when one side was empty - which is every shipped
-        # pair, since the modes are a ladder - the populated side took the whole
-        # width and split into two columns of its own. Twice as much on screen, and
-        # it made the page stop being a comparison at the exact moment somebody was
-        # comparing: the columns moved, the headings moved, the empty mode
-        # disappeared instead of saying it was empty, and switching a picker relaid
-        # the page from under the pointer. AN EMPTY COLUMN THAT SAYS SO IS
-        # INFORMATION; a page that silently becomes a list is not.
+        # One layout, always two columns.
         $divideFrom = -1
         $divideTo   = -1
 
-        # ---- the pinned header ----------------------------------------------
-        #
-        # A picker per side with the "only X removes these" heading under it, one
-        # cell each, so each sits over the column it speaks for.
-        #
-        # PICKER ABOVE HEADING: the order somebody works in is pick a mode, then
-        # read what only it removes. The heading is the ANSWER to the picker.
-        #
-        # AND IT DOES NOT SCROLL. These two are the frame the whole page is read
-        # through, and they used to be the first thing to leave - eighty cards
-        # down, the page was two unlabelled columns of item names with nothing but
-        # a 3px stripe to say which mode either belonged to.
-        #
-        # BUILT UNCONDITIONALLY, and that is a softlock. Built only in the branch
-        # that draws cards, comparing a preset with itself took the "identical"
-        # branch and never re-placed the pickers - Children.Clear() had already
-        # detached them, so both rows of buttons vanished along with the only
-        # control that could change either side. The only way out was Back.
+        # The pinned header.
         foreach ($side in @(@{ K = 'A'; P = $a; Col = 0; Cnt = $onlyA.Count; Hid = $allA.Count; Done = $doneA.Count; Other = $b },
                             @{ K = 'B'; P = $b; Col = 1; Cnt = $onlyB.Count; Hid = $allB.Count; Done = $doneB.Count; Other = $a })) {
             $stack = New-Object Windows.Controls.StackPanel
-            # Detached from last build's stack first. Children.Clear() drops the
-            # STACK from the header; it does not touch what the stack is holding,
-            # so the picker is still that stack's logical child and WPF refuses
-            # to reparent it - "Specified element is already the logical child of
-            # another element".
+            # Detached from last build's stack first: Children.Clear() does not
+            # touch what the stack is holding, and WPF refuses the reparent.
             $held = $cmpHead[[string]$side.K]
             if ($held.Parent -is [Windows.Controls.Panel]) { $held.Parent.Children.Remove($held) }
             $null = $stack.Children.Add($held)
@@ -11332,10 +8747,8 @@ function Show-WDWindow {
             [Windows.Controls.Grid]::SetColumn($stack, $(if ([int]$side.Col -ge 1) { 2 } else { 0 }))
             $null = $head.Children.Add($stack)
         }
-        # The header's own segment of the rule down the middle. Two segments
-        # rather than one because the header and the cards are two grids now -
-        # they carry the same margins and the same columns, so the pair reads as
-        # the one line it was.
+        # The header's own segment of the rule down the middle, because the
+        # header and the cards are two grids now.
         $hdRule = New-Object Windows.Controls.Border
         $hdRule.Width = 1; $hdRule.Margin = '16,4,16,0'
         $hdRule.HorizontalAlignment = 'Center'; $hdRule.VerticalAlignment = 'Stretch'
@@ -11354,23 +8767,13 @@ function Show-WDWindow {
             $e.FontSize = 14; $e.Margin = '0,16,0,0'; $e.TextWrapping = 'Wrap'
             & $Ref $e 'Foreground' 'Muted'
             & $place $e $r 0 2
-            # No rule below the header in this case. What is under it is one
-            # sentence spanning both columns, and a hairline drawn down the
-            # middle of a sentence is a divider dividing nothing.
+            # No rule below the header in this case: what is under it is one
+            # sentence spanning both columns, and a hairline through a sentence
+            # divides nothing.
         }
 
-        # Every heading either mode could have here, differing or not (see
-        # $coveredKeys). The differing ones get cards; the rest get a rail entry
-        # and nothing on the page, which is the honest shape of "these two agree".
-        #
-        # A hairline between categories IN TWO SEGMENTS, never one span: a single
-        # Border across all three columns would be drawn straight through the rule
-        # down the middle, and a cross is a shape neither line meant to make. The
-        # spacer column is 16px of air either side, so the segments stop short of
-        # it on their own.
-        #
-        # BETWEEN categories, not after each one - a separator under the last block
-        # is a line with nothing beneath it.
+        # Every heading either mode could have here, differing or not. The
+        # differing ones get cards; the rest get a rail entry.
         $ruleBetween = {
             param([int]$Row)
             foreach ($col in @(0, 1)) {
@@ -11394,17 +8797,8 @@ function Show-WDWindow {
                 $r = & $addRow
                 if ($firstCardRow -lt 0) { $firstCardRow = $r }
                 # Both sides get the heading, including the side with nothing
-                # under it, which then reads "Games (0)". A ladder rung has
-                # nothing the rung above lacks, so on most pairings one column
-                # is empty for most categories - and a heading on one side only
-                # left the other column starting its next category at a
-                # different height from its neighbor, with the rules between
-                # them cutting across at the wrong places. "(0)" is also the
-                # answer to a question somebody reading two columns is asking:
-                # this mode does nothing here that the other does not.
-                #
-                # One rail entry per heading, not per side: the two sit on the
-                # same row, so they are one place to scroll to.
+                # under it, which then reads "Games (0)" - and that is the
+                # answer to a question somebody reading two columns is asking.
                 $hA = & $makeHeading $c $nA
                 & $place $hA $r 0 1
                 $anchor = $hA
@@ -11422,9 +8816,7 @@ function Show-WDWindow {
                 }
             }
             # Agree is about the modes; hidden is about the filter. Both look
-            # like "0 | 0" on the rail and they are not the same statement, so
-            # the entry carries which one it is rather than leaving the card to
-            # guess from a zero.
+            # like "0 | 0" on the rail and they are not the same statement.
             $railList.Add([pscustomobject]@{
                 Title = [string]$c; A = $nA; B = $nB; Head = $anchor
                 Agree = (-not $diffKeys.ContainsKey([string]$c)) })
@@ -11435,10 +8827,7 @@ function Show-WDWindow {
         }
 
         # Only when the whole page is empty for a reason the modes cannot
-        # explain. With both columns always drawn, a filter that hides one side
-        # is already visible in that column's own count line, and a note
-        # repeating it under the page would be a third place saying the same
-        # thing.
+        # explain.
         if (($allA.Count -or $allB.Count) -and -not $onlyA.Count -and -not $onlyB.Count) {
             $r = & $addRow
             $note = New-Object Windows.Controls.TextBlock
@@ -11448,16 +8837,7 @@ function Show-WDWindow {
             & $place $note $r 0 2
         }
 
-        # ---- the rule down the middle ---------------------------------------
-        #
-        # One hairline in the spacer column, NOT a box around each side. A pair of
-        # boxes is the obvious way to say "two things" and the wrong one: the cards
-        # already carry a coloured edge saying which mode they belong to, and a
-        # frame around eighty of those turns a comparison into two adjacent lists.
-        #
-        # Starts at the picker row - the pickers are the top of the two sides, not
-        # a header above them - and stops before the filtered-everything note,
-        # which spans both columns and would have the rule drawn through it.
+        # The rule down the middle.
         if ($divideFrom -ge 0 -and $divideTo -ge $divideFrom) {
             $div = New-Object Windows.Controls.Border
             $div.Width = 1; $div.Margin = '16,4,16,0'
@@ -11469,17 +8849,7 @@ function Show-WDWindow {
             $null = $g.Children.Add($div)
         }
 
-        # ---- the index rail ------------------------------------------------
-        #
-        # Rebuilt with the page rather than kept and repainted: unlike Advanced's,
-        # this list of headings is not stable - it changes with the two modes, the
-        # grouping, and every keystroke. Cheap, a couple of dozen cards.
-        #
-        # THE COUNT IS TWO NUMBERS, ONE PER SIDE, in the order the columns are in.
-        # "6 | 0" says the left mode removes six things here that the right one
-        # leaves alone, and the right removes nothing the left does not. A single
-        # total cannot say which half the six are in, which is the whole question
-        # the page answers.
+        # The index rail.
         $ui.CmpIndexPanel.Children.Clear()
         $cmpSpyRows.Clear()
         $cmpSpy.Offsets = $null
@@ -11505,29 +8875,20 @@ function Show-WDWindow {
 
             if ($e.Head) {
                 # There is a heading on the page for this one, so the card is a
-                # place to go - and the count is the only thing on the rail that
-                # says so at a glance. Accent is what this application paints
-                # things you can act on, and here that is exactly what these
-                # are: a blue number means there is a difference under it and a
-                # card to click. Everything reading "0 | 0" below is gray for
-                # the same reason, from the other side.
+                # place to go.
                 & $paintRail $cnt 'Foreground' 'Accent'
                 $card.Cursor = 'Hand'
                 $card.ToolTip = "$($e.Title) - $($e.A) only in $a, $($e.B) only in $b"
-                # The target, and the viewer to move: both on the Tag, so the
-                # handler needs nothing from a scope it cannot see. On is the
-                # scroll spy's mark - see $spyCompare - and the hover handlers
-                # read it so a lit card is not un-lit by the pointer passing
-                # over it.
+                # The target and the viewer, both on the Tag, so the handler
+                # needs nothing from a scope it cannot see. On is what the hover
+                # handlers read so the pointer cannot un-light the active card.
                 $card.Tag = @{ Head = $e.Head; View = $sv; On = $false }
                 $card.Add_MouseEnter({ if (-not $this.Tag.On) { & $paintRail $this 'Background' 'RowHover' } }.GetNewClosure())
                 $card.Add_MouseLeave({ if (-not $this.Tag.On) { & $paintRail $this 'Background' 'Flat' } }.GetNewClosure())
                 $card.Add_MouseLeftButtonUp({
                     $t = $this.Tag
-                    # Computed live rather than cached. One TransformToAncestor
-                    # is cheap and cannot be stale, and this page relays itself
-                    # often enough that a table of offsets would be wrong more
-                    # than right.
+                    # Computed live rather than cached: one TransformToAncestor
+                    # is cheap and cannot be stale.
                     try {
                         $t.View.UpdateLayout()
                         $y = $t.Head.TransformToAncestor($t.View.Content).Transform(
@@ -11540,54 +8901,34 @@ function Show-WDWindow {
                 $rowN++
             }
             else {
-                # Nothing on the page to scroll to, either way. Both of these
-                # stop being cards: no fill, no hand cursor, no hover tint. That
-                # is the strongest "this is not a control" the rail has, and it
-                # is the treatment the Advanced rail already gives an entry that
-                # is not a place to go - $indexSepFor and $indexOmitFor are both
-                # bare and inert. The padding stays so the labels still line up
-                # with the cards above and below.
+                # Nothing on the page to scroll to, either way. Both stop being
+                # cards: no fill, no hand cursor, no hover tint.
                 $card.ClearValue([Windows.Controls.Border]::BackgroundProperty)
                 & $paintRail $lbl 'Foreground' 'Muted'
                 $card.IsHitTestVisible = $false
-                # Gray either way. "0 | 0" means there is nothing here to go to,
-                # and that is one fact however it came about - the two states
-                # below differ in what they mean, not in whether the entry is a
-                # place. Green went with the split: it is the color of a settled
-                # state, which agreement is, but on a rail where the other
-                # entries are blue it read as a third kind of thing rather than
-                # as the absence of the first.
+                # Gray either way: "0 | 0" means there is nothing here to go to,
+                # and that is one fact however it came about.
                 & $paintRail $cnt 'Foreground' 'Muted'
                 if ($e.Agree) {
                     # The two modes handle this category identically.
                     $card.ToolTip = "$a and $b treat $($e.Title) exactly the same way."
                 } else {
-                    # A real difference, all of it hidden by what is in the
-                    # filter and the search box. Dimmed, exactly as the Advanced
-                    # rail dims a block the filter has emptied - the count says
-                    # the same "0 | 0" as an agreement does, and at full strength
-                    # it would be claiming the two modes agree when what is true
-                    # is that you cannot see where they do not.
+                    # A real difference, all of it hidden by the filter. Dimmed,
+                    # exactly as the Advanced rail dims an emptied block.
                     $card.Opacity = 0.45
                     $card.ToolTip = "$($e.Title) - hidden by the filter"
                 }
             }
             $null = $ui.CmpIndexPanel.Children.Add($card)
         }
-        # A rail with nothing in it would be a bare column beside the page. That
-        # is now all but impossible - a category either mode touches gets a card
-        # whether or not they differ under it - but the guard stays for the pair
-        # that touches nothing between them: give the column its width back, and
-        # the splitter with it, or there is a drag handle floating against
-        # nothing.
+        # A rail with nothing in it would be a bare column beside the page.
         $hasRail = [bool]$ui.CmpIndexPanel.Children.Count
         $ui.CmpIndexCol.Width = New-Object Windows.GridLength(
             [double]$(if ($hasRail) { $cmpRail.W } else { 0 }))
         $ui.CmpIndexSplit.Visibility = $(if ($hasRail) { 'Visible' } else { 'Collapsed' })
         $ui.CmpIndexRule.Visibility  = $(if ($hasRail) { 'Visible' } else { 'Collapsed' })
         # The page has been relaid, so whatever the highlight was on is gone.
-        # Deferred rather than run here: nothing has been measured yet, and the
-        # offsets this needs come from a layout pass that has not happened.
+        # Deferred, because nothing has been measured yet.
         $null = $ui.Root.Dispatcher.BeginInvoke(
             [Windows.Threading.DispatcherPriority]::Background, [action]$spyCompare)
 
@@ -11601,17 +8942,8 @@ function Show-WDWindow {
     }.GetNewClosure()
     $cmpRefs.Build = $buildCompare
 
-    # The two pickers, built here rather than declared in the page's XAML,
-    # because they no longer live in the header - $buildCompare places them into
-    # the comparison grid, one over each column, as the last row before the
-    # cards. Built once and re-placed on every rebuild: Grid.Children.Clear()
-    # detaches them cleanly, and re-creating five buttons per keystroke in the
-    # search box would be work for nothing.
-    #
-    # $ui still carries CompareARow and CompareBRow under their old names. They
-    # were XAML elements and half the interaction pass drives the real buttons
-    # through them; a rename would have been churn in twenty places to say the
-    # same thing.
+    # The two pickers, built here rather than declared in the XAML, because they
+    # no longer live in the page header.
     $buildCompareRows = {
         $build = $buildCompare
         $st    = $cmpState
@@ -11621,27 +8953,16 @@ function Show-WDWindow {
         $paint = $paintPresetButton
         $now   = $showNowFast
         # The one event that changes what a kept card should look like without
-        # changing the key it is kept under: the short name printed on its button
-        # and the color its edge is painted in both belong to a preset, and a
-        # preset can be renamed, dropped, or arrive from a file. Everything else
-        # a card can do differently is repainted by $paintCard.
+        # changing its key: the short name printed on its button.
         $cmpCards.Clear()
         # Cleared with them, or every card thrown away leaves its chip on a list
-        # nothing can reach and the list grows for the life of the window.
+        # nothing can reach.
         $cmpChips.Clear()
         $cmpDescEls.Clear()
         foreach ($k in @('A','B')) {
-            # The word sits on the buttons' line and OUTSIDE the scroller. Above
+            # The word sits on the buttons' line and outside the scroller: above
             # them it cost a whole row of height on the one page where vertical
-            # space runs out; inside the scrolling row it would slide off to the
-            # left, and "Compare" is the one word on that line whose job is to stay
-            # put and say what the row is.
-            #
-            # GRID, NOT A HORIZONTAL StackPanel. A StackPanel measures its children
-            # with INFINITE width, so the ScrollViewer would be handed the full
-            # length of the button line, size itself to it, and never scroll -
-            # arriving at a control whose entire purpose is to be narrower than its
-            # content.
+            # space runs out.
             $wrap = New-Object Windows.Controls.Grid
             $wrap.Margin = '0,4,0,2'
             foreach ($w in @((New-WDGridLength 0 'Auto'), (New-WDGridLength 1 'Star'))) {
@@ -11652,9 +8973,8 @@ function Show-WDWindow {
             $lbl = New-Object Windows.Controls.TextBlock
             $lbl.Text = $(if ($k -eq 'A') { 'Compare' } else { 'against' })
             $lbl.FontSize = 13; $lbl.Margin = '0,0,8,4'
-            # Against the buttons rather than against the top of the row: the
-            # buttons carry their own padding, so a top-aligned word beside them
-            # reads as belonging to something above it.
+            # Against the buttons rather than the top of the row: the buttons
+            # carry their own padding.
             $lbl.VerticalAlignment = 'Center'
             & $Ref $lbl 'Foreground' 'Text'
             [Windows.Controls.Grid]::SetColumn($lbl, 0)
@@ -11665,9 +8985,8 @@ function Show-WDWindow {
             $btns[$k].Clear()
             foreach ($n in $presetNames) {
                 $btn = New-Object Windows.Controls.Button
-                # The short form. This is one of the two rows the twelve-
-                # character cap exists for: five shipped modes plus however many
-                # files have been loaded, side by side, in half a window.
+                # The short form. This is one of the two rows the
+                # twelve-character cap exists for.
                 $btn.Content = [string](& $shortPreset ([string]$n))
                 if ([string]$btn.Content -ne [string]$n) { $btn.ToolTip = [string]$n }
                 $btn.Padding = '12,5'; $btn.Margin = '0,0,6,4'; $btn.FontSize = 13
@@ -11675,12 +8994,8 @@ function Show-WDWindow {
                 $btn.Add_Click({
                     $t = $this.Tag
                     $st[$t.Side] = $t.Name
-                    # This row answers before the page behind it is rebuilt.
-                    # Same reason as the hand-over button: the rebuild is a
-                    # fraction of a second and the picker is the control being
-                    # pressed, so it is the one thing that must not sit still.
-                    # $buildCompare repaints all of these anyway, through the
-                    # same function; this only gets there first.
+                    # This row answers before the page behind it is rebuilt, for
+                    # the same reason the hand-over button does.
                     foreach ($n in @($btns[$t.Side].Keys)) {
                         & $paint $btns[$t.Side][$n] $n ([string]$n -eq [string]$t.Name)
                     }
@@ -11690,21 +9005,13 @@ function Show-WDWindow {
                 $null = $row.Children.Add($btn)
                 $btns[$k][$n] = $btn
             }
-            # WrapPanel, not StackPanel, would be the obvious answer for five
-            # buttons in half a page - but a wrap changes the row's height as
-            # the window narrows, and the two sides would then disagree about
-            # where the cards start. So the buttons keep a fixed line, and the
-            # line scrolls: the number of presets has no ceiling, and a fixed
-            # line that runs past the column edge is a picker with entries
-            # nothing can reach.
+            # A WrapPanel would be the obvious answer for five buttons, but a
+            # wrap changes the row's height as presets are loaded.
             $sv = New-Object Windows.Controls.ScrollViewer
             $sv.HorizontalScrollBarVisibility = 'Auto'
             $sv.VerticalScrollBarVisibility   = 'Disabled'
-            # The bar comes from the window's implicit ScrollBar style, which is
-            # the same one the Advanced picker wears - see WdSlimBar. This used
-            # to add the style to this ScrollViewer's own resources, which was
-            # the only route to it while the style was keyed and is now a second
-            # copy of a decision made in one place.
+            # The bar comes from the window's implicit ScrollBar style, the same
+            # one the Advanced picker wears.
             $sv.Content = $row
             [Windows.Controls.Grid]::SetColumn($sv, 1)
             $null = $wrap.Children.Add($sv)
@@ -11714,31 +9021,12 @@ function Show-WDWindow {
     }
     & $buildCompareRows
 
-    # ---- the box of loaded selections, under the mode columns ---------------
-    #
-    # One line per file: what it is called, how much of it applies to this
-    # machine, and a way to take it away again. No blurb and no bullet list,
-    # which is the whole reason it is not a sixth column - and the reason the
-    # box goes under the grid rather than beside it.
-    #
-    # "42 of 48 apply here" is the line that earns its place. A selection saved
-    # on another machine names items this one has never been offered - a Lenovo
-    # file on a Dell, a file made before an item was added - and $registerLoaded
-    # drops those rather than carrying ids nothing can match. Saying so is the
-    # difference between a file that half-applied and a file that was half about
-    # somebody else's computer.
-    # Everything that has to be told when the list of presets changes. One
-    # place, because loading a file touches four screens and forgetting one of
-    # them is a preset that exists in Advanced and not in Compare.
-    #
-    # Reaches the box through $loadedRef rather than through $paintLoaded, which
-    # is written below this and would be captured as null.
+    # The box of loaded selections, under the mode columns.
     $loadedRefresh = {
         & $recount
         if ($loadedRef.Paint) { & $loadedRef.Paint }
-        # After the repaint. $recount does this too, but it runs before the box
-        # is rebuilt, so on this path it would be speaking for rows that are
-        # about to be thrown away.
+        # After the repaint: $recount does this too, but it runs before the box
+        # is rebuilt.
         & $syncEditRows
         & $buildAdvPresetRow
         & $buildCompareRows
@@ -11746,10 +9034,8 @@ function Show-WDWindow {
         & $saveUiState
     }.GetNewClosure()
 
-    # Moves one loaded preset from one name to another across every table keyed
-    # by name. A plain scriptblock, not a closure: it is called from handlers
-    # built long after it, and a plain block resolves its reads up the chain at
-    # call time rather than snapshotting a scope that does not have them yet.
+    # A plain scriptblock, not a closure: it is called from handlers that
+    # resolve against this function's live frame.
     $reKeyLoaded = {
         param([string]$Name, [string]$NewName)
         if ($Name -eq $NewName) { return $Name }
@@ -11766,15 +9052,13 @@ function Show-WDWindow {
 
         foreach ($h in @($baseIds, $presetColor,
                          $presetDefaults, $overrides, $counts, $consequence, $totDelta,
-                         # Carried, not dropped: renaming the file this came
-                         # from does not un-apply it, and the ids it recorded
-                         # are still the ids it recorded.
+                         # Carried, not dropped: renaming the file a preset came
+                         # from does not un-apply it.
                          $appliedRuns)) {
             if ($h.ContainsKey($Name)) { $h[$NewName] = $h[$Name]; $h.Remove($Name) }
         }
         # Not carried over: the short form is derived from the name, so it has
-        # to be derived again from the new one. Its old entry goes first so the
-        # uniqueness loop is not competing with itself.
+        # to be derived again from the new one.
         if ($shortOf.ContainsKey($Name)) { $shortOf.Remove($Name) }
         $short = $NewName
         if ($short.Length -gt $PRESET_NAME_MAX) {
@@ -11799,10 +9083,8 @@ function Show-WDWindow {
         $NewName
     }
 
-    # One line of text back, or null for cancel. Built the same way $askThree is
-    # and for the same reason: a separate Window is a separate resource scope,
-    # so the theme dictionary has to be merged in by hand or this opens as a
-    # black rectangle with a system-drawn text box in it.
+    # One line of text back, or null for cancel. A separate Window is a separate
+    # resource scope, so the dictionary is merged into it.
     $askName = {
         param([string]$Title, [string]$Message, [string]$Value)
         $dlg = New-Object Windows.Window
@@ -11812,9 +9094,8 @@ function Show-WDWindow {
         $dlg.WindowStartupLocation = 'CenterOwner'
         $dlg.ShowInTaskbar = $false
         $dlg.Owner = $win
-        # Called rather than captured: these builders are closures, and a
-        # closure resolves a variable against the scope it was written in but a
-        # command against the module - which is why Get-WDAppIcon is exported.
+        # Called rather than captured: a closure resolves a variable against the
+        # scope it was written in.
         $dlgIcon = Get-WDAppIcon
         if ($dlgIcon) { $dlg.Icon = $dlgIcon }
         if (-not $dlg.Resources.MergedDictionaries.Contains($themeDict)) {
@@ -11852,20 +9133,11 @@ function Show-WDWindow {
         $out.V
     }
 
-    # RENAMING A LOADED PRESET RENAMES ITS FILE. The two cannot come apart: the
-    # name of one of these IS the file's name, and the list is rebuilt from paths
-    # at startup - so an in-app-only rename is undone by the next launch and
-    # meanwhile describes a file it no longer matches.
-    #
-    # Every table keyed by name moves together. $presetNames moves IN PLACE rather
-    # than remove-then-add, because it is the order the Advanced and Compare button
-    # rows are built in and a renamed preset jumping to the end is a button moving
-    # under the pointer. $loadedPresets is rebuilt, since an ordered dictionary
-    # cannot rename a key. The short form is re-derived, not carried.
-    #
-    # The half with no dialog in it, so the self test can drive it. EVERY REFUSAL
-    # IS CHECKED BEFORE THE FILE MOVES, or a rejected rename leaves the file called
-    # one thing and the preset another - the one state this exists to prevent.
+    # Renaming a loaded preset renames its file. The two cannot come apart: the
+    # name of one of these is the file's name, and the list is rebuilt from
+    # paths at startup.
+    # Every refusal is checked before the file moves, or it ends up called one
+    # thing while the preset is called another.
     $renameLoadedTo = {
         param([string]$Name, [string]$NewName)
         $name = [string]$Name
@@ -11882,8 +9154,8 @@ function Show-WDWindow {
         if (Test-Path -LiteralPath $target) { return "there is already a file called $want.json in that folder" }
         try { Move-Item -LiteralPath $here -Destination $target -ErrorAction Stop }
         catch { return "$here could not be renamed: $($_.Exception.Message)" }
-        # The entry follows the file whatever happens next - a preset pointing
-        # at a path that no longer exists is the dangling-name crash by another
+        # The entry follows the file whatever happens next: a preset pointing at
+        # a path that no longer exists is the dangling-name crash by another
         # route.
         $loadedPresets[$name].Path = $target
         $new = [string](& $reKeyLoaded $name $want)
@@ -11911,31 +9183,18 @@ function Show-WDWindow {
         $panel = $ui.LoadedPanel
         $panel.Children.Clear()
         # Every row here is rebuilt, so the Save/Reset pairs belonging to loaded
-        # presets are rebuilt with them. $makeEditRow overwrites by name, so
-        # nothing has to be cleared - and clearing would take the five mode
-        # columns' pairs with it, which this function never touches.
+        # presets are rebuilt with them.
         $ui.TxtLoadHint.Text = 'Incompatible options will be dropped.'
-        # The three buttons in the box's header. Remove all acts on the list;
-        # Remove and Rename act on the selected preset, so they are grayed while
-        # there is no loaded preset selected rather than taken away - see below.
-        #
-        # Synced from here rather than from $selectPreset, because this function
-        # already reads $state.Preset for the SELECTED marker on each row and two
-        # places deciding the same thing is how they come to disagree. Every route
-        # that changes the selection repaints this box.
+        # Remove all acts on the list; Remove and Rename act on the selected
+        # preset, so they are grayed while a shipped mode is selected.
         $anyLoaded = [bool]$loadedPresets.Count
         $onLoaded  = $anyLoaded -and $loadedPresets.Contains([string]$state.Preset)
-        # Remove all speaks for the LIST, so it follows whether the list has
+        # Remove all speaks for the list, so it follows whether the list has
         # anything in it and never the selection.
         $ui.BtnRemoveAllPresets.Visibility = $(if ($anyLoaded) { 'Visible' } else { 'Collapsed' })
-        # GRAYED, NOT COLLAPSED, and that is a fix rather than a preference.
-        # These two speak for the selected preset, so they have nothing to say
-        # while a shipped mode is selected - but collapsing them took 160px out
-        # of the middle of the row and Remove all slid from x=585 to x=745 to
-        # fill it. Measured. A button that jumps a third of the row when you
-        # click somewhere else reads as one that has disappeared and been
-        # replaced, which is exactly how it was reported. Disabled, the row does
-        # not move and the reason is on the tooltip.
+        # Grayed, not collapsed, and that is a fix rather than a preference:
+        # collapsing took 160px out of the middle of the row and Remove all slid
+        # across to fill it.
         foreach ($b in @('BtnRemovePreset', 'BtnRenamePreset')) {
             $ui[$b].IsEnabled = $onLoaded
         }
@@ -11949,19 +9208,15 @@ function Show-WDWindow {
             $sel = ($state.Preset -eq [string]$n)
             & $Ref $card 'Background'  $(if ($sel) { 'CardSel' } else { 'Flat' })
             & $Ref $card 'BorderBrush' $(if ($sel) { [string]$info.Key } else { 'Line' })
-            # This row prints the long form of the name - it is the one place
-            # with a full window's width and nothing beside it to push aside.
-            # The tooltip is still the path, which no length of name replaces.
+            # This row prints the long form: it is the one place with a full
+            # window's width and nothing beside it to push aside.
             $card.ToolTip = [string]$info.Path
 
             $dock = New-Object Windows.Controls.DockPanel
             $dock.LastChildFill = $true
 
             # Remove and Rename were a pair on every one of these rows. They are
-            # in the box's header now and act on the selection - see the XAML for
-            # why - which leaves the row holding its name, what it applies to,
-            # and whether it is the one selected. That is what a row of this box
-            # is for.
+            # in the box's header now and act on the selection.
             $mark = New-Object Windows.Controls.TextBlock
             $mark.Text = $(if ($sel) { 'SELECTED' } else { 'click to select' })
             $mark.FontSize = 11; $mark.FontWeight = 'SemiBold'
@@ -11988,15 +9243,7 @@ function Show-WDWindow {
             $null = $stack.Children.Add((& $makeEditRow ([string]$n)))
 
             # The same three things a mode card offers, because a selection
-            # loaded from a file is a preset like any other and there was
-            # nothing whatever to do with one from here. Everywhere else it is
-            # an equal - Advanced picks it, Compare compares it, Reset resets
-            # it - and this was the one place it could be selected and then
-            # only looked at.
-            #
-            # In a row rather than stacked: this card has the width of the
-            # window where a mode column has 190px, which is the only reason
-            # those three are stacked over there.
+            # loaded from a file is a preset like any other.
             $acts = New-Object Windows.Controls.StackPanel
             $acts.Orientation = 'Horizontal'
             $acts.Margin = '0,8,0,0'
@@ -12013,9 +9260,8 @@ function Show-WDWindow {
                     & $Ref $ab 'Foreground'  'GoText'
                     & $Ref $ab 'BorderBrush' 'GoBorder'
                 }
-                # Everything on the Tag. These are built inside a closure, so a
-                # reach up the chain for $advRef or $goRef captures null - the
-                # trap that made the mode cards' first Show all options dead.
+                # Everything on the Tag: these are built inside a closure, so a
+                # reach up the chain for $advRef or $goRef captures null.
                 $ab.Tag = @{ Name = [string]$n; Do = [string]$a.Go
                              Adv = $advRef; Go = $goRef }
                 $ab.Add_Click({
@@ -12032,17 +9278,7 @@ function Show-WDWindow {
             $null = $dock.Children.Add($stack)
             $card.Child = $dock
 
-            # Everything both handlers need on the Tag: they are built inside
-            # this closure and a reach up the chain would capture null.
-            # $pickOrSelect, not $selectPreset: a selection loaded from a file is
-            # a preset like any other, so it can answer "compare with which?"
-            # exactly as a column can.
-            #
-            # Mark rides along so the harness can read what the row says about
-            # itself. It is the only place a loaded preset can announce that it
-            # is the selected one, now that the tally under the grid is gone -
-            # and a check that walks the visual tree to find it would be a
-            # description of this layout rather than of the row.
+            # Everything both handlers need on the Tag, for the same reason.
             $card.Tag = @{ Name = [string]$n; Go = $pickOrSelect; Mark = $mark; Acts = $acts }
             $card.Add_MouseLeftButtonUp({
                 if ($args[1].Handled) { return }
@@ -12053,20 +9289,10 @@ function Show-WDWindow {
     }.GetNewClosure()
     $loadedRef.Paint = $paintLoaded
 
-    # ---- the three buttons in the box's header -----------------------------
-    #
-    # Wired once at this scope rather than per row: they act on whatever is
-    # selected and read $state.Preset when pressed, so there is nothing per-file to
-    # close over. $paintLoaded shows and hides them.
-    #
-    # Each re-selects afterwards through $selectPreset rather than trusting the
-    # name it started with. Removing the CURRENTLY selected preset is the likeliest
-    # gesture there is - loading a file selects it, so "load it, look at it, take it
-    # off again" hits that path every time. $dropLoaded moves the selection off;
-    # this puts the screen on wherever it moved to.
+    # The three buttons in the box's header.
     $dropAllLoaded = {
         # Snapshotted before the loop: $dropLoaded rebuilds $loadedPresets, and
-        # enumerating a collection while removing from it throws.
+        # enumerating while removing throws.
         foreach ($n in @($loadedPresets.Keys)) { & $dropLoaded ([string]$n) }
         & $loadedRefresh
         & $selectPreset ([string]$state.Preset)
@@ -12080,8 +9306,8 @@ function Show-WDWindow {
         & $selectPreset ([string]$state.Preset)
     }.GetNewClosure())
 
-    # $renamePreset does its own refreshing and re-selecting: the name it ends on
-    # is not the name it was handed.
+    # $renamePreset does its own refreshing and re-selecting: the name it ends
+    # on is not the name it was handed.
     $ui.BtnRenamePreset.Add_Click({
         $n = [string]$state.Preset
         if (-not $loadedPresets.Contains($n)) { return }
@@ -12089,11 +9315,7 @@ function Show-WDWindow {
     }.GetNewClosure())
 
     # Asked once for the lot rather than once per file. Nothing here touches a
-    # file, so the cost of getting it wrong is pressing Load again - and a
-    # confirmation per preset for a reversible list operation is the kind people
-    # learn to click through, which is worse than one they read. Split from the
-    # dialog like every other destructive action on this page, because a
-    # MessageBox blocks the dispatcher with nobody there to dismiss it.
+    # file.
     $ui.BtnRemoveAllPresets.Add_Click({
         if (-not $loadedPresets.Count) { return }
         if (-not $state.NoPrompts) {
@@ -12105,16 +9327,7 @@ function Show-WDWindow {
         & $dropAllLoaded
     }.GetNewClosure())
 
-    # ---- what the load could not honor, said out loud ----------------------
-    #
-    # A saved selection is a list of ids, so loading one from another machine drops
-    # whatever this one cannot do. "42 of 48 apply here" tells somebody six things
-    # went missing and nothing about WHICH six or why - on the one screen where
-    # that decides whether the file is still the file they meant.
-    #
-    # Built as text and RETURNED, with the dialog last: the self test drives this,
-    # and a MessageBox blocks the dispatcher with nobody to dismiss it. Empty
-    # string when there is nothing to report, which is the normal case.
+    # What the load could not honor, said out loud.
     $reportDropped = {
         param($Names)
         $lines = New-Object System.Collections.Generic.List[string]
@@ -12140,13 +9353,10 @@ function Show-WDWindow {
     }.GetNewClosure()
 
     # The folder the toolkit writes to and Setup reads from, for the two Load
-    # buttons below. Other pages still spell the Join-Path out for themselves:
-    # they are written above this line, and a closure there would capture the
-    # name as $null.
+    # buttons.
     $savesFolder = { Join-Path (Split-Path -Parent $ModulePath) 'profile_saves' }
-    # Everything both Load buttons do once they know which files they are
-    # loading: register each, refresh the four screens that care, select the
-    # last one that worked, and say which ones were not selections at all.
+    # Everything both Load buttons do once they know which files: register each,
+    # refresh the four screens that care, select the last.
     $loadPaths = {
         param($Paths, [string]$Title)
         $bad  = New-Object System.Collections.Generic.List[string]
@@ -12157,8 +9367,8 @@ function Show-WDWindow {
             if ($nm) { $last = $nm; $loadedNow.Add([string]$nm) } else { $bad.Add([IO.Path]::GetFileName([string]$f)) }
         }
         & $loadedRefresh
-        # Selected on the way in. Loading a file and then having to find it in a
-        # box and click it again is two gestures for one intention.
+        # Selected on the way in: loading a file and then having to find it in a
+        # box is two gestures for one intention.
         if ($last) { & $selectPreset $last }
         if ($bad.Count -and -not $state.NoPrompts) {
             Show-WDMessage (
@@ -12169,9 +9379,8 @@ function Show-WDWindow {
         & $reportDropped $loadedNow
         $loadedNow.Count
     }
-    # Load. A dialog rather than a drop-down of the profile_saves folder: a
-    # saved selection is a file somebody keeps where they keep files, and the
-    # whole point of one is carrying it to another machine.
+    # A dialog rather than a drop-down of profile_saves: a saved selection is a
+    # file somebody keeps where they keep files.
     $ui.BtnLoadPreset.Add_Click({
         $dlg = New-Object Microsoft.Win32.OpenFileDialog
         $dlg.Title  = 'Load a saved selection'
@@ -12186,15 +9395,7 @@ function Show-WDWindow {
     }.GetNewClosure())
 
     # Load all. The one folder that is not somebody's own filing: the toolkit
-    # writes here, Setup reads from here, and it is where a person who has been
-    # saving selections has been saving them. No dialog, because there is no
-    # question to ask - "all" names the folder and the tooltip says which one.
-    #
-    # Already-loaded files are skipped rather than reloaded. $registerLoaded
-    # would happily take the same path twice and name the second one "thing
-    # (2)", so without this the button is a duplicate factory: press it after
-    # loading one file by hand and every preset in the folder arrives beside a
-    # copy of itself.
+    # writes here and Setup reads from here.
     $ui.BtnLoadAll.Add_Click({
         $folder = & $savesFolder
         $files = @()
@@ -12209,10 +9410,8 @@ function Show-WDWindow {
         $want = @($files | Where-Object { -not $here.Contains([string]$_) })
         if (-not $want.Count) {
             if ($state.NoPrompts) { return }
-            # Three states, and they are worth telling apart: no folder, an
-            # empty one, and one whose every file is already on the list. The
-            # first two are "there is nothing to load", which reads as a broken
-            # button unless it says where it looked.
+            # Three states worth telling apart: no folder, an empty one, and one
+            # whose every file is already on the list.
             $msg = if (-not $files.Count) {
                        "No saved selections in`n`n$folder`n`nSave > File on the options list writes them there."
                    } else {
@@ -12224,10 +9423,9 @@ function Show-WDWindow {
         $null = & $loadPaths $want 'Load all'
     }.GetNewClosure())
     & $paintLoaded
-    # panel rather than a shared builder: the two filters offer different
-    # facets - this one has no Section and no View, because Compare shows
-    # differences rather than a selection - and generalising a builder over two
-    # callers that disagree about their contents buys nothing.
+    # Its own panel rather than a shared builder: this filter offers different
+    # facets - no Section and no View, because Compare shows differences rather
+    # than a selection.
     $buildCmpFilterPanel = {
         $rebuild = $cmpRefs
         $sets    = $cmpSel
@@ -12282,10 +9480,8 @@ function Show-WDWindow {
         & $buildCompare
     }.GetNewClosure())
 
-    # Longer than the Advanced box's 180. A keystroke here rebuilds the whole
-    # comparison rather than re-filtering rows that already exist, so the work
-    # behind it is several times the size and is worth waiting a moment longer
-    # to be sure it only happens once.
+    # Longer than the Advanced box's 180: a keystroke here rebuilds the whole
+    # comparison rather than re-filtering rows that exist.
     $ui.TxtCmpSearch.Add_TextChanged((& $newDebounce 260 { & $buildCompare }.GetNewClosure()))
     $clearCmpFilters = {
         foreach ($b in $cmpBoxes) { $b.Box.IsChecked = $false }
@@ -12298,10 +9494,7 @@ function Show-WDWindow {
 
     & $buildCompare
 
-    # Opening the page, with both sides already decided. Filled into the holder
-    # rather than hung on a button: the control that reaches it is one of three
-    # on whichever mode card is selected, and those are built thousands of lines
-    # above this.
+    # Opening the page, with both sides already decided.
     $ui.BtnModesBack.Add_Click({
         # A pick left half-asked would come back the next time this page opened,
         # over a card that is no longer the one it names.
@@ -12310,24 +9503,15 @@ function Show-WDWindow {
     }.GetNewClosure())
 
     $goRef.Compare = {
-        # A fresh visit starts with an empty stack. The edits themselves stay -
-        # they are preset edits like any other, and Reset presets is what takes
-        # those back - but Undo only speaks for the page you are looking at.
+        # A fresh visit starts with an empty stack. The edits stay - they are
+        # preset edits like any other.
         $cmpDone.Clear()
         & $buildCompare
         & $showPage 'PageCompare'
     }.GetNewClosure()
 
-    # ---- "compare this one with which?" ------------------------------------
-    #
-    # A comparison needs two presets and a card can only name one, so the button
-    # ASKS rather than assuming whatever the page compared last. The question goes
-    # IN THE PAGE, not in a dialog: what it wants is a click on one of the cards
-    # below it, and a modal over them would cover the answer to its own question.
-    #
-    # $cmpPick.On is read at the top of $selectPreset rather than the handlers
-    # being swapped: a card is clickable in three places, and rewiring all of them
-    # per gesture is three chances to leave one behind.
+    # "Compare this one with which?" - the question goes in the page, not a
+    # dialog, because what it wants is a click on one of the cards below it.
     $cmpPick = @{ On = $false; From = $null }
     $endComparePick = {
         $cmpPick.On = $false
@@ -12346,15 +9530,14 @@ function Show-WDWindow {
         # The bar is above the cards and the page may be scrolled away from it.
         $ui.ModeScroll.ScrollToVerticalOffset(0)
     }.GetNewClosure()
-    # What a card click means while the question is up. Answers with $true when
-    # it consumed the click, so $selectPreset knows not to also select it.
+    # Answers true when it consumed the click, so $selectPreset knows not to
+    # also select it.
     $cmpPickRef.Take = {
         param([string]$Name)
         if (-not $cmpPick.On) { return $false }
         $from = [string]$cmpPick.From
-        # Clicking the one being compared cancels rather than comparing a preset
-        # with itself, which is a page that says "these two modes are the same"
-        # and is nobody's question.
+        # Clicking the one being compared cancels rather than opening a page
+        # that says two modes are identical.
         if ([string]$Name -eq $from) { & $endComparePick; return $true }
         $cmpState.A = $from
         $cmpState.B = [string]$Name
@@ -12366,28 +9549,18 @@ function Show-WDWindow {
     $ui.BtnCmpPickCancel.Add_Click($endComparePick)
     $ui.BtnCompareBack.Add_Click({ & $showPage 'PageModes' }.GetNewClosure())
 
-    # ====================================================== REVERT PAGE ====
+    # The Revert page.
     $revertRows = New-Object System.Collections.Generic.List[psobject]
 
-    # ---------------------------------------------------------------------
-    # The revert page, which is the rollback script's window built inside the
-    # application. Everything below mirrors Show-WDUndoWindow deliberately -
-    # the same four groupings, the same three sorts, the same four filter
-    # groups, the same two-column blocks, the same rail - because the two are
-    # meant to be one interface, and somebody who has learnt either has learnt
-    # both. Where the two differ it is because this one has a run picker and
-    # that one is generated per run.
-    # ---------------------------------------------------------------------
+    # The revert page is the rollback script's window built inside the
+    # application: same groupings, same sorts, same filter, same rail.
 
     # Which run the page is showing, and the way back into the builder for the
-    # picker's own buttons. Those are created inside $buildRevert, which is
-    # itself invoked from a handler, so they cannot reach it by name - the same
-    # cycle $cmpRefs.Build breaks on the Compare page, broken the same way.
+    # picker's own buttons.
     $revertPick = @{ Sel = 'all'; Build = $null; Runs = @() }
 
-    # Two controls, not one, and every pairing of them means something - which
-    # is why there is nothing to gray out. Group by decides what the page is
-    # divided into; Sort by decides the order inside a division.
+    # Two controls, not one, and every pairing means something - so there is
+    # nothing to gray out.
     $REV_GROUPS = @(
         @{ Key = 'category'; Label = 'Category' }
         @{ Key = 'status';   Label = 'What is left' }
@@ -12407,12 +9580,8 @@ function Show-WDWindow {
     $REV_FILTER_GROUPS = @('State', 'View', 'Kind', 'Cat')
 
     $revState     = @{ Group = 'category'; Sort = 'name'; Booting = $true; Tickable = 0 }
-    # Where the wait goes, recorded rather than guessed at, exactly as the
-    # rollback window and the Advanced pre-warm do it. Each number has a
-    # different answer if it grows: Read is the run folders, Plan is parsing
-    # journals, States is the machine, Extra is the two scans that are not the
-    # plan at all, Rows is WPF element construction, and Layout is this file's
-    # own arranging.
+    # Where the wait goes, recorded rather than guessed at. Each number has a
+    # different answer if it grows.
     $revBuilt = @{ Ms = 0; Read = 0; Plan = 0; States = 0; Extra = 0; Rows = 0; Layout = 0 }
     $revBlocks    = New-Object System.Collections.Generic.List[psobject]
     $revRailCards = New-Object System.Collections.Generic.List[psobject]
@@ -12421,38 +9590,24 @@ function Show-WDWindow {
     $revFilterSel = @{}
     foreach ($fg in $REV_FILTER_GROUPS) { $revFilterSel[$fg] = New-Object System.Collections.Generic.List[string] }
     $revFilterBoxes = New-Object System.Collections.Generic.List[psobject]
-    # Selected only / Unselected only are a SNAPSHOT. A live query deletes the
-    # row you just clicked out from under the pointer, which makes the list
-    # unusable.
+    # Selected only / Unselected only are a snapshot: a live query deletes the
+    # row you just clicked.
     $revViewSnap = @{ Ids = $null }
-    # The holder that breaks the cycle: a chip has to un-tick a box, drop the
-    # facet and re-filter, and it is built by the filter pass it has to call.
+    # The holder that breaks the cycle: a chip has to un-tick a box and
+    # re-filter, and it is built by the filter pass it has to call.
     $revFx = @{ Filter = $null; Pairs = $null }
 
-    # Whatever the person just did shows immediately; the expensive consequence
-    # catches up. Render priority rather than a DispatcherFrame: it flushes
-    # layout and drawing and stops, so nothing at Input priority runs and a
-    # second click cannot re-enter the handler that is still in the first.
+    # Render priority rather than a DispatcherFrame: it flushes layout and
+    # stops, so nothing at Input priority runs.
     $revShowNow = { $win.Dispatcher.Invoke([action]{}, 'Render') }.GetNewClosure()
 
     # The build reads the machine for the best part of ten seconds on a machine
-    # with real runs behind it - the journals, then every change in them, then
-    # the two scans that are not the plan at all. A line that does not move for
-    # that long says the same thing a frozen one does, so each phase says what
-    # it is doing and the frame is pumped before the thread goes back to work.
-    #
-    # Background priority rather than Render: this is called between long pieces
-    # of work rather than in front of one, so the point is to let the paint
-    # happen at all, not to beat input to it. Skipped under NoPrompts, where
-    # there is nobody to see it and PushFrame is a message loop the harness has
-    # no use for.
+    # with real runs behind it.
     $revSay = {
         param([string]$Text, [double]$Fraction)
         $ui.TxtRevertSub.Text = $Text
-        # The same overlay the Advanced build and the theme switch use, driven
-        # the same way: a determinate bar, because this work blocks the UI
-        # thread between pumps and anything meant to animate smoothly would
-        # judder and read as the hang it is covering.
+        # The same overlay the Advanced build and the theme switch use: a
+        # determinate bar, because this blocks the UI thread between pumps.
         $veil = $win.Tag.Busy
         if ($veil) { & $veil.Set $Text $Fraction }
         if ($state.NoPrompts) { return }
@@ -12463,12 +9618,8 @@ function Show-WDWindow {
         [Windows.Threading.Dispatcher]::PushFrame($frame)
     }.GetNewClosure()
 
-    # ONE SCRIPTBLOCK PER ROW, and that is a cost decision rather than a tidy
-    # one. GetNewClosure copies the LOCALS of the scope it is written in, and
-    # there are five closures on every row - written inline in Show-WDWindow's
-    # body they would each copy every local this function has, and it has
-    # hundreds. Written inside a block of its own they copy that block's dozen,
-    # and everything it needs arrives as a parameter.
+    # One scriptblock per row, and that is a cost decision: GetNewClosure copies
+    # the locals of the scope it is written in.
     $revMakeRow = {
         param($O, $RefFn, $TagText, $TagInk)
         $Ref = $RefFn
@@ -12476,14 +9627,8 @@ function Show-WDWindow {
         $card.CornerRadius = 3; $card.Padding = '8,5,8,6'; $card.Margin = '0,0,0,3'
         & $Ref $card 'Background' 'Flat'
 
-        # THE SAME SHAPE AS AN ADVANCED ROW, and that is what makes the two pages
-        # line up rather than merely use the same numbers. The tick box is docked
-        # to the left of a stack that fills, so everything under the name - the
-        # description, the Details panel - starts at the name's own left edge
-        # with no margin doing the work. It used to sit INSIDE the WrapPanel
-        # beside the name, which is why those two carried a hand-measured 26px
-        # indent to line up with a control above them, and why they stopped
-        # lining up whenever the box's size changed.
+        # The same shape as an Advanced row, which is what makes the two pages
+        # line up rather than merely use the same numbers.
         $panel = New-Object Windows.Controls.DockPanel
         $panel.LastChildFill = $true
 
@@ -12497,45 +9642,32 @@ function Show-WDWindow {
 
         $stack = New-Object Windows.Controls.StackPanel
 
-        # A name, then some chips, is a WrapPanel and never a horizontal
-        # StackPanel: that one measures its children with infinite width, so
-        # nothing wraps and the last chip is drawn off the edge of the card.
+        # A name then some chips is a WrapPanel and never a horizontal
+        # StackPanel.
         $line = New-Object Windows.Controls.WrapPanel
 
         $nm = New-Object Windows.Controls.TextBlock
-        # 15 and SemiBold, which is what an Advanced row's name is. This was 13.5
-        # and normal weight, and the difference was plainly visible to anybody
-        # moving between the two pages - the same option, named twice, looking
-        # like two different kinds of thing.
+        # 15 and SemiBold, which is what an Advanced row's name is. This was
+        # 13.5 and normal weight, and against the toolkit's own list it looked
+        # like a different kind of thing.
         $nm.Text = $O.Name; $nm.FontSize = 15; $nm.FontWeight = 'SemiBold'
-        # Wrap. A WrapPanel arranges a child at its DESIRED width, and a
-        # TextBlock with no wrapping desires the whole of its text however
-        # narrow the column is - so a long name is drawn past the edge of the
-        # card. It never shows at one column wide; halving that brings it out.
+        # Wrap. A WrapPanel arranges a child at its desired width, and an
+        # unwrapped TextBlock desires all of its text.
         $nm.TextWrapping = 'Wrap'
-        # The key in a variable rather than an if-expression in the argument:
-        # [6] reads the literals handed to $Ref to check every one is a real
-        # theme key, and a condition comparing against 'done' inside the
-        # argument looks exactly like a key being passed.
+        # The key in a variable rather than an if-expression: [6] reads the
+        # literals handed to $Ref to check each is a real theme key.
         $nmInk = 'Text'
         if ($O.State -eq 'done') {
             $nmInk = 'Muted'
-            # STRUCK THROUGH, and dimmed, exactly as an Advanced row is when its
-            # target is not on this machine. The two states are the same kind of
-            # thing - a row that is here to tell you there is nothing left to do -
-            # and this one said it in two ways where that one says it in four.
-            # A line through a name is the one mark that cannot be mistaken for a
-            # style choice.
+            # Struck through and dimmed, exactly as an Advanced row is when its
+            # target is not on this machine.
             $nm.TextDecorations = [Windows.TextDecorations]::Strikethrough
         }
         & $Ref $nm 'Foreground' $nmInk
         $null = $line.Children.Add($nm)
 
-        # ONLY WHAT HAS ALREADY BEEN PUT BACK WEARS A TAG. Still in place is
-        # what every row on this page is unless it says otherwise, so a "still
-        # in place" marker is the page's own premise printed once per row.
-        # "Cannot tell from here" stays, because that one is not the assumption:
-        # it is this page admitting it could not ask.
+        # Only what has already been put back wears a tag. Still in place is
+        # what every row is unless it says otherwise.
         $tagEl = $null
         if ($TagText.ContainsKey($O.State)) {
             $tagEl = New-Object Windows.Controls.TextBlock
@@ -12551,9 +9683,8 @@ function Show-WDWindow {
         & $Ref $cnt 'Foreground' 'Muted'
         $null = $line.Children.Add($cnt)
 
-        # The same chip as an Advanced row's, to the pixel - including the face
-        # and border that make it read as a button at rest rather than as a
-        # bordered label. See $makeDetailChip.
+        # The same chip as an Advanced row's, including the face and border that
+        # make it read as a button at rest.
         $chip = New-Object Windows.Controls.Border
         $chip.CornerRadius = 4; $chip.Padding = '9,2,9,3'; $chip.Margin = '8,2,0,0'
         $chip.BorderThickness = New-Object Windows.Thickness 1
@@ -12568,15 +9699,8 @@ function Show-WDWindow {
         $null = $line.Children.Add($chip)
         $null = $stack.Children.Add($line)
 
-        # The always-on description, exactly as an Advanced row carries one, and
-        # in the tense this page is written in - see Get-WDRevertDescription. The
-        # page used to name an option and count its changes without ever saying
-        # what the option was, so "Office telemetry - 4 changes" was the whole of
-        # what a row told somebody deciding whether to put it back.
-        #
-        # 13 at '0,2,0,0', which is an Advanced description exactly. No indent:
-        # the stack this sits in already begins at the name's left edge, because
-        # the tick box is docked outside it.
+        # The always-on description, in the tense this page is written in - see
+        # Get-WDRevertDescription.
         $dsc = [string]$O.Desc
         $dscEl = $null
         if ($dsc) {
@@ -12585,23 +9709,15 @@ function Show-WDWindow {
             $dt.Margin = '0,2,0,0'
             & $Ref $dt 'Foreground' 'Sub'
             # Built collapsed under Non-verbose rather than skipped, so turning
-            # the option back off does not need the page rebuilt.
+            # the option back off does not need a rebuild.
             if ($state.Terse) { $dt.Visibility = 'Collapsed' }
             $null = $stack.Children.Add($dt)
             $dscEl = $dt
         }
 
-        # WHAT AN UNTICKED ROW MEANS, SAID ON THE ROW. Every option here arrives
-        # ticked, so clearing one is an edit - marked like an edit on the Advanced
-        # page, name in Bad and bold. The words are the half a colour cannot carry:
-        # there a tick is what a run will DO, here it is what a run will UNDO, and
-        # red on a page about putting things back could read as either.
-        #
-        # Built empty and collapsed on EVERY row, like the Gate line: a notice that
-        # exists only where somebody remembered to build one does half its job.
-        #
-        # NEVER taken away by Non-verbose - that option drops what is the same on
-        # every visit, and this answers a question about THIS run.
+        # What an unticked row means, said on the row: every option arrives
+        # ticked, so clearing one is an edit. The words are the half a colour
+        # cannot carry, because here a tick is what will be undone.
         $skip = New-Object Windows.Controls.TextBlock
         $skip.Text = 'Option will not be reverted'
         $skip.FontSize = 12.5; $skip.TextWrapping = 'Wrap'; $skip.Margin = '0,4,0,0'
@@ -12612,20 +9728,13 @@ function Show-WDWindow {
         $null = $panel.Children.Add($stack)
         $card.Child = $panel
 
-        # Under the row rather than in a dialog. Everything about this page is
-        # "what exactly is about to happen to my machine", and an answer that
-        # covers the question while you read it is the wrong shape.
-        #
-        # THE ELEMENT IS BUILT ON FIRST OPEN. The text is not: the search box
-        # looks inside it, so a registry path finds the option that wrote it,
-        # and that has to be true of a row nobody has expanded.
+        # Under the row rather than in a dialog: an answer that covers the
+        # question while you read it is the wrong shape.
         $detText = [string]$O.DetailText
 
         $refL = $RefFn
-        # A local of this invocation, never $state: this block is invoked with &,
-        # so a closure built in it copies these locals and nothing of
-        # Show-WDWindow's. The hashtable itself, so Non-verbose toggled later
-        # reads live.
+        # A local of this invocation, never $state: this block is invoked with
+        # &, so a closure built in it copies these locals.
         $stateHere = $state
         $hold = @{ Det = $null }
         $chip.Add_MouseLeftButtonUp({
@@ -12635,7 +9744,7 @@ function Show-WDWindow {
             }
             if (-not $hold.Det) {
                 # 12 at LineHeight 18, as the Advanced panel is. No left indent
-                # any more - the stack starts at the name.
+                # - the stack starts at the name.
                 $d = New-Object Windows.Controls.TextBlock
                 $d.FontSize = 12; $d.Margin = '0,4,8,7'
                 $d.TextWrapping = 'Wrap'; $d.LineHeight = 18
@@ -12644,9 +9753,8 @@ function Show-WDWindow {
                 $null = $stack.Children.Add($d)
                 $hold.Det = $d
             }
-            # Set on every open, not once: under Non-verbose the row is no longer
-            # showing its description, so the panel carries it - and the option
-            # can be switched off between two presses of this chip.
+            # Set on every open, not once: under Non-verbose the row is not
+            # showing its description, so the panel carries it.
             $body = $detText
             if ($stateHere.Terse -and $dsc) { $body = $dsc + [Environment]::NewLine + [Environment]::NewLine + $detText }
             $hold.Det.Text = $body
@@ -12655,12 +9763,9 @@ function Show-WDWindow {
         $chip.Add_MouseEnter({ & $refL $ct 'Foreground' 'Accent' }.GetNewClosure())
         $chip.Add_MouseLeave({ & $refL $ct 'Foreground' 'Text' }.GetNewClosure())
 
-        # A ROW WITH NOTHING LEFT TO DECIDE IS INERT, exactly as an Advanced row
-        # is when its target is not on this machine: no hand cursor, and no hover
-        # tint. Both pages have that same kind of row - one that is there only to
-        # say there is nothing to do - and the tint is the page's own signal for
-        # "you can act on this", which makes it the loudest part of the lie. The
-        # row already refuses a click; this is what stops it inviting one.
+        # A row with nothing left to decide is inert: no hand cursor and no
+        # hover tint, because the tint is this application's signal for "you can
+        # act on this".
         if ($O.State -eq 'done') {
             $card.Cursor  = 'Arrow'
             $card.Opacity = 0.6
@@ -12670,19 +9775,9 @@ function Show-WDWindow {
             $card.Add_MouseLeave({ & $refL $card 'Background' 'Flat'     }.GetNewClosure())
         }
 
-        # CLICKING THE ROW TICKS IT, as the Advanced page has always done. The two
-        # are one interface used the same way, so a gesture that works on one and
-        # not the other is a gesture learnt twice - and a tick box is a 13px target
-        # on a row 40px tall and a column wide.
-        #
-        # Two things it must honour. A Button marks its click handled before it
-        # bubbles, so the Details chip does not also toggle the row it sits on -
-        # that is the Handled test. And IsEnabled does NOT block a programmatic
-        # set, so the row has to test it or an already-back option ticks from a
-        # click on its name.
-        #
-        # It also repaints the counts itself: the box is wired on Add_Click, which
-        # does not fire for a programmatic set.
+        # Clicking the row ticks it, as the Advanced page has always done.
+        # IsEnabled does not block a programmatic set, so the row has to test
+        # it.
         $card.Add_MouseLeftButtonUp({
             if (-not $args[1].Handled -and $this.Tag.Box.IsEnabled) {
                 $this.Tag.Box.IsChecked = -not [bool]$this.Tag.Box.IsChecked
@@ -12693,24 +9788,17 @@ function Show-WDWindow {
 
         [pscustomobject]@{
             Opt = $O; Card = $card; Check = $cb; Tag = $O.Op
-            # The name line, handed out rather than walked to. Both the self test
-            # and the headless harness used to reach it as
-            # Card.Child.Children[0], which is a description of the layout rather
-            # than of the row - so putting the tick box in a DockPanel outside
-            # the stack, to line the description up under the name, silently
-            # turned "the first child" into the check box and both reported that
-            # the row had lost its Details chip.
+            # The name line, handed out rather than walked to: reaching it as
+            # Card.Child.Children[0] describes the layout rather than the row.
             Line = $line
-            # The name's own element, and the notice under it. Name is the
-            # string - $revSortMembers sorts on it - so the element needs a name
-            # of its own rather than the two fighting over one.
+            # Name is the string $revSortMembers sorts on, so the element needs
+            # a name of its own.
             NameEl = $nm; Skip = $skip
             Detail = $hold; DetailText = $detText; Desc = $dsc; DescEl = $dscEl
             Cat = [string]$O.Cat; Name = [string]$O.Name
             Kinds = @($O.Kinds); Count = [int]$O.Count
-            # Stamped by $revApplyOrder with the group this row is in under the
-            # grouping now on screen. Declared here rather than added later: a
-            # pscustomobject takes a new property only through Add-Member.
+            # Declared here rather than added later: a pscustomobject takes a
+            # new property only through Add-Member.
             GKey = ''
         }
     }
@@ -12747,8 +9835,7 @@ function Show-WDWindow {
                 'status' { & $add $r.Opt.State $REV_STATE_LABEL[$r.Opt.State] $REV_STATE_RANK[$r.Opt.State] $r }
                 'kind'   {
                     # An option can touch more than one kind, so it is filed
-                    # under its first. Filing it under all of them would list
-                    # the same tick twice and let somebody clear one copy.
+                    # under its first.
                     $k = [string]@($r.Kinds)[0]
                     & $add $k $k ([int]$REV_KIND_RANK[$k]) $r
                 }
@@ -12769,9 +9856,8 @@ function Show-WDWindow {
         }
     }
 
-    # ONE PASS OVER THE ROWS. This asked each rail card for its own members and
-    # each block again - the same rows walked twice per group - which is what
-    # made a tick take a second to appear on the standalone page.
+    # One pass over the rows. This asked each rail card for its members and each
+    # block again, which is why a tick took a second to appear.
     $revPaintCounts = {
         $on = @{}; $can = @{}; $free = @{}; $all = @{}
         $pickedCount = 0
@@ -12781,14 +9867,8 @@ function Show-WDWindow {
             $ticked = [bool]$r.Check.IsChecked
             if ($ticked) { $pickedCount++; $chg += [int]$r.Opt.Pending }
 
-            # MARK WHAT WAS UNTICKED, in the pass that is already walking every
-            # row. Two property sets, and only on the rows whose answer moved.
-            #
-            # The enabled test is what separates the two ways a box can be clear.
-            # An already-back row is unticked and always was; it is not an edit,
-            # and its name is Muted and struck through - which the reset branch
-            # must not undo, so that branch is gated on the notice being up
-            # rather than on the tick, exactly as $updateTally gates on DiffTag.
+            # Marked in the pass already walking every row - two property sets,
+            # and only where the answer moved.
             if (-not $ticked -and $r.Check.IsEnabled) {
                 & $Ref $r.NameEl 'Foreground' 'Bad'; $r.NameEl.FontWeight = 'Bold'
                 $r.Skip.Visibility = 'Visible'
@@ -12803,9 +9883,8 @@ function Show-WDWindow {
             $k = [string]$r.GKey
             if (-not $k) { continue }
             if (-not $on.ContainsKey($k)) { $on[$k] = 0; $can[$k] = 0; $free[$k] = 0; $all[$k] = 0 }
-            # Counted before the enabled test, because a group can be entirely
-            # made of rows that refuse a tick and it still has that many rows in
-            # it - see the rail loop below.
+            # Counted before the enabled test, because a group can be made
+            # entirely of rows that refuse a tick.
             $all[$k]++
             if (-not $r.Check.IsEnabled) { continue }
             $can[$k]++
@@ -12817,16 +9896,8 @@ function Show-WDWindow {
             $rcOn  = 0; if ($on.ContainsKey($k))  { $rcOn  = $on[$k] }
             $rcCan = 0; if ($can.ContainsKey($k)) { $rcCan = $can[$k] }
             $rcAll = 0; if ($all.ContainsKey($k)) { $rcAll = $all[$k] }
-            # A FRACTION IS ABOUT WHAT IS LEFT TO DECIDE, and grouped by "What is
-            # left" there is a group with nothing left to decide and plenty in it:
-            # "Already back" takes no ticks, so the denominator was zero and the
-            # card read 0/0 - which is what a group emptied by the search box reads.
-            #
-            # THREE STATES, NOT TWO: a bare count in Ok for a settled group, the
-            # fraction for one with decisions in it, and 0/0 only when there is
-            # genuinely nothing there. Ok rather than Accent, because Accent is what
-            # this application paints things you can ACT on, and a blue number on
-            # an inert card reads as "click me".
+            # A fraction is about what is left to decide, and grouped by "What
+            # is left" there is a group with nothing left and plenty in it.
             if ($rcAll -gt 0 -and $rcCan -eq 0) {
                 $rc.Num.Text = "$rcAll"
                 & $Ref $rc.Num 'Foreground' 'Ok'
@@ -12852,15 +9923,8 @@ function Show-WDWindow {
         $ui.BtnRevertRun.IsEnabled = [bool]$pickedCount
     }.GetNewClosure()
 
-    # The rail's highlight follows the scroll. Offsets are measured once into a
-    # table and thrown away by anything that moves a heading - a filter pass, a
-    # re-order, a fold, a resize - because transforming every heading on every
-    # scroll tick is how this ships janky.
-    #
-    # Never measured against a page that is not on screen, and never against one
-    # that has just been rebuilt and not yet arranged: both give every heading
-    # Y=0, and a table of zeros is still a table. UpdateLayout goes inside the
-    # invalidation branch, so it is paid once per re-order rather than per tick.
+    # Offsets measured once into a table and thrown away by anything that moves
+    # a heading.
     $revSpyRun = {
         if (-not $revBlocks.Count) { return }
         if ($ui.PageRevert.Visibility -ne 'Visible') { return }
@@ -12895,10 +9959,8 @@ function Show-WDWindow {
         }
     }.GetNewClosure()
 
-    # What is actually narrowing the list, and the one thing the button could
-    # never say: "Filter (3)" tells you how many, never which. Everything the
-    # handler needs travels on the Tag, because a closure built inside another
-    # closure captures that closure's LOCALS and nothing it was handed.
+    # What is actually narrowing the list, which the button could never say:
+    # "Filter (3)" tells you how many, never which.
     $revChipFor = {
         param([string]$Group, [string]$Value, [string]$Text, $Ctx)
         $b = New-Object Windows.Controls.Border
@@ -12929,14 +9991,8 @@ function Show-WDWindow {
 
     $revChipCtx = @{ Boxes = $revFilterBoxes; Sel = $revFilterSel; Snap = $revViewSnap; Fx = $revFx }
 
-    # Two columns inside a full-width block, exactly as the Advanced page lays a
-    # category out, and re-filled with what is VISIBLE rather than everything.
-    # Filling with everything and hiding half of it is how a search ends up with
-    # six rows down the left and an empty column beside them.
-    #
-    # Below four rows it stays one column and the right half gives its width
-    # back, gutter included: two columns of one row apiece is not a layout, and
-    # a lot of these groups are that size.
+    # Two columns inside a full-width block, re-filled with what is visible
+    # rather than everything.
     $revFillBlock = {
         param($B, $Members)
         $B.ColL.Children.Clear()
@@ -12958,9 +10014,7 @@ function Show-WDWindow {
         $B.VisEnabled = @($list | Where-Object { $_.Check.IsEnabled }).Count
     }
 
-    # OR within a group and AND across groups, which is what makes "still in
-    # place, registry or services" read the way people say it. An empty set
-    # means that group imposes no constraint.
+    # OR within a group and AND across groups.
     $revApplyFilter = {
         $needle = ([string]$ui.RevFind.Text).Trim()
         foreach ($r in $revertRows) {
@@ -13001,10 +10055,7 @@ function Show-WDWindow {
             $b.Block.Visibility = $(if ($n) { 'Visible' } else { 'Collapsed' })
             & $revFillBlock $b @($b.Ordered | Where-Object { $_.Card.Visibility -eq 'Visible' })
         }
-        # A rail entry the filter has emptied is dimmed, never removed: a rail
-        # whose entries come and go as you type reads as broken, and the thing
-        # you were about to click moving out from under the pointer is worse
-        # than a dim label.
+        # A rail entry the filter has emptied is dimmed, never removed.
         foreach ($rc in $revRailCards) {
             $rc.Live = [bool]($visBy.ContainsKey([string]$rc.Key) -and $visBy[[string]$rc.Key])
         }
@@ -13031,12 +10082,9 @@ function Show-WDWindow {
     }.GetNewClosure()
     $revFx.Filter = $revApplyFilter
 
-    # Folding one group open or shut. Shared, because Collapse all has to do
-    # exactly the same thing to every one of them and a second copy of "what
-    # collapsed looks like" is how the sign and the visibility come to disagree.
-    # Folding shuts the Details panels underneath it, and unfolding deliberately
-    # does not open them - see $setGroupOpen on the Advanced page for why the two
-    # directions are not symmetric.
+    # Shared, because Collapse all does exactly this to every group and a second
+    # copy of "what collapsed looks like" is how the sign and the visibility
+    # disagree.
     $revSetGroupOpen = {
         param($Body, $Btn, [bool]$Open, $GroupRows)
         $Body.Visibility = $(if ($Open) { 'Visible' } else { 'Collapsed' })
@@ -13050,10 +10098,8 @@ function Show-WDWindow {
     }
 
     $revApplyOrder = {
-        # A child of a panel cannot be added to another one - WPF refuses the
-        # reparent with "already the logical child of another element" - and
-        # Children.Clear() on the list does not touch what its blocks are
-        # holding, so every card is detached explicitly first.
+        # A child of a panel cannot be added to another - WPF refuses with
+        # "already the logical child of another element".
         foreach ($r in $revertRows) {
             if ($r.Card.Parent -is [Windows.Controls.Panel]) { $r.Card.Parent.Children.Remove($r.Card) }
         }
@@ -13067,10 +10113,7 @@ function Show-WDWindow {
             $block.Margin = '0,0,0,10'
 
             # 16 SemiBold over '0,18,0,6', which is what a category heading on
-            # the Advanced page is. This was 15 over '0,12,0,6' - a smaller
-            # heading, closer to the block above it, so the two pages divided
-            # their lists into groups that did not look like the same kind of
-            # division.
+            # the Advanced page is.
             $hp = New-Object Windows.Controls.WrapPanel
             $hp.Margin = '0,18,0,6'
             $ht = New-Object Windows.Controls.TextBlock
@@ -13094,10 +10137,8 @@ function Show-WDWindow {
             $null = $body.Children.Add($colL)
             $null = $body.Children.Add($colR)
 
-            # The heading itself is inert. With a collapse control on the same
-            # line, clicking the name of a group is as likely to mean "fold this
-            # away" as "take all of it", and a target whose meaning has to be
-            # guessed is worse than two controls that each say what they do.
+            # The heading itself is inert: with a collapse control on the same
+            # line, clicking the name is as likely to mean "fold this away".
             $tg = New-Object Windows.Controls.Button
             $tg.Content = '-'; $tg.Width = 24; $tg.Padding = '0,1'; $tg.FontSize = 13
             $tg.FontWeight = 'Bold'; $tg.Margin = '10,0,0,0'; $tg.VerticalAlignment = 'Center'
@@ -13107,7 +10148,7 @@ function Show-WDWindow {
                 $t = $this.Tag
                 & $t.Set $t.Body $this (-not ($t.Body.Visibility -eq 'Visible')) $t.Rows
                 # Folding moves every heading below it, so the measured offsets
-                # are stale for the reason a filter pass makes them stale.
+                # are stale.
                 $t.Spy.Offsets = $null
                 $t.Spy.On = ''
                 & $t.Run
@@ -13138,10 +10179,8 @@ function Show-WDWindow {
 
             $null = $block.Children.Add($body)
             $null = $ui.RevList.Children.Add($block)
-            # Plain assignment, never @(...). $revSortMembers ends in ,@(...) so
-            # a caller who assigns gets the array; wrapping that in @() gives a
-            # one-element array holding the whole list, which then reads as a
-            # single row with no properties on it.
+            # Plain assignment, never @(). $revSortMembers ends in ,@(...), and
+            # wrapping gives one element holding the whole list.
             $sorted = & $revSortMembers $g.Members $revState.Sort
             $rec = [pscustomobject]@{
                 Key = $g.Key; Group = $g; Block = $block; Body = $body
@@ -13150,15 +10189,12 @@ function Show-WDWindow {
                 VisEnabled = 0; Toggle = $tg; SelAll = $sa
             }
             foreach ($m in $rec.Ordered) { $m.GKey = [string]$g.Key }
-            # After $sorted exists, not where the button was built - folding has
-            # to reach this group's rows to shut their Details panels, and the
-            # toggle is made a hundred lines before the member list is sorted.
+            # After $sorted exists: folding has to reach this group's rows to
+            # shut their Details panels.
             $tg.Tag.Rows = $sorted
             $revBlocks.Add($rec)
 
-            # ---- the rail ---------------------------------------------------
-            # An index INTO the list, never a router. Clicking scrolls; the
-            # highlight follows the scroll.
+            # An index into the list, never a router. Clicking scrolls.
             $c = New-Object Windows.Controls.Border
             $c.CornerRadius = 3; $c.Padding = '8,4,8,5'; $c.Margin = '0,0,0,2'; $c.Cursor = 'Hand'
             & $Ref $c 'Background' 'Flat'
@@ -13194,7 +10230,7 @@ function Show-WDWindow {
             $c.Add_MouseLeave({ if (-not $ent.Lit) { & $refL $ent.Card 'Background' 'Flat' } }.GetNewClosure())
         }
 
-        # Back to the top. The old offset was a position in an arrangement that
+        # Back to the top: the old offset is a position in an arrangement that
         # no longer exists.
         $ui.RevScroll.ScrollToVerticalOffset(0)
         $revSpy.Offsets = $null
@@ -13213,13 +10249,8 @@ function Show-WDWindow {
         foreach ($e in @($Entries)) {
             $box = New-Object Windows.Controls.CheckBox
             $box.Content = $e.Label; $box.FontSize = 12.5; $box.Margin = '0,2,0,2'
-            # WPF's default CheckBox foreground is the system control text
-            # brush, which is BLACK whatever the Windows theme says - so a box
-            # with no Foreground of its own is an invisible label on the dark
-            # palette and a mismatched one on the light. There is no implicit
-            # CheckBox style in this window; every box paints itself, which is
-            # what Advanced's filter does one page over. This is the exact
-            # defect that shipped "Selected first" unreadable.
+            # WPF's default CheckBox foreground is the system control-text
+            # brush, which is black whatever the Windows theme says.
             & $Ref $box 'Foreground' 'Text'
             $box.Tag = @{ G = $Group; V = [string]$e.Key; Sel = $revFilterSel; Fx = $revFx
                           Snap = $revViewSnap; Rows = $revertRows }
@@ -13245,8 +10276,7 @@ function Show-WDWindow {
     }.GetNewClosure()
 
     # Selected only and Unselected only together are every row, which is what no
-    # filter already says; whichever is ticked disables the other rather than
-    # being quietly ignored.
+    # filter already says.
     $revSyncPairs = {
         $a = $null; $b = $null
         foreach ($fb in $revFilterBoxes) {
@@ -13268,50 +10298,40 @@ function Show-WDWindow {
         $ui.RevIndexPanel.Children.Clear()
         $ui.RevFilterPanel.Children.Clear()
         $revFilterBoxes.Clear()
-        # A facet naming a category that this scope does not have would hide
-        # every row on the page with nothing on screen saying why, so switching
-        # scope starts from no filter rather than from the last one.
+        # A facet naming a category this scope does not have would hide every
+        # row with nothing on screen saying why.
         foreach ($fg in $REV_FILTER_GROUPS) { $revFilterSel[$fg].Clear() }
         $revViewSnap.Ids = $null
         $ui.RevertRunRow.Children.Clear()
 
-        # Read fresh. The "already set" probe caches every key it touches for
-        # the life of the process, which is right for a window build over a
-        # machine nobody is changing and wrong here: after an apply the cache
-        # holds those values as they were BEFORE the run, and every change would
-        # be reported as already undone.
+        # Read fresh: the "already set" probe caches every key it touches for
+        # the life of the process, which is right for a window build and wrong
+        # here.
         $revClock = [Diagnostics.Stopwatch]::StartNew()
         $revWhole = [Diagnostics.Stopwatch]::StartNew()
         & $revSay 'Looking for past runs on this machine...' 0.04
         Clear-WDRegistryProbeCache
         $runs = @(Get-WDPastRuns -Root (Get-WDSession).Root)
-        # Kept for $startRevert, which has to turn the ticked options back into
-        # one rollback invocation per run and needs each run's script path.
+        # Kept for $startRevert, which turns the ticked options into one
+        # rollback invocation per run and needs each run's script path.
         $revertPick.Runs = $runs
-        # Started the moment the run list exists, collected about a second and a
-        # half later, at the point the page actually wants it. It is one DISM
-        # call and it is half the wait on this page; everything between here and
-        # there is reading this thread has to do anyway. See Start-WDRemovedScan.
+        # Started the moment the run list exists and collected about a second
+        # and a half later, at the point the page wants it.
         $removedJob = Start-WDRemovedScan -ModulePath $ModulePath -Runs $runs
         $revBuilt.Read = [int]$revClock.ElapsedMilliseconds; $revClock.Restart()
 
         if (-not @($runs | Where-Object { $_.Id -eq [string]$revertPick.Sel }).Count) { $revertPick.Sel = 'all' }
         $sel = [string]$revertPick.Sel
 
-        # The picker, and it reads like the preset row on Advanced because it is
-        # the same gesture: one standing choice above a list the choice governs.
-        # "All runs" is first and is the default, because the question somebody
-        # arrives with is "what has this machine had done to it", not "what did
-        # one particular run do".
+        # The picker reads like the preset row on Advanced because it is the
+        # same gesture: one standing choice above a list it governs.
         $pickRef = $revertPick
         $rowRef  = $ui.RevertRunRow
         $refRef  = $Ref
         $mkPick = {
             param([string]$Key, [string]$Label, [string]$Tip, [bool]$On)
-            # A local of THIS invocation. $pickRef is captured by this block's
-            # own closure, which puts it at that closure's module scope, and
-            # GetNewClosure() below copies the local scope only - so a handler
-            # reading $pickRef directly would capture nothing.
+            # A local of this invocation: $pickRef is captured by this block's
+            # own closure, which puts it at that closure's module scope.
             $pick = $pickRef
             $b = New-Object Windows.Controls.Button
             $b.Content = $Label; $b.Padding = '10,3'; $b.FontSize = 12.5
@@ -13334,21 +10354,15 @@ function Show-WDWindow {
         }
         $ui.RevertRunScroll.Visibility = $(if ($runs.Count) { 'Visible' } else { 'Collapsed' })
 
-        # The scope's plan. One run selected is that run's own plan with its own
-        # previous values; All is the combined one, which walks the runs oldest
-        # first so a value several runs wrote goes back to what it was before the
-        # earliest of them. Both come through Get-WDCombinedUndoPlan so every
-        # step carries the run that contributed it either way.
+        # One run selected is that run's own plan with its own previous values;
+        # All is the combined one, walked oldest first.
         $scope = @($runs)
         if ($sel -ne 'all') { $scope = @($runs | Where-Object { $_.Id -eq $sel }) }
         # The manifest, so a step reads "Office telemetry" under "Privacy"
-        # rather than "office-telemetry" under "Other". The journal records an
-        # option's id and nothing else, and an id is not something to make a
-        # decision about.
+        # rather than "office-telemetry" under "Other".
         $planNames = New-Object System.Collections.Generic.List[psobject]
         # And the one-line description each row carries, in the tense this page
-        # is written in - see Get-WDRevertDescription. Built here, beside the
-        # names, because it comes from the same walk of the same manifest.
+        # is written in.
         $revDesc = @{}
         foreach ($cat in $Categories) {
             $cn = [string](Get-Prop $cat 'name' 'Other')
@@ -13366,13 +10380,8 @@ function Show-WDWindow {
         }
         $revBuilt.Plan = [int]$revClock.ElapsedMilliseconds; $revClock.Restart()
 
-        # ---- the options, from three sources into one list -------------------
-        #
-        # One row per OPTION rather than per run or per change: an option is the
-        # unit somebody chose, and four hundred changes is not a list anybody
-        # can approve. Recurring effects and reinstallable software are rows of
-        # the same list rather than sections of their own, so the filter, the
-        # grouping, the sort and both Select alls speak for them too.
+        # The options, from three sources into one list - so the filter, the
+        # grouping, the sort, and both Select alls speak for them all.
         $opts = New-Object System.Collections.Generic.List[psobject]
 
         $byOpt = [ordered]@{}
@@ -13397,11 +10406,7 @@ function Show-WDWindow {
         foreach ($o in @($byOpt.Values)) {
             $seenOpt++
             # Named as it goes, like the rollback window's splash: this is the
-            # part that reads the machine once per change, and a count that
-            # moves is the difference between "working" and "hung".
-            # ${totOpt} braced: a colon straight after a variable name is parsed
-            # as a scope qualifier, so "$totOpt:" is a reference to a variable
-            # called nothing in a scope called totOpt.
+            # part that reads the machine once per change.
             & $revSay "Checking what is still in place - $seenOpt of ${totOpt}: $($o.Name)" `
                       (0.20 + 0.38 * ($seenOpt / [Math]::Max(1, $totOpt)))
             $lines = New-Object System.Collections.Generic.List[string]
@@ -13427,7 +10432,7 @@ function Show-WDWindow {
                 Kinds = @($o.Kinds); Count = $n; CountText = $ct
                 # What pressing the button would do for this option, counted
                 # once here rather than by asking the machine again inside the
-                # click handler for every change of every ticked option.
+                # click handler.
                 Pending = ($o.Todo + $o.Unknown)
                 DetailText = ($lines -join [Environment]::NewLine)
                 Op = @{ Kind = 'option'; Id = $o.Id; Runs = @($o.Runs.Keys); Name = $o.Name }
@@ -13436,19 +10441,16 @@ function Show-WDWindow {
 
         $revBuilt.States = [int]$revClock.ElapsedMilliseconds; $revClock.Restart()
 
-        # Recurring effects: things this toolkit installed that keep running or
-        # keep firing. Only what is actually present - listing inactive ones
-        # grayed out was noise.
+        # Only what is actually present - listing inactive ones would be a page
+        # of things that are not happening.
         & $revSay 'Checking what this toolkit left running...' 0.62
         foreach ($e in @(Get-WDRecurringEffects | Where-Object { $_.Present })) {
             $det = [string]$e.Detail
             if ([string]$e.Overhead) { $det += [Environment]::NewLine + 'Cost: ' + [string]$e.Overhead }
             $opts.Add([pscustomobject]@{
                 Id = "effect:$($e.Id)"; Name = [string]$e.Name; Cat = 'Recurring effects'
-                # Its own words, untouched and in the present. A recurring effect
-                # is described by what it is STILL doing, which is already the
-                # right tense - the rest of this page is past because those
-                # changes have happened and these have not stopped.
+                # Its own words, untouched and in the present: a recurring
+                # effect is described by what it is still doing.
                 Desc = [string]$e.Detail
                 State = 'todo'; Kinds = @('Recurring effects'); Count = 1
                 CountText = 'still running'; Pending = 1
@@ -13457,13 +10459,8 @@ function Show-WDWindow {
             })
         }
 
-        # Uninstalled by a past run. Nothing puts a program back from a journal,
-        # so these are their own kind of row and say what they can and cannot do
-        # rather than offering a tick that would fail.
-        # The slowest single thing on this page: it asks the deployment stack
-        # what was provisioned, which is a DISM call, and only when a past run
-        # actually uninstalled a Store package - which on a machine with real
-        # runs behind it is most of them.
+        # Nothing puts a program back from a journal, so these are their own
+        # kind of row.
         & $revSay 'Checking what was uninstalled, and what could be put back...' 0.68
         foreach ($item in @(Receive-WDRemovedScan -Job $removedJob -Runs $runs)) {
             $can = ($item.Feasibility -ne 'store' -and $item.Feasibility -ne 'done')
@@ -13472,10 +10469,7 @@ function Show-WDWindow {
             $opts.Add([pscustomobject]@{
                 Id = "reinstall:$($item.Name)"; Name = [string]$item.Name; Cat = 'Reinstall removed software'
                 # Past tense already, and authored rather than derived: this row
-                # is not a manifest item, so there is no description to carry
-                # over. What it needs to say is when it went and whether this
-                # page can bring it back, which is the one thing that separates
-                # these rows from every other row here.
+                # is not a manifest item.
                 Desc = "Uninstalled on $($item.When.ToString('d MMM yyyy'))." +
                        $(if ($can) { ' This can put it back.' }
                          else { ' Nothing here can put it back - see Details.' })
@@ -13490,7 +10484,7 @@ function Show-WDWindow {
         $revBuilt.Extra = [int]$revClock.ElapsedMilliseconds; $revClock.Restart()
 
         # Category order is first-seen, which puts the plan's own categories in
-        # manifest order and the two synthetic ones at the end where they belong.
+        # manifest order and the two synthetic ones at the end.
         $revCatOrder.Clear()
         $seenCat = 0
         foreach ($o in $opts) {
@@ -13504,24 +10498,19 @@ function Show-WDWindow {
 
         # The tick is what the person asked for and the counts are the
         # consequence, so the tick is drawn first.
-        #
-        # Copied into locals: this block is invoked with & from a handler, so it
-        # runs in a child scope, and GetNewClosure() copies THAT scope's locals -
-        # not Show-WDWindow's. A bare $revPaintCounts inside the handler would be
-        # captured as null and every tick would throw.
         $showRef  = $revShowNow
         $paintRef = $revPaintCounts
         $afterTick = { & $showRef; & $paintRef }.GetNewClosure()
         foreach ($r in $revertRows) {
             $r.Check.Add_Click($afterTick)
             # The same block the box runs, handed to the row so a click anywhere
-            # on it does the whole gesture rather than half of it.
+            # does the whole gesture rather than half of it.
             if ($r.Card.Tag) { $r.Card.Tag.After = $afterTick }
         }
         $revState.Tickable = @($revertRows | Where-Object { $_.Check.IsEnabled }).Count
         $revBuilt.Rows = [int]$revClock.ElapsedMilliseconds; $revClock.Restart()
 
-        # ---- the heading, which says what the scope adds up to ---------------
+        # The heading, which says what the scope adds up to.
         $tSteps = 0; $tTodo = 0; $tDone = 0; $tHuh = 0
         foreach ($o in $opts) {
             $tSteps += [int]$o.Count
@@ -13559,7 +10548,7 @@ function Show-WDWindow {
         $ui.TxtRevertSub.Text = $head
         & $Ref $ui.TxtRevertSub 'Foreground' $(if ($noLog.Count) { 'Warn' } else { 'Sub' })
 
-        # ---- the filter panel, rebuilt because its entries are this scope's --
+        # The filter panel, rebuilt because its entries are this scope's.
         $stateEntries = New-Object System.Collections.Generic.List[psobject]
         foreach ($k in @('todo', 'unknown', 'done')) {
             if (@($revertRows | Where-Object { $_.Opt.State -eq $k }).Count) {
@@ -13586,8 +10575,7 @@ function Show-WDWindow {
         $ui.RevFind.Text = ''
         $ui.BtnRevFilter.Content = 'Filter'
         # Last, so the bar reaches the end rather than stopping at the step
-        # before it and vanishing - a bar that never fills is one somebody
-        # remembers as having got stuck.
+        # before it and vanishing.
         & $revSay "Arranging the page - $($revertRows.Count) option(s)..." 1.0
         & $revApplyOrder
         $revBuilt.Layout = [int]$revClock.ElapsedMilliseconds
@@ -13596,26 +10584,8 @@ function Show-WDWindow {
                      $revBuilt.Ms, $revBuilt.Read, $revBuilt.Plan, $revBuilt.States,
                      $revBuilt.Extra, $revBuilt.Rows, $revBuilt.Layout) -Level Debug
     }
-    # Behind the same overlay the Advanced build and the theme switch use: ten
-    # seconds of reading the machine with the old page still up reads as a click
-    # that did nothing.
-    #
-    # SWITCHING RUNS GOES THROUGH THIS TOO, which is why Show/Hide is here rather
-    # than in the click handler - the picker rebuilds the whole page and costs
-    # exactly what opening it does. try/finally, because the window survives a
-    # handler that throws and an overlay left up over an unreachable page is worse
-    # than the wait it covered.
-    #
-    # BUILT ONCE PER SESSION, and THE INTERLOCK IS WHAT MAKES THAT SOUND. This
-    # page is a reading of the machine, and a cached reading is only true while
-    # nothing else can change the machine underneath it - which
-    # Enter-WDSingleInstance guarantees, since it refuses a second toolkit AND any
-    # rollback script while this window is open. So the only thing that can move
-    # these values is this window, and $revCache.Built is dropped by $startRevert
-    # when a revert finishes.
-    #
-    # The picker is part of the KEY rather than a staleness problem: "all runs" and
-    # one run are different questions, not the same answer going off.
+    # Behind the same overlay the Advanced build uses: ten seconds of reading
+    # the machine with the old page still up reads as a click that missed.
     $revCache = @{ Built = $false; Sel = '' }
     $revertBuildBusy = {
         if ($revCache.Built -and $revCache.Sel -eq [string]$revertPick.Sel) { return }
@@ -13627,14 +10597,12 @@ function Show-WDWindow {
             $revCache.Sel   = [string]$revertPick.Sel
         } finally { if ($veil) { & $veil.Hide } }
     }
-    # Closed after the fact, because the picker's buttons are built inside the
-    # block they call back into - and pointed at the wrapper, not the builder,
-    # so a run switch is covered like a first open.
+    # Closed after the fact, and pointed at the wrapper rather than the builder,
+    # so the picker goes behind the overlay too.
     $revertPick.Build = $revertBuildBusy
 
-    # Pumps one batch of pending dispatcher work and returns, so a frame that
-    # has been laid out actually reaches the screen before the thread goes
-    # back to blocking. Same device as the splash uses.
+    # Pumps one batch of pending dispatcher work and returns, so a laid-out
+    # frame reaches the screen before the thread goes back to work.
     $pumpFrame = {
         $frame = New-Object Windows.Threading.DispatcherFrame
         $null = $win.Dispatcher.BeginInvoke(
@@ -13657,11 +10625,7 @@ function Show-WDWindow {
         $ui.BtnRevertRun.IsEnabled = $false
     }
 
-    # ---- the page's own controls, wired once ------------------------------
-    #
-    # Once, not per build: these are page-level elements, and a second handler
-    # on the same button is a second rebuild per click. Only the rows and the
-    # filter panel are rebuilt, because only those are the scope's.
+    # The page's own controls, wired once.
     foreach ($g in $REV_GROUPS) {
         $it = New-Object Windows.Controls.ComboBoxItem
         $it.Content = $g.Label; $it.Tag = $g.Key
@@ -13688,9 +10652,7 @@ function Show-WDWindow {
     }.GetNewClosure())
 
     # The whole page at once, on the same rule the per-group button follows:
-    # visible rows only, so a search narrowing the page narrows what this takes,
-    # and one press either way rather than a pair of buttons of which exactly
-    # one is ever the useful one.
+    # visible rows only.
     $ui.BtnRevSelectAll.Add_Click({
         $vis = @($revertRows | Where-Object { $_.Card.Visibility -eq 'Visible' -and $_.Check.IsEnabled })
         if (-not $vis.Count) { return }
@@ -13721,11 +10683,7 @@ function Show-WDWindow {
     $ui.BtnRevFilterDone.Add_Click({ $ui.BtnRevFilter.IsChecked = $false }.GetNewClosure())
 
     # A TextChanged handler runs synchronously inside the input event, so a pass
-    # over every row is time during which the character just typed is not on
-    # screen and the next keystroke is queued behind it. Restart, not start, so
-    # the pass runs once at the end rather than once per letter. Handed straight
-    # back under NoPrompts, because the harness sets .Text and asserts on the
-    # result in the next statement.
+    # over every row is time the character just typed is not on screen.
     $revFindTimer = New-Object Windows.Threading.DispatcherTimer
     $revFindTimer.Interval = [TimeSpan]::FromMilliseconds(180)
     $revFindTimer.Add_Tick({ $revFindTimer.Stop(); & $revApplyFilter }.GetNewClosure())
@@ -13736,20 +10694,15 @@ function Show-WDWindow {
 
     $ui.RevScroll.Add_ScrollChanged({ & $revSpyRun }.GetNewClosure())
     # A narrower list re-wraps every card, so the measured offsets go with it.
-    # This handler changes no layout of its own, which is what keeps it from
-    # feeding itself.
+    # This handler changes no layout of its own.
     $ui.PageRevert.Add_SizeChanged({ $revSpy.Offsets = $null; & $revSpyRun }.GetNewClosure())
 
-    # The four surfaces on this page that carry a colour of their own. Resource
-    # references, like everything else, or the theme button would leave them
-    # wearing the previous palette.
+    # The four surfaces on this page that carry a colour of their own.
     & $Ref $ui.TxtRevertHead 'Foreground' 'Text'
     & $Ref $ui.TxtRevertSub  'Foreground' 'Sub'
     & $Ref $ui.TxtRevCount   'Foreground' 'Sub'
-    # The footer tally, which never had one. It predates this page's rework and
-    # was WPF's default black on the dark palette the whole time - found by
-    # walking the built page and asking every element that carries text whether
-    # a theme reference was ever set on it, rather than by looking at it.
+    # The footer tally never had one: it predates this page's rework and was
+    # WPF's default black on the dark palette the whole time.
     & $Ref $ui.TxtRevertTally 'Foreground' 'Sub'
     foreach ($lb in @($ui.LblRevOrder, $ui.LblRevSort, $ui.LblRevGroups, $ui.LblRevFind)) {
         & $Ref $lb 'Foreground' 'Text'
@@ -13761,46 +10714,19 @@ function Show-WDWindow {
     & $Ref $ui.RevIndexRule  'Background'  'Line'
     $revState.Booting = $false
 
-    # ---- the past runs, one card each ---------------------------------------
-    #
-    # The page reverting opens on, shaped like the mode screen because it is the
-    # same shape of question: here are the things you could act on, each saying
-    # what it is, with what you can do with it standing on it.
-    #
-    # CHEAP, WHICH IS WHAT MAKES IT THE LANDING PAGE. Get-WDPastRuns is a read of
-    # runs.jsonl and a look at the folders; the page below takes five to eleven
-    # seconds because it asks the machine about every change of every option, and
-    # somebody arriving to undo one thing used to pay that before seeing anything.
-    #
-    # The one figure a card cannot have cheaply is how much of the run is still in
-    # place - Get-WDUndoStatus, ~1.8s a run. That is already cached per run id in
-    # $appliedState and warmed one run per idle tick for the mode cards, so this
-    # reads the same cache and queues the same want list. A card is never wrong,
-    # only briefly less specific.
+    # The past runs, one card each.
     $openRevertRun = {
         param([string]$Sel, [bool]$RunItNow)
         $revertPick.Sel = [string]$Sel
-        # SHOWN ONLY WHEN THE LIST IS WHAT WAS ASKED FOR. Revert everything used
-        # to switch to it as well, so pressing that button dropped somebody into
-        # a page of two hundred rows - which is deliberately built to look like
-        # the item list, so it reads as having been sent somewhere else entirely
-        # - and only then put the confirmation up over it. The list is not the
-        # answer to "put it all back"; it is what you open when you do not want
-        # to.
-        #
-        # The build still has to happen, because knowing what to revert means
-        # reading the machine, but it happens behind the overlay on the page the
-        # button was pressed on. Cancel therefore lands back on the cards rather
-        # than on a page nobody asked to see.
+        # Shown only when the list is what was asked for: "Revert everything"
+        # used to switch to it as well, which dropped somebody into two hundred
+        # rows before the confirmation.
         if (-not $RunItNow) { & $showPage 'PageRevert' }
         & $revertBusy
         & $pumpFrame
         & $revertBuildBusy
         # Rows arrive ticked, so "revert everything" is the page as it stands.
-        # $startRevert asks for confirmation itself, and this deliberately does
-        # NOT ask first: that one has the real numbers - how many options, how
-        # many steps, and which runs have lost their rollback script - where a
-        # question asked before the build could only guess at all three.
+        # $startRevert asks for confirmation itself.
         if ($RunItNow) { & $startRevert }
     }
     $revHomeRef = @{ Paint = $null }
@@ -13823,9 +10749,7 @@ function Show-WDWindow {
             'back at once. Nothing is changed until you confirm.'
 
         # "All runs" first, and only when there is more than one - with a single
-        # run it would be the same card twice. It walks the runs oldest first so
-        # a value several runs wrote goes back to what it was before the
-        # earliest of them; see Get-WDCombinedUndoPlan.
+        # run it would be the same card twice.
         $spec = New-Object System.Collections.Generic.List[psobject]
         if ($runs.Count -gt 1) {
             $spec.Add([pscustomobject]@{
@@ -13833,11 +10757,8 @@ function Show-WDWindow {
                 Sub  = "All $($runs.Count) runs, oldest change first, so every value goes back to what it was before any of them."
                 Runs = $runs; Can = [bool]@($runs | Where-Object { $_.UndoFile }).Count })
         }
-        # Which mode a run was started from, if it was one. Get-WDPastRuns does
-        # not carry it - a run record is about what changed, not about what was
-        # ticked - but $appliedRuns does, keyed by preset name and holding the
-        # run folder, so it inverts. Only worth saying when the run WAS a mode;
-        # a hand-picked selection has no name to print.
+        # Which mode a run was started from, if it was one. A run record is
+        # about what changed, not what was picked.
         $presetOf = @{}
         foreach ($pn in @($appliedRuns.Keys)) {
             $f = [string]$appliedRuns[$pn].Folder
@@ -13863,17 +10784,13 @@ function Show-WDWindow {
             $card.Padding = '18,16,18,16'
             $card.Margin = '0,0,14,14'
             $card.Width = 330
-            # Raised to a common height by $fitRevertCards below, not by the
-            # panel. VerticalAlignment = Stretch was tried first and does
-            # nothing here: a WrapPanel arranges its children at their DESIRED
-            # height whatever they ask for, so two cards side by side came out
-            # at 162px and 145px. Measured both ways.
+            # Raised to a common height by $fitRevertCards, not by the panel:
+            # VerticalAlignment = Stretch does nothing here.
             & $refFn $card 'Background' 'Card'
             & $refFn $card 'BorderBrush' 'Line'
 
             # A DockPanel, so the two buttons sit at the foot of every card
-            # whatever length the lines above them come out at - the same reason
-            # the mode cards are DockPanels.
+            # whatever length the lines above come out at.
             $dp = New-Object Windows.Controls.DockPanel
             $dp.LastChildFill = $true
             $foot = New-Object Windows.Controls.StackPanel
@@ -13895,9 +10812,8 @@ function Show-WDWindow {
             & $refFn $sb 'Foreground' 'Sub'
             $null = $top.Children.Add($sb)
 
-            # How much of it is still in place, out of the shared cache. Built
-            # on every card whether or not there is an answer yet, for the same
-            # reason the mode columns build their Applied line unconditionally.
+            # Out of the shared cache. Built on every card whether or not there
+            # is an answer yet.
             $st = New-Object Windows.Controls.TextBlock
             $st.FontSize = 12.5; $st.TextWrapping = 'Wrap'; $st.Margin = '0,8,0,0'
             $st.FontWeight = 'SemiBold'
@@ -13927,19 +10843,15 @@ function Show-WDWindow {
                 $b.Tag = @{ Sel = [string]$s.Sel; Now = [bool]$a.Now; Go = $goRun }
                 $b.Add_Click({ & $this.Tag.Go ([string]$this.Tag.Sel) ([bool]$this.Tag.Now) }.GetNewClosure())
                 $null = $acts.Children.Add($b)
-                # Handed out on the card's own Tag rather than left to be found
-                # by walking the visual tree. A check that reaches a control by
-                # descending through panels is a description of this layout, and
-                # it breaks the next time a panel is added - which has already
-                # happened twice on the mode cards.
+                # Handed out on the card's own Tag rather than found by walking
+                # the visual tree.
                 if ($a.Now) { $cardTag.Now = $b } else { $cardTag.Open = $b }
             }
             $null = $foot.Children.Add($acts)
 
-            # A run whose folder has been deleted - by "Delete old run logs" or
-            # by hand - is still NAMED, because forgetting that the machine was
-            # changed is worse than being unable to change it back. It just
-            # cannot be acted on, and the card says which of the two it is.
+            # A run whose folder has been deleted is still named, because
+            # forgetting that the machine was changed is worse than being unable
+            # to change it back.
             if (-not $s.Can) {
                 $why = New-Object Windows.Controls.TextBlock
                 $why.Text = 'Its rollback script has been deleted, so nothing from it can be put back.'
@@ -13954,9 +10866,8 @@ function Show-WDWindow {
         }
         & $revHomeRef.Paint
     }
-    # The one line a card cannot have cheaply, filled in from the shared cache
-    # whenever an answer lands. Separate from the build so the idle warmer can
-    # call it without rebuilding a page somebody is reading.
+    # The one line a card cannot have cheaply, filled from the shared cache
+    # whenever an answer lands.
     $paintRevertHome = {
         foreach ($card in @($ui.RevHomeCards.Children)) {
             $tag = $card.Tag
@@ -13980,8 +10891,8 @@ function Show-WDWindow {
                 & $Ref $tag.State 'Foreground' 'Sub'
                 continue
             }
-            # Three-valued, like Get-WDUndoStatus itself: "nothing left to do" is
-            # a claim, and it can only be made when nothing was unaskable.
+            # Three-valued, like Get-WDUndoStatus itself: "nothing left to do"
+            # is a claim, and can only be made when nothing was unaskable.
             if ($todo -eq 0 -and $unknown -eq 0) {
                 $tag.State.Text = "Nothing left to put back - all $done change(s) have already been reversed."
                 & $Ref $tag.State 'Foreground' 'Muted'
@@ -13996,20 +10907,12 @@ function Show-WDWindow {
             }
         }
         # A card that has just gained or lost a line of text is a card whose
-        # height has changed, so the common floor is re-measured here too.
+        # height has changed.
         if ($revHomeRef.Fit) { & $revHomeRef.Fit }
     }
-    # One height for all of them, measured. A WrapPanel arranges each child at its
-    # DESIRED height, so cards holding two lines of prose and four come out ragged
-    # beside each other; the mode screen avoids it with one grid row, which is not
-    # available when the number of cards has no ceiling.
-    #
-    # CLEAR THE FLOOR FIRST. Measuring with last pass's MinHeight still on gives
-    # the answer that floor already produced, and the cards ratchet upward every
-    # time the text changes. Same trap and same discipline as $blurbFit.
-    #
-    # Not hooked to SizeChanged: a narrower window re-wraps the cards, but they are
-    # all one height by then, so which share a line does not change the answer.
+    # One height for all of them, measured. A WrapPanel arranges each child at
+    # its desired height, so cards holding two lines and four come out ragged.
+    # The floor is cleared before measuring, or they ratchet upward.
     $fitRevertCards = {
         $cards = @($ui.RevHomeCards.Children)
         if ($cards.Count -lt 2) { return }
@@ -14024,65 +10927,29 @@ function Show-WDWindow {
     $revHomeRef.Paint = $paintRevertHome
     $revHomeRef.Build = $buildRevertHome
 
-    # $ui.BtnRevert is the home page's middle card - $buildHomeCards points the
-    # name at it, so this wiring is unchanged from when it was a footer button.
-    # It lands on the cards now rather than on the long read behind them.
+    # $ui.BtnRevert is the home page's middle card, so this wiring is unchanged
+    # from when it was a footer button.
     $ui.BtnRevert.Add_Click({
         & $showPage 'PageRevertHome'
         & $buildRevertHome
     }.GetNewClosure())
     $ui.BtnRevHomeBack.Add_Click({ & $showPage 'PageHome' }.GetNewClosure())
-    # The cards, not the application's home page. This page is one step in now,
-    # and a Back that skips the step you came through is a Back that loses your
-    # place.
+    # The cards, not the application's home page: this page is one step in now.
     $ui.BtnRevertBack.Add_Click({
         & $showPage 'PageRevertHome'
         & $revHomeRef.Paint
     }.GetNewClosure())
 
-    # ================================================== ANSWER FILE PAGE ====
-    #
-    # A form over New-WDUnattendOptions, plus the two things a generator owes its
-    # user: what the file will do, and what it could not carry.
-    #
-    # Four decisions, each a rejection of something Schneegans' generator, its
-    # tabbed forks, WSIM, or Rufus does:
-    #
-    #   - NO SIMPLIFIED MODE AND NO ADVANCED TOGGLE. WSIM exposes the whole schema
-    #     as a four-pane tree and is unusable without knowing the schema; Rufus
-    #     exposes six check boxes and cannot express half of this. The way out of
-    #     "total control AND usable by anyone" is not a mode switch, it is
-    #     DEFAULTS - every field is pre-filled with the answer most people want. A
-    #     mode switch makes the beginner choose, before knowing anything, which
-    #     half of the tool to trust.
-    #   - EVERY FIELD ON ONE PAGE, WITH AN INDEX. The tabbed forks hide two thirds
-    #     of the state; Schneegans keeps one page and pays for it in navigation -
-    #     27 sections, no index. The rail buys the navigation without hiding
-    #     anything.
-    #   - EVERY FIELD EXPLAINS ITSELF IN ONE LINE, on the page. Not a tooltip: an
-    #     option whose meaning arrives only under the pointer has to be hunted.
-    #   - THE FILE ITSELF IS THE ESCAPE HATCH. The schema has hundreds of elements
-    #     and this exposes about forty. Saying where the form stops is honest.
-    #
-    # $UA_FIELDS is the whole form as data - one table, one builder, one reader, so
-    # a field that exists is a field that is read.
-    #
-    # "Using the file" is FIRST. It is instructions rather than fields, so the
-    # obvious place is the end, and the obvious place is wrong: this is the one
-    # page whose output does nothing until somebody acts on it by hand, and
-    # arriving without knowing that is how an autounattend.xml ends up in Downloads.
+    # The answer file page. Every field on one page with an index, because a
+    # tabbed form hides two thirds of the state behind seven tabs.
     $UA_SECTIONS = @(
-        # One opening section, not two. "What this file does" was a heading of
-        # its own holding a generated tally of what the payload carries, sitting
-        # directly under a Note that explains what the page is - two boxes
-        # answering the same question, one of which was three words long on a
-        # file with nothing selected. The tally is now the second half of Note.
+        # One opening section, not two: the tally is the second half of Note
+        # under a rule, because both answer the same question somebody has on
+        # arriving.
         @{ K = 'note';     T = 'Note'; N = '' }
         @{ K = 'bypasses'; T = 'Setup questions'; N = '' }
-        # Straight after the bypasses, which is where somebody who came here to
-        # get away from Microsoft's questions is still reading. It used to sit
-        # seventh, below three sections of names and locales, which is a long
-        # way down for the section most people opening this page are after.
+        # Straight after the bypasses, which is where somebody who came to get
+        # away from Microsoft's questions is still reading.
         @{ K = 'privacy';  T = 'Privacy and security'; N = '' }
         @{ K = 'account';  T = 'Your account'
            N = 'Windows creates this account during Setup and signs into it. It is also what removes the Microsoft account screen: with an account already defined, that screen has nothing left to ask.' }
@@ -14097,12 +10964,8 @@ function Show-WDWindow {
         @{ K = 'disks';    T = 'Disks'; N = '' }
     )
 
-    # Editions, for the drop-down that replaced two text boxes. The exact string
-    # has to match what the medium calls the edition, so this is the published
-    # list rather than anything read off the machine - the machine is not the
-    # one being installed. It also retires the "or edition number" field: an
-    # index cannot be misspelt, which was its whole justification, and a list
-    # nobody can mistype makes the point moot.
+    # The exact string has to match what the medium calls the edition, so these
+    # are the published names.
     $UA_EDITIONS = [ordered]@{
         ''                                = 'Have setup ask me'
         'Windows 11 Home'                 = 'Windows 11 Home'
@@ -14121,28 +10984,11 @@ function Show-WDWindow {
         'Windows 10 Enterprise'           = 'Windows 10 Enterprise'
     }
 
-    # There was a $UA_PROFILES table here: the .json files sitting in
-    # profile_saves, read off disk to fill a drop-down for the saved-selection
-    # field. It went with the drop-down. Listing one folder is not the same
-    # question as "which selection" - a saved selection is a file somebody keeps
-    # where they keep files, and the home screen's Load button has always been a
-    # dialog for that reason. The field is a picker now (kind 'file'), and it
-    # copies what it is given into profile_saves, which is the constraint the
-    # drop-down was enforcing by pretending the constraint was the whole choice.
+    # There was a $UA_PROFILES table here: the .json files in profile_saves,
+    # read off disk to fill a drop-down. A saved selection is a file somebody
+    # keeps where they keep files.
 
-    # ---- the drop-down contents --------------------------------------------
-    #
-    # Typed codes were the whole of this page's remaining hostility. "A language
-    # tag, such as en-US" is fine if you know that en-GB exists and that de-DE
-    # is not de_DE; "0409:00000409 is US, 0809:00000809 is UK" is a lookup table
-    # printed under a text box, which is a form asking the reader to be its
-    # database.
-    #
-    # Curated rather than enumerated, for the two that can be: Windows ships
-    # roughly forty display languages and .NET knows about eight hundred
-    # cultures, so `Get-Culture -ListAvailable` would produce a list nobody can
-    # scroll. Time zones are the exception - Windows owns that list, it is the
-    # one this file has to write, and reading it off the machine cannot drift.
+    # The drop-down contents.
     $UA_LANGUAGES = [ordered]@{
         'en-US' = 'English (United States)';   'en-GB' = 'English (United Kingdom)'
         'en-AU' = 'English (Australia)';       'en-CA' = 'English (Canada)'
@@ -14164,8 +11010,8 @@ function Show-WDWindow {
         'vi-VN' = 'Vietnamese (Vietnam)';      'id-ID' = 'Indonesian (Indonesia)'
     }
     # The half before the colon is the input language and the half after is the
-    # physical layout, which is why "US keyboard, French language" is expressible
-    # at all - and why nobody should have to know that to pick their keyboard.
+    # physical layout, which is why "US keyboard, French language" is
+    # expressible.
     $UA_KEYBOARDS = [ordered]@{
         '0409:00000409' = 'US (QWERTY)'
         '0409:00020409' = 'US - International'
@@ -14206,36 +11052,23 @@ function Show-WDWindow {
         '042a:00000042' = 'Vietnamese'
     }
     # Read off this machine, because Windows owns the list and its ids are
-    # exactly what <TimeZone> takes. The empty entry is first and is the
-    # default: Setup picks its own and usually gets it right, and a wrong
-    # explicit answer is worse than letting it.
+    # exactly what <TimeZone> takes.
     $UA_TIMEZONES = [ordered]@{ '' = 'Automatic - let Setup decide' }
     try {
         foreach ($tz in ([System.TimeZoneInfo]::GetSystemTimeZones())) {
             $UA_TIMEZONES[[string]$tz.Id] = [string]$tz.DisplayName
         }
     } catch { }
-    # Repeated above every password box, word for word. It was written once and
-    # shortened for the boxes below it ("plain text in the file, exactly like
-    # the one above"), which only works if somebody read the first one - and the
-    # one they are about to fill in is the one they are looking at. A warning
-    # that matters is worth saying every time rather than cross-referencing.
+    # Boxed once at the top of each section that has one, rather than above
+    # every password field: repeated in full inside every added account it made
+    # the section mostly warning.
     $UA_PWD_WARN = 'DO NOT SET A PASSWORD WITH THIS OPTION UNLESS YOU OWN THE USB DRIVE OR DEVICE THIS PROGRAM WILL RUN OFF OF - your password will be written into the file as plain text in order to apply it and stays readable.'
-    # Sections whose options are bare ticks, one line each, and which therefore
-    # get no separator between them. The hairline earns its place between a
-    # labelled field and the next labelled field - it is what stops a text box
-    # reading as if it belonged to the heading below it - and between two
-    # checkboxes it is a line drawn through a list for no reason.
+    # Sections whose options are bare ticks get no separator: a rule between two
+    # check boxes is a line drawn through a list.
     $UA_NO_RULES = @('bypasses', 'privacy')
 
     $UA_FIELDS = @(
-        # --- the bypasses ---------------------------------------------------
-        #
-        # No descriptions but one. Each of these is a sentence saying what it
-        # does, and a second sentence underneath saying the same thing again was
-        # the bulk of this section's height. The hardware one keeps its note and
-        # goes last: it is the only one whose consequence is not in its name -
-        # Microsoft not supporting the configuration afterwards.
+        # The bypasses.
         @{ S = 'bypasses'; K = 'BypassMicrosoftAccount'; T = 'check'
            L = 'Bypass Microsoft account requirement'; N = '' }
         @{ S = 'bypasses'; K = 'AcceptEula'; T = 'check'
@@ -14244,16 +11077,10 @@ function Show-WDWindow {
            L = 'Bypass Windows 11 hardware requirement'
            N = 'Skips the TPM 2.0, Secure Boot, processor and memory checks. Windows still updates normally afterwards; Microsoft simply does not support the configuration.' }
 
-        # --- account --------------------------------------------------------
+        # The local account, which is also the Microsoft-account bypass.
         @{ S = 'account'; K = 'AccountName'; T = 'text'; L = 'Account name'; N = '' }
-        # No W on either password here any more, and the note goes beside the
-        # box rather than under it. The warning was printed in full above both
-        # of them plus above every added account - four copies of eight lines of
-        # red inside one section, which is a section that is mostly warning.
-        # It is said once, boxed, at the top of the section instead; see
-        # $uaBuild. The notes are short enough to sit to the right of a 320px
-        # box, and doing that gets two rows back per field on a page whose
-        # complaint was vertical sprawl beside empty horizontal space.
+        # The note goes beside the box rather than under it: the explanation is
+        # one short sentence and the control is 320px in a box twice that wide.
         @{ S = 'account'; K = 'AccountPassword'; T = 'password'; L = 'Password'
            NoteRight = $true
            N = 'Leave it empty to have no password - you can change this in settings after setup is complete.' }
@@ -14263,31 +11090,18 @@ function Show-WDWindow {
         @{ S = 'account'; K = 'AutoLogon'; T = 'check'; L = 'Bypass password'
            N = 'Make sure you know what you''re doing. The number below defines how many times you can log in without being prompted for your password.' }
         # Inline, so it lands inside the tick's own box rather than starting one
-        # of its own. No label and no note either: the sentence above is about
-        # this box as much as it is about the tick, and a heading between them
-        # separated a sentence from the field it describes. "The number below"
-        # has to be below it and inside the same frame or it is pointing at
-        # somebody else's option.
+        # of its own: the sentence above is about the number, so they have to
+        # share a frame.
         @{ S = 'account'; K = 'AutoLogonCount'; T = 'number'; L = ''; N = ''; Inline = $true }
         @{ S = 'account'; K = 'AdminPassword'; T = 'password'; L = 'Built-in Administrator password'
            NoteRight = $true
            N = 'Leave this empty to keep it disabled - most people should not use this.' }
 
-        # --- region ---------------------------------------------------------
-        #
-        # Every one of these is a drop-down of readable answers now, and a
-        # drop-down whose entries are English sentences does not need a
-        # paragraph telling you what it is for. The one thing worth knowing that
-        # the controls cannot say - that picking a display language sets the two
-        # under it until you set one yourself - is behavior you can see happen.
+        # Region.
         @{ S = 'region'; K = 'UILanguage'; T = 'combo'; L = 'Windows display language'
            C = 'languages'; Sync = @('SystemLocale', 'UserLocale'); N = '' }
         # The sync is a control now rather than a rule that quietly stopped
-        # applying. It used to follow until one of the two below was set on
-        # purpose, which is a sensible default and completely invisible: nothing
-        # said the coupling existed, and nothing said when it had ended. Inline,
-        # so it is inside the language's own box and directly under it - it is
-        # an answer about that drop-down, not a fourth field in the section.
+        # applying once one of the two below was set.
         @{ S = 'region'; K = 'SyncLocales'; T = 'check'; Inline = $true
            L = 'Sync with system locale and date, time, and number format'; N = '' }
         @{ S = 'region'; K = 'SystemLocale'; T = 'combo'; L = 'System locale'
@@ -14299,7 +11113,7 @@ function Show-WDWindow {
         @{ S = 'region'; K = 'TimeZone'; T = 'combo'; L = 'Time zone'
            C = 'timezones'; N = '' }
 
-        # --- machine --------------------------------------------------------
+        # Machine.
         @{ S = 'machine'; K = 'ComputerName'; T = 'text'; L = 'Computer name'
            Limit = 15; NoSpaces = $true
            N = 'If left blank, something like "DESKTOP-A1B2C3D" will be generated. 15 characters max, no spaces.' }
@@ -14312,7 +11126,7 @@ function Show-WDWindow {
         @{ S = 'machine'; K = 'EnableRdp'; T = 'check'; L = 'Allow Remote Desktop connections'
            N = 'Turns Remote Desktop on and opens its firewall rule. Off unless you know you want it - it is a way into the machine from the network.' }
 
-        # --- privacy --------------------------------------------------------
+        # Privacy.
         @{ S = 'privacy'; K = 'PrivacyOff'; T = 'check'
            L = 'Deny all data collection'
            N = 'Diagnostic data, tailored experiences, the advertising ID, location, Find my device, and inking and typing data.' }
@@ -14323,24 +11137,12 @@ function Show-WDWindow {
            L = 'Disable automatic hard drive encryption'
            N = 'Bitlocker runs silently on first sign-in, which can ruin local accounts after a firmware update since the recovery key has nowhere to go. You can turn on bitlocker yourself later if this option is chosen.' }
 
-        # --- wifi -----------------------------------------------------------
-        #
-        # The internet bypass lives here rather than with the other setup
-        # questions, and it is not in the section - it is beside the section's
-        # own title. It is the question everything under Wi-Fi is conditional
-        # on: somebody telling Setup not to need a network is not about to type
-        # a network password, so answering yes empties the section rather than
-        # leaving four fields that mean nothing. A question that decides whether
-        # a heading has any content belongs on the heading, which is the same
-        # answer the toolkit section's On/Off got.
+        # Wi-Fi.
         @{ S = 'wifi'; K = 'BypassInternet'; T = 'check'
            L = 'Bypass internet requirement'; N = ''; Collapses = 'wifi'; InHead = $true }
         @{ S = 'wifi'; K = 'WifiSsid'; T = 'text'; L = 'Network name'; N = '' }
-        # No W. The warning is the same warning Your account carries and it is
-        # true of the section rather than of this box, so it is boxed once at
-        # the top of Wi-Fi like the other two - see $uaBuild. Printed above the
-        # field it was eight lines of red inside a five-field section, and the
-        # third copy of the same paragraph on one page.
+        # No W: the warning is the same one Your account carries and is true of
+        # the section rather than of this box.
         @{ S = 'wifi'; K = 'WifiPassword'; T = 'password'; L = 'Network password'; N = '' }
         @{ S = 'wifi'; K = 'WifiAuth'; T = 'choice'; L = 'Security'
            C = @('WPA2PSK', 'WPA3SAE', 'open')
@@ -14351,8 +11153,7 @@ function Show-WDWindow {
         @{ S = 'wifi'; K = 'WifiHidden'; T = 'check'; L = 'This network does not broadcast its name'
            N = 'Tick only if the network is deliberately hidden. On an ordinary network this makes joining slower and no more private.' }
         # Moved out of Machine information, where it had nothing to do with the
-        # rest of that section: it is a question about the network, and this is
-        # where the network is configured.
+        # rest of that section.
         @{ S = 'wifi'; K = 'NetworkLocation'; T = 'choice'; L = 'Network type'
            C = @('Home', 'Work', 'Other')
            D = @{ 'Home' = 'Private - this PC can be discovered by others on the network'
@@ -14360,11 +11161,7 @@ function Show-WDWindow {
                   'Other' = 'Public - this PC is hidden from others on the network' }
            N = 'Public is the safer answer on any network you do not control.' }
 
-        # --- run the toolkit afterwards --------------------------------------
-        #
-        # No "do not" entry any more. The section's own On/Off beside its title
-        # is that answer, and a list whose first option is "ignore this whole
-        # section" is a section pretending its heading is not a question.
+        # Run the toolkit afterwards.
         @{ S = 'toolkit'; K = 'RunPreset'; T = 'choice'; L = 'Which mode to run'
            C = @('Conservative', 'Balanced', 'Aggressive', 'Extreme', 'profile')
            D = @{ 'Conservative' = 'Conservative'
@@ -14372,32 +11169,23 @@ function Show-WDWindow {
                   'Aggressive'   = 'Aggressive'
                   'Extreme'      = 'Extreme'
                   'profile'      = 'Preset from file' }
-           # No "it needs an Administrator" here any more. That is a condition
-           # on the section, not on which mode runs, and it is enforced on the
-           # section's own On/Off with the reason printed beside it - which is
-           # both where it belongs and the only place it can be acted on.
+           # No "it needs an Administrator" here: that is a condition on the
+           # section, not on which mode runs, and it is enforced on the heading.
            N = 'The machine is a fresh install whose state this file just defined, so the run applies straight away with no preview and nothing to confirm.' }
-        # Shown only when the answer above is 'profile'. It is the only field on
-        # the page that is meaningless under four of the five answers to the
-        # question directly above it, and "Only for the last option" printed
-        # underneath was the form explaining its own layout.
+        # Shown only when the answer above is 'profile': it is the only field
+        # meaningless under four of the five answers.
         @{ S = 'toolkit'; K = 'RunProfileFile'; T = 'file'; L = 'Saved selection file'
            ShowWhen = 'RunPreset'; ShowIs = 'profile'
            N = 'The .json written by Save on the Advanced page or the home screen. It has to sit in the toolkit''s profile_saves folder to reach the machine, so choosing one from anywhere else copies it in.' }
 
-        # --- extra ----------------------------------------------------------
+        # Extra commands.
         @{ S = 'extra'; K = 'ExtraFirstLogon'; T = 'lines'; L = 'At the first sign-in, one command per line'
            N = 'Anything a command prompt accepts. They run after the removals this file already carries, so a command here can rely on those having happened.' }
         @{ S = 'extra'; K = 'ExtraSpecialize'; T = 'lines'; L = 'Before anybody signs in, one command per line'
            N = 'Run during Setup, as SYSTEM, before any account exists. The right place for machine-wide policy and for anything that has to be true before the first sign-in; the wrong place for anything needing a network, a desktop, or a user profile.' }
 
-        # --- disks ----------------------------------------------------------
         # The two wipe labels name the disk number, and the number is a field
-        # further down this same section. They are re-labeled as it is typed -
-        # see $uaBuild - because a radio button reading "Erase disk 0" beside a
-        # box reading 2 is the form telling somebody, in the one place on the
-        # page where being wrong is unrecoverable, that it will erase the wrong
-        # drive. $0 is where the number goes.
+        # above them.
         @{ S = 'disks'; K = 'DiskLayout'; T = 'choice'; L = 'What Setup does with the drive'
            C = @('none', 'wipe-gpt', 'wipe-mbr')
            D = @{ 'none' = 'Ask me, as Setup normally does'
@@ -14409,37 +11197,32 @@ function Show-WDWindow {
            N = 'Which disk to erase. 0 is the first one Windows enumerates, which is usually but not always the one you mean.' }
     )
 
-    # The manifest items behind the current selection. $itemById is built with
-    # the Compare page's other lookups and holds exactly this - a second copy
-    # here was a second walk of the manifest producing the same table.
+    # $itemById is built with the Compare page's other lookups and holds exactly
+    # this - a second copy would be a second thing to keep in step.
     $uaItemById = $itemById
 
     $uaOptions  = New-WDUnattendOptions
     $uaControls = New-Object System.Collections.Generic.List[psobject]
-    # Raised while the display language is setting the locales under it, so
-    # their own handlers know not to record that as a deliberate choice.
+    # Raised while the display language sets the locales under it, so their own
+    # handlers know not to record that as a deliberate choice.
     $uaSync     = @{ On = $false }
     $uaSecPanel = @{}
     # Section key -> its title row, for the one field that renders beside a
     # heading rather than under it.
     $uaSecHead  = @{}
-    # Every account added with the button below, in the order they were added.
-    # A list rather than a fixed second slot: "a second account" was one row for
-    # a question that has no natural limit, and the generator's own emitter was
-    # a loop already.
+    # A list rather than a fixed second slot: "a second account" made a family
+    # machine a thing the form could not express.
     $uaExtraAccts = New-Object System.Collections.Generic.List[psobject]
     $uaHeads    = New-Object System.Collections.Generic.List[psobject]
-    # Ms is filled by whichever route built it - the pre-warm tick or the click
-    # - so the self test can report what the page really costs rather than
-    # leaving it assumed. It is the one deferred build that is a single step.
+    # Ms is filled by whichever route built it, so the self test can report what
+    # the page really costs.
     $uaBuilt    = @{ Done = $false; Ms = 0 }
-    # The Add another account button, so the self test can press the real one
-    # rather than calling the builder behind it. Built inside $uaBuild, which
-    # runs once and long after this.
+    # So the self test can press the real button rather than calling the builder
+    # behind it.
     $uaAddBtn   = @{ Btn = $null }
     $uaSummary  = @{ Panel = $null }
     # Section key -> the On/Off pair, the line that says why On is unavailable,
-    # and the body it governs. One entry, for the toolkit section.
+    # and the body it governs.
     $uaGate     = @{}
     # The gate itself, for the self test - it is wired inside $uaBuild and there
     # is no other way to reach it.
@@ -14447,73 +11230,35 @@ function Show-WDWindow {
     # The rail's cards, so their size can follow the window's.
     $uaRailCards = New-Object System.Collections.Generic.List[psobject]
 
-    # ---- the index rail grows with the window ------------------------------
-    #
-    # Three numbers, all derived from one: the column's width, the label size,
-    # and the padding inside a card. At the 1000px minimum they come out at the
-    # values the rail was hand-set to, so a small window is unchanged; on a
-    # 2560px screen the rail is half again as wide with type to match, instead
-    # of eleven small words clustered against the top left corner of a page
-    # whose own boxes stretch to the far edge.
-    #
-    # Capped at both ends. Without a ceiling the rail would take a fifth of an
-    # ultrawide to index ten sections, and a form is what the page is for.
+    # The index rail grows with the window.
     $uaSizeRail = {
         $w = [double]$ui.Root.ActualWidth
         if ($w -le 0) { return }
         # 184 at 1000px, growing by a tenth of every pixel past it.
         $railW = [Math]::Round([Math]::Max(184.0, [Math]::Min(300.0, 184.0 + ($w - 1000.0) * 0.1)))
-        # Nothing to do if it already is that. Writing the same width back would
-        # be harmless here - the page's own height and width are set by the
-        # window, not by this column - but a layout handler that always writes
-        # is one small change away from the feedback loop the mode grid's
-        # description sizing spent an afternoon in.
+        # Nothing to do if it already is that: this fires from SizeChanged, and
+        # a handler that changes layout feeds itself.
         if ([double]$ui.UaIndexScroll.Width -eq $railW -and $uaRailCards.Count) { return }
         $ui.UaIndexScroll.Width = $railW
         # The type follows the width rather than the window, so the two cannot
-        # drift apart: a wider rail with the same 12.5pt label would just be a
-        # wider column of empty space.
+        # drift apart.
         $font = [Math]::Round([Math]::Max(12.5, [Math]::Min(15.0, 12.5 + ($railW - 184.0) * 0.02)), 1)
         $padY = [Math]::Round([Math]::Max(5.0, [Math]::Min(10.0, 5.0 + ($railW - 184.0) * 0.04)))
         foreach ($c in $uaRailCards) {
             $c.Label.FontSize = $font
             $c.Card.Padding   = New-Object Windows.Thickness -ArgumentList 10.0, $padY, 10.0, $padY
         }
-    # A closure, because it is handed straight to Add_SizeChanged and fires from
-    # the dispatcher rather than from here - where a bare scriptblock loses
-    # sight of this function's locals.
+    # A closure, because it is handed to Add_SizeChanged and fires from the
+    # dispatcher rather than from here.
     }.GetNewClosure()
 
     # One labeled field. Everything above the control is the same three lines
-    # whatever the control is, which is what keeps the page reading as one form
-    # rather than as nine sections that were each written separately.
-    # The wrap of the last card built, for a field that asks to go inside the
-    # one above it rather than starting its own.
+    # whatever the control is.
     $uaLastWrap = @{ Panel = $null; Card = $null }
     # Every explanatory line on the setup page, so Non-verbose can reach them.
     $uaNoteEls = New-Object System.Collections.Generic.List[psobject]
 
-    # ---- Non-verbose ------------------------------------------------------
-    #
-    # One pass over every page, because the option is one answer about the whole
-    # application rather than a per-page preference. Declared here because this is
-    # the first point at which all four collections exist; reached through
-    # $terseRef by the check box, which is wired several thousand lines above.
-    #
-    # WHAT GOES: the standing text. Descriptions, cost lines, the setup page's
-    # field notes, and the status words - "already installed", "already set",
-    # "opt-in". Every one of those is the same on every visit, which is exactly
-    # what somebody who has read this list once is reading past.
-    #
-    # WHAT STAYS: everything that answers a question about THIS machine or THIS
-    # run. The risk badge, the "not on this machine" tag, the gate line saying
-    # another tick has taken a row away, the counts. Non-verbose is about
-    # repetition, not about hiding what the page found.
-    #
-    # ABSENT ROWS ARE NOT THIS OPTION'S BUSINESS. They used to be drawn at half
-    # size under Non-verbose; they are full size and struck through now, which is
-    # true whether or not the option is on - so it is done where the row learns it
-    # is absent, and this pass says nothing about it.
+    # Non-verbose.
     $applyTerse = {
         $terse = [bool]$state.Terse
         $vis   = $(if ($terse) { 'Collapsed' } else { 'Visible' })
@@ -14530,25 +11275,8 @@ function Show-WDWindow {
     }.GetNewClosure()
     $terseRef.Do = $applyTerse
 
-    # ---- Refresh ----------------------------------------------------------
-    #
-    # Every page here is a READING of the machine taken when it was built, and the
-    # operator can still change that machine in another window. This asks again.
-    #
-    # RE-READ: the registry probe cache and the installed-programs sweep are
-    # dropped, so "already set" and "already installed" come from the machine
-    # rather than from startup; every status word is repainted through the row's
-    # own painter, so build and refresh cannot disagree; the browser sweep runs
-    # again, which is what gates the "Change default browser" row.
-    #
-    # NOT re-run: the discovery scan. That decides which rows EXIST, so acting on
-    # it means rebuilding the page and losing the ticks, filters, and scroll
-    # position - and software appearing while the window is open is the rare case
-    # against the common one. The tooltip says so.
-    #
-    # THE TICKS SURVIVE, which is the whole reason this is a repaint rather than a
-    # rebuild. Nothing writes IsChecked except the one case that must: a tier-0 row
-    # that has become "already set" stops being a decision.
+    # Refresh: this page is a reading of the machine taken when it was built,
+    # and somebody may have changed something in another window.
     $refreshAdvanced = {
         $veil = $win.Tag.Busy
         if ($veil) { & $veil.Show 'Checking this machine again' }
@@ -14556,16 +11284,12 @@ function Show-WDWindow {
             Clear-WDRegistryProbeCache
             Clear-WDProgramCache
             & $readInstalled
-            # The map is the startup answer to "is this already applied". Cleared
-            # rather than refilled: $alreadySatisfied falls through to asking the
-            # machine for any id it does not hold, which is exactly what a refresh
-            # wants, and refilling it would mean a second pass over the manifest.
+            # Cleared rather than refilled: $alreadySatisfied falls through to
+            # asking the machine when an id is missing.
             if ($satisfiedMap) { $satisfiedMap.Clear() }
 
-            # What changed, named rather than counted where the list is short.
-            # A Refresh that reports nothing is the commonest outcome and has to
-            # say so out loud: a button that looks identical whether it found
-            # something or not is one nobody trusts.
+            # What changed, named rather than counted where the list is short. A
+            # Refresh that reports nothing is the commonest outcome.
             $became = New-Object System.Collections.Generic.List[string]
             $ceased = New-Object System.Collections.Generic.List[string]
             $n = 0
@@ -14585,23 +11309,22 @@ function Show-WDWindow {
                 $word = $(if ([int]$r.Tier -eq 0) {
                               if ($sat -eq 'already applied') { 'already set' } else { $sat }
                           } else { '' })
-                # Only tier 0 rows are ever disabled by this, which is the rule
-                # $alreadyDone keeps: disabling a row a preset selects would take
-                # away the only way to drop it from that preset's selection.
+                # Only tier 0 rows are ever disabled by this: disabling a row a
+                # preset selects would take away the only way to drop it.
                 if ($word) {
                     $null = $installedIds.Add([string]$r.Id)
                     $r.Check.IsEnabled = $false
                     $r.Check.IsChecked = $false
                     & $Ref $r.Name 'Foreground' 'Muted'
                 } elseif ([int]$r.Tier -eq 0 -and -not $r.Absent -and -not $r.Gated) {
-                    # It was finished and is not any more - somebody put the thing
-                    # back. The row becomes a decision again.
+                    # It was finished and is not any more - somebody put the
+                    # thing back, so the row becomes a decision again.
                     $null = $installedIds.Remove([string]$r.Id)
                     $r.Check.IsEnabled = $true
                     & $Ref $r.Name 'Foreground' 'Text'
                 }
                 if ($r.PaintStatus) { & $r.PaintStatus $word $sat ([int]$r.Tier) }
-                # Recorded before the row's own flags are moved on, so the next
+                # Recorded before the row's own flags move on, so the next
                 # Refresh compares against what this one left.
                 $nowApplied = [bool]$sat
                 if ($nowApplied -and -not $wasApplied) { $became.Add([string]$r.Name.Text) }
@@ -14610,19 +11333,15 @@ function Show-WDWindow {
                 $r.Done    = [bool]$word
             }
             # The browser row's gate is a live condition rather than a guard, so
-            # the sweep behind it has to be re-asked or "Change default browser"
-            # goes on being absent from a machine that now has Firefox.
+            # the sweep behind it has to be re-asked.
             if ($refreshBrowsers.Do) { & $refreshBrowsers.Do }
             & $applyTerse
             & $applyFilter
             & $updateTally
 
-            # AND SAY WHAT IT FOUND, including when that is nothing. A button
-            # whose only evidence of having worked is that the page looks the same
-            # is one nobody presses twice. Named rather than counted while the
-            # list is short - "3 options" is a number somebody then has to go
-            # hunting for - and counted past that, because a dialog listing forty
-            # names is one nobody reads.
+            # And say what it found, including when that is nothing: a button
+            # whose only evidence of having worked is that the page looks the
+            # same is one nobody trusts.
             $said = New-Object System.Collections.Generic.List[string]
             $said.Add("Checked $($rows.Count) options against this machine.")
             $said.Add('')
@@ -14653,19 +11372,12 @@ function Show-WDWindow {
     }.GetNewClosure()
     $refreshRef.Adv = $refreshAdvanced
 
-    # The Revert page's is a rebuild rather than a repaint, because that page IS
-    # its reading - every row's state, its counts, and which options are listed
-    # at all come out of one pass over the journals and the machine. Dropping the
-    # session cache and calling the ordinary builder is the whole of it, and it
-    # goes through the same wrapper the run picker uses so the overlay is the one
-    # somebody already knows.
+    # The Revert page's is a rebuild rather than a repaint, because that page is
+    # its reading - every row's state and which options are listed come out of
+    # one pass.
     $refreshRef.Rev = {
-        # Counted before and after, because the page is rebuilt wholesale and
-        # there are no row objects that survive to be compared. These three are
-        # what a change would move: how many options this run still has
-        # outstanding, how many changes are still in place, and whether the list
-        # of options itself is different - a program reinstalled by hand drops a
-        # row, and a guard removed drops another.
+        # Counted before and after, because the page is rebuilt wholesale and no
+        # row objects survive to be compared.
         $wasRows = $revertRows.Count
         $wasTodo = @($revertRows | Where-Object { $_.Opt.State -eq 'todo' }).Count
         $wasPend = 0
@@ -14700,21 +11412,13 @@ function Show-WDWindow {
 
     $uaAddField = {
         param($Field, $Host2)
-        # ONE BOX PER SECTION, NOT PER OPTION. A card per option is right on the
-        # Advanced page - two columns of forty short rows, where the card stops one
-        # name running into the next - and wrong here for a reason that only shows
-        # in a single column: boxes each holding one label and one field are frames
-        # drawn around nothing, and the frame ends up louder than the field. The
-        # SECTION is the unit somebody works through, so the section gets the box.
-        #
-        # Single column deliberately: these are a sequence to work through rather
-        # than a list to scan, and half of them are text boxes that want the width.
+        # One box per section, not per option: a column of boxes each holding
+        # one label and one field is a stack of frames drawn around nothing.
         $kind = [string]$Field.T
         $ctrl = $null
 
         # In the section's title row rather than the section. Only one field
-        # does this and it is a bare tick, so nothing below - the warning, the
-        # note, the separator - applies to it.
+        # does this and it is a bare tick.
         if ($Field.ContainsKey('InHead') -and [bool]$Field.InHead) {
             $ctrl = New-Object Windows.Controls.CheckBox
             $ctrl.Content = [string]$Field.L
@@ -14738,8 +11442,6 @@ function Show-WDWindow {
             $card = New-Object Windows.Controls.Border
             # A hairline above rather than a frame around: the first option in a
             # section gets none, so the top of the box is the box's own edge.
-            # And no hairline at all in the sections that are nothing but ticks -
-            # a rule between two checkboxes is a line through a list.
             $first = ($Host2.Children.Count -eq 0)
             $ruled = ($UA_NO_RULES -notcontains [string]$Field.S)
             $card.BorderThickness = New-Object Windows.Thickness 0, $(if ($first -or -not $ruled) { 0 } else { 1 }), 0, 0
@@ -14753,12 +11455,8 @@ function Show-WDWindow {
             $uaLastWrap.Card  = $card
         }
 
-        # A note that goes beside the control rather than above it. Two of the
-        # three password boxes and the disk number use it: their explanations are
-        # one short sentence, the control is 320px in a box more than twice that
-        # wide, and stacking the two wastes a row of height to leave a row of
-        # empty width. Everything else keeps the note above, where a paragraph
-        # belongs.
+        # A note beside the control rather than above it: stacking spends a row
+        # of height to leave a row of width empty.
         $noteRight = ($Field.ContainsKey('NoteRight') -and [bool]$Field.NoteRight -and [string]$Field.N)
 
         if ($kind -eq 'check') {
@@ -14770,18 +11468,16 @@ function Show-WDWindow {
             $null = $wrap.Children.Add($ctrl)
         } elseif ([string]$Field.L) {
             # A field may deliberately have no label - the auto-logon count sits
-            # directly under the sentence that describes it, and a heading
-            # between the two separated them.
+            # directly under the sentence that describes it.
             $lbl = New-Object Windows.Controls.TextBlock
             $lbl.Text = [string]$Field.L; $lbl.FontSize = 13.5
             & $Ref $lbl 'Foreground' 'Text'
             $null = $wrap.Children.Add($lbl)
         }
 
-        # A warning before the explanation, in the warning color, for the three
-        # fields whose answer leaves the machine in the file. ContainsKey, not
-        # $Field.W - under StrictMode a missing key reached for by property
-        # syntax throws from inside a builder and takes the page with it.
+        # A warning before the explanation, for the fields whose answer leaves
+        # the machine in the file. ContainsKey, not a bare read, because
+        # StrictMode throws on a missing key.
         if ($Field.ContainsKey('W') -and [string]$Field.W) {
             $warn = New-Object Windows.Controls.TextBlock
             $warn.Text = [string]$Field.W
@@ -14801,17 +11497,13 @@ function Show-WDWindow {
             $note.HorizontalAlignment = 'Left'
             & $Ref $note 'Foreground' 'Sub'
             $null = $wrap.Children.Add($note)
-            # This page's explanations are the same class of text as an item's
-            # description - one line under a control, the same on every visit -
-            # so Non-verbose takes them too. Worth knowing before turning it on:
-            # there is no Details chip here, so this is the only explanation a
-            # field has.
+            # The same class of text as an item's description - one line under a
+            # control, the same on every visit.
             $null = $uaNoteEls.Add($note)
         }
 
-        # Where the control itself goes. The same panel as everything else,
-        # unless the note is riding beside it - then both go into a row of their
-        # own so they share a baseline.
+        # The same panel as everything else, unless the note is riding beside
+        # it.
         $holder = $wrap
         if ($noteRight) {
             $holder = New-Object Windows.Controls.StackPanel
@@ -14825,11 +11517,9 @@ function Show-WDWindow {
                 $ctrl.Text = [string]$uaOptions.($Field.K)
                 $ctrl.FontSize = 13; $ctrl.Padding = '6,4'; $ctrl.Width = 320
                 $ctrl.HorizontalAlignment = 'Left'; $ctrl.Margin = '0,5,0,0'
-                # Refused as it is typed rather than reported afterwards. A
-                # computer name Windows will not accept is a Setup that stops
-                # on a screen the file was written to skip, and finding that out
-                # on the machine is the worst place to find it out. The rule is
-                # NetBIOS's: 15 characters, no spaces.
+                # Refused as it is typed rather than reported afterwards: a name
+                # Windows will not accept is a Setup that stops on a screen this
+                # file was written to skip.
                 if ($Field.ContainsKey('Limit') -and [int]$Field.Limit -gt 0) {
                     $ctrl.MaxLength = [int]$Field.Limit
                 }
@@ -14861,19 +11551,11 @@ function Show-WDWindow {
                 $null = $holder.Children.Add($ctrl)
             }
             'file' {
-                # A FILE PICKER, not a drop-down of one folder. The drop-down listed
-                # whatever was in profile_saves, which is a different question from
-                # "which selection": a saved selection is a file somebody keeps
-                # where they keep files, which is why the home screen's Load has
-                # always been a dialog.
-                #
-                # What is STORED is still the leaf name, because the generated
-                # command runs the toolkit out of
-                # C:\Windows\Setup\Scripts\WinSetupToolkit - a copy of the folder off
-                # the medium - so the selection has to be inside it to exist at all.
-                # Picking from anywhere else therefore COPIES it into profile_saves;
-                # without that the file names a selection that never reaches the
-                # machine, and Setup runs with none.
+                # A file picker, not a drop-down of one folder: a saved
+                # selection is a file somebody keeps where they keep files.
+                # Chosen from elsewhere it is copied into profile_saves, because
+                # the generated command runs the toolkit out of a copy of that
+                # folder.
                 $row = New-Object Windows.Controls.StackPanel
                 $row.Orientation = 'Horizontal'
                 $ctrl = New-Object Windows.Controls.TextBox
@@ -14889,8 +11571,7 @@ function Show-WDWindow {
                 $null = $row.Children.Add($pick)
                 $null = $holder.Children.Add($row)
                 # Where the picked file ended up, said after the fact rather
-                # than as an instruction beforehand. The field's own note tells
-                # somebody what has to be true; this tells them whether it is.
+                # than as an instruction beforehand.
                 $said = New-Object Windows.Controls.TextBlock
                 $said.FontSize = 11.5; $said.TextWrapping = 'Wrap'; $said.Margin = '0,4,0,0'
                 $said.MaxWidth = 620; $said.HorizontalAlignment = 'Left'
@@ -14933,8 +11614,7 @@ function Show-WDWindow {
             }
             'password' {
                 # A real PasswordBox rather than a TextBox: this ends up in the
-                # file as plain text either way, and the note says so, but that
-                # is no reason to also show it to whoever is behind you.
+                # file as plain text either way, but the screen is not the file.
                 $ctrl = New-Object Windows.Controls.PasswordBox
                 $ctrl.Password = [string]$uaOptions.($Field.K)
                 $ctrl.FontSize = 13; $ctrl.Padding = '6,4'; $ctrl.Width = 320
@@ -14954,22 +11634,8 @@ function Show-WDWindow {
                 $null = $holder.Children.Add($ctrl)
             }
             'combo' {
-                # A drop-down, for the fields whose answers are a list too long to
-                # write out and too specific to type: display language, the two
-                # locales, keyboard, time zone, and edition. These were text boxes
-                # wanting "0409:00000409" with a lookup table printed underneath -
-                # a form asking the reader to be its database.
-                #
-                # ComboBoxItem containers, and NO LOCAL BRUSHES ON THEM. Containers
-                # are right: a ComboBox given bare strings generates its own and
-                # there is nothing to hold a foreground. Painting them was the
-                # mistake that shipped white on white - the closed bar renders
-                # SelectionBoxItem in the ComboBox's OWN foreground, so an item's
-                # foreground never reaches it, and the popup is drawn on the system
-                # window brush, which is white in both themes.
-                #
-                # Styled through WdComboItem instead. [7] asserts that no
-                # ComboBoxItem anywhere carries a local Foreground or Background.
+                # A drop-down for the fields whose answers are a list too long
+                # to write out and too specific to type.
                 $ctrl = New-Object Windows.Controls.ComboBox
                 $ctrl.FontSize = 13; $ctrl.Padding = '6,4'; $ctrl.Width = 320
                 $ctrl.HorizontalAlignment = 'Left'; $ctrl.Margin = '0,5,0,0'
@@ -14989,14 +11655,7 @@ function Show-WDWindow {
                 }
                 if (-not $ctrl.SelectedItem -and $ctrl.Items.Count) { $ctrl.SelectedIndex = 0 }
                 # Picking a display language sets the two locales under it, for
-                # as long as the tick under it says to. That tick replaces the
-                # rule this used to follow on its own - "until somebody sets one
-                # of those deliberately" - which is a good default and an
-                # invisible one: nothing said the coupling existed and nothing
-                # said when it had stopped. The pair "American English wording,
-                # British dates" is still reachable; it is now reached by
-                # clearing a checkbox rather than by discovering that touching a
-                # field has a side effect nobody mentioned.
+                # as long as the tick under it says to.
                 if ($Field.ContainsKey('Sync')) {
                     $follow = @($Field.Sync)
                     $ctrls  = $uaControls
@@ -15024,14 +11683,11 @@ function Show-WDWindow {
             }
             'choice' {
                 # Radio buttons rather than a drop-down, because every one of
-                # these has three or fewer answers and the answers are the whole
-                # explanation. A closed combo box showing "none" says nothing.
+                # these has three or fewer answers.
                 $ctrl = New-Object System.Collections.Generic.List[psobject]
                 $grp  = 'ua' + [string]$Field.K
                 # ContainsKey, not $Field.D: only one of these fields spells its
-                # answers out, and under StrictMode a missing key reached for by
-                # property syntax is the kind of thing that throws from inside a
-                # builder and takes the whole page with it.
+                # answers out, and StrictMode throws on a missing key.
                 $spelt = $null
                 if ($Field.ContainsKey('D')) { $spelt = $Field.D }
                 foreach ($c in @($Field.C)) {
@@ -15050,9 +11706,8 @@ function Show-WDWindow {
         if ($noteRight) {
             $note = New-Object Windows.Controls.TextBlock
             $note.Text = [string]$Field.N
-            # Smaller than a note above the control, on purpose. Beside a field
-            # it is an aside; a paragraph in the body size sitting next to a box
-            # competes with the label for which of the two is the field's name.
+            # Smaller than a note above the control, on purpose: beside a field
+            # it is an aside.
             $note.FontSize = 11.5; $note.TextWrapping = 'Wrap'
             $note.Margin = '12,9,0,0'; $note.MaxWidth = 320
             $note.VerticalAlignment = 'Top'
@@ -15060,21 +11715,13 @@ function Show-WDWindow {
             $null = $holder.Children.Add($note)
         }
         # Card, not $Host2, and for an inline field it is the card it went
-        # inside. Collapses hides by card, and a field that shares a frame with
-        # the one above it has to vanish with it rather than leave the frame
-        # half empty.
+        # inside.
         $entry = [pscustomobject]@{ Key = [string]$Field.K; Kind = $kind; Ctrl = $ctrl; Touched = $false
                                     Card = $card }
         if ($kind -eq 'combo') {
             # A locale stops following the display language the moment somebody
-            # sets it on purpose. Every route into it raises SelectionChanged,
-            # including the sync itself - so the flag the sync raises while it
-            # works is what separates "the user chose this" from "the language
-            # chose it", and without that the sync would work exactly once.
-            #
-            # DropDownClosed was tried first and is the wrong event twice over:
-            # it is a plain CLR event with nothing to raise from a test, and it
-            # misses a selection made with the keyboard.
+            # sets it on purpose, and every route into it raises
+            # SelectionChanged.
             $ctrl.Tag = $entry
             $busy2 = $uaSync
             $ctrl.Add_SelectionChanged({
@@ -15084,10 +11731,8 @@ function Show-WDWindow {
         $uaControls.Add($entry)
     }.GetNewClosure()
 
-    # Read the form back into an options object. One place, walking the same
-    # list the builder walked, so a control that exists is a control that is
-    # read - the failure where a field is on the page and silently ignored
-    # cannot happen here.
+    # One place, walking the same list the builder walked, so a control that
+    # exists is a control that is read.
     $uaRead = {
         $o = New-WDUnattendOptions
         foreach ($c in $uaControls) {
@@ -15114,15 +11759,14 @@ function Show-WDWindow {
                 }
                 # A section's own On/Off. Its Tag is a hashtable rather than the
                 # bare value, because the radio also has to know which panel to
-                # show - so the value is read off that rather than off the Tag.
+                # show.
                 'switch' {
                     foreach ($rb in $c.Ctrl) { if ($rb.IsChecked) { $o.($c.Key) = [bool]$rb.Tag.On } }
                 }
             }
         }
-        # The accounts the button added, in the order they were added. Anything
-        # with no name is dropped here rather than in the generator, so what the
-        # summary counts and what the file carries are the same list.
+        # Anything with no name is dropped here rather than in the generator, so
+        # what the summary counts and what the file carries are one list.
         $extra = New-Object System.Collections.Generic.List[psobject]
         foreach ($a in $uaExtraAccts) {
             $nm = [string]$a.Name.Text
@@ -15135,7 +11779,7 @@ function Show-WDWindow {
         $o.ExtraAccounts = $extra.ToArray()
         # A password with no hint is a password Windows will not accept, and
         # being refused at the sign-in screen of a machine you just built is a
-        # bad place to find that out.
+        # bad first minute.
         if ($o.AccountPassword -and -not $o.AccountHint) { $o.AccountHint = 'No hint set' }
         $o
     }.GetNewClosure()
@@ -15148,10 +11792,8 @@ function Show-WDWindow {
         $out
     }.GetNewClosure()
 
-    # What the file will carry, and what it will not - recomputed on every visit
-    # because the selection moves on the Advanced page in between. This is the
-    # first thing on the page rather than the last, because it is the answer to
-    # the question somebody has when they arrive.
+    # Recomputed on every visit, because the selection moves on the Advanced
+    # page in between.
     $uaPaintSummary = {
         $panel = $uaSummary.Panel
         if (-not $panel) { return }
@@ -15175,7 +11817,7 @@ function Show-WDWindow {
             $null = $panel.Children.Add($t)
         }
         # Deprovisioning is the reason to do this at all rather than afterwards,
-        # and it is not obvious from a count, so it is said.
+        # and it is not obvious from a count.
         if (@($pay.Appx).Count) {
             $t = New-Object Windows.Controls.TextBlock
             $t.Text = 'Those apps are deprovisioned rather than uninstalled - they are never staged for any account, so there is nothing left behind and nothing for a later Windows update to put back.'
@@ -15185,9 +11827,8 @@ function Show-WDWindow {
             $null = $panel.Children.Add($t)
         }
 
-        # And what it could not take. Named, with the reason, because a
-        # generator that silently drops a tenth of the plan is worse than one
-        # that refuses to write anything at all.
+        # And what it could not take, named with the reason: a generator that
+        # silently drops a tenth of the plan is worse than one that refuses.
         $skip = @($pay.Skipped)
         $h = New-Object Windows.Controls.TextBlock
         $h.FontSize = 13.5; $h.FontWeight = 'SemiBold'; $h.Margin = '0,14,0,2'; $h.TextWrapping = 'Wrap'
@@ -15220,36 +11861,24 @@ function Show-WDWindow {
     $uaBuild = {
         if ($uaBuilt.Done) { return }
         $uaBuilt.Done = $true
-        # Timed wherever it runs from. The pre-warm records its own figure; this
-        # covers the click path too, which is what runs when somebody opens the
-        # page before the pre-warm has got to it.
+        # Timed wherever it runs from: the pre-warm records its own figure, and
+        # this covers the click path.
         $uaWatchOwn = [Diagnostics.Stopwatch]::StartNew()
 
-        # No standing header. It said what the page is for, and the first
-        # section says that better and in the words somebody arriving actually
-        # needs - so the header was a paragraph of preamble above a paragraph
-        # saying the same thing.
+        # No standing header: it said what the page is for, and the first
+        # section says that better.
         $ui.TxtUaHint.Text = ''
         $ui.TxtUaHint.Visibility = 'Collapsed'
-        # The hairline between the rail and the form. Painted here rather than
-        # in the XAML because the color is a theme key, and a literal brush in
-        # markup is the one thing on this page that would not follow the theme.
+        # Painted here rather than in the XAML because the colour is a theme
+        # key.
         & $Ref $ui.UaIndexRule 'Background' 'Line'
-        # And the rail follows the window from now on. On PageUnattend rather
-        # than the window: a collapsed element raises no SizeChanged, so this
-        # costs nothing on the four screens that are not this one, and it fires
-        # on the way in when the page is first shown.
+        # On PageUnattend rather than the window: a collapsed element raises no
+        # SizeChanged, so this costs nothing on the other pages.
         $ui.PageUnattend.Add_SizeChanged($uaSizeRail)
 
         foreach ($sec in $UA_SECTIONS) {
             # One box holding the whole section: title, rule, note, options. The
             # box is what says where a section starts and stops.
-            #
-            # STRETCH TO A COMMON WIDTH, not shrink to fit. Left-aligned with a
-            # 700px ceiling, each box was as wide as it needed to be and no two
-            # agreed - eleven boxes with eleven different right-hand edges down the
-            # left of a window twice that wide. One ceiling plus Stretch gives them
-            # all the same two edges, and uses the width that was sitting empty.
             $block = New-Object Windows.Controls.Border
             $block.Margin = '0,0,0,14'; $block.Padding = '18,13,18,15'
             $block.CornerRadius = New-Object Windows.CornerRadius 6
@@ -15260,9 +11889,8 @@ function Show-WDWindow {
             $stack = New-Object Windows.Controls.StackPanel
             $block.Child = $stack
 
-            # The heading, and for two sections a control beside it. A DockPanel
-            # rather than a StackPanel so anything added lands immediately to
-            # the right of the words rather than at the far end of the row.
+            # A DockPanel rather than a StackPanel so anything added lands
+            # immediately beside the title.
             $headRow = New-Object Windows.Controls.DockPanel
             $headRow.LastChildFill = $false
             $headRow.Margin = '0,0,0,4'
@@ -15289,16 +11917,13 @@ function Show-WDWindow {
             $body = New-Object Windows.Controls.StackPanel
             $null = $stack.Children.Add($body)
             $uaSecPanel[[string]$sec.K] = $body
-            # The title row, so a field can ask to be rendered beside the title
-            # instead of inside the section.
+            # The title row, so a field can ask to be rendered beside the title.
             $uaSecHead[[string]$sec.K] = $headRow
             $null = $ui.UaContent.Children.Add($block)
             $uaHeads.Add([pscustomobject]@{ Key = [string]$sec.K; Name = [string]$sec.T; Head = $head })
 
             # On/Off beside the title, for a section whose every field is
-            # conditional on one answer. Two radio buttons rather than a check
-            # box: "Auto-debloat after setup [x]" reads as a statement with a
-            # tick after it, and On/Off reads as the question it is.
+            # conditional on one answer.
             if ($sec.ContainsKey('Toggle') -and [string]$sec.Toggle) {
                 $sw = New-Object Windows.Controls.StackPanel
                 $sw.Orientation = 'Horizontal'; $sw.VerticalAlignment = 'Center'
@@ -15316,7 +11941,7 @@ function Show-WDWindow {
                     $pair.Add($rb)
                 }
                 # Everything the handler needs on the Tag, so no closure has to
-                # reach two scopes up for it.
+                # reach two scopes up.
                 foreach ($rb in $pair) {
                     $rb.Tag = @{ On = [bool]$rb.Tag; Body = $body }
                     $rb.Add_Checked({
@@ -15330,11 +11955,8 @@ function Show-WDWindow {
                 # Added after the title, which is docked left, so it lands
                 # directly beside the words it answers.
                 $null = $headRow.Children.Add($sw)
-                # And the reason On is unavailable, when it is. In the heading
-                # row rather than the section body, because the body is exactly
-                # what is hidden while the section is Off - a reason printed
-                # where it can only be read after the thing it forbids has been
-                # done is not a reason, it is a footnote.
+                # In the heading row rather than the section body, because the
+                # body is exactly what is hidden while the section is Off.
                 $why = New-Object Windows.Controls.TextBlock
                 $why.FontSize = 12; $why.VerticalAlignment = 'Center'
                 $why.Margin = '4,0,0,0'; $why.TextWrapping = 'Wrap'; $why.MaxWidth = 420
@@ -15354,13 +11976,9 @@ function Show-WDWindow {
             }
         }
 
-        # One tick empties the rest of its own section. Telling Setup not to
+        # One tick empties the rest of its own section: telling Setup not to
         # require a network and then filling in a network password is two
-        # answers to one question, so the second stops being asked.
-        #
-        # Wired after the loop, because it needs both its own control and every
-        # card that came after it - and by the time the loop reaches it neither
-        # of those exists yet.
+        # answers to one question.
         foreach ($f in $UA_FIELDS) {
             if (-not $f.ContainsKey('Collapses') -or -not [string]$f.Collapses) { continue }
             $me = @($uaControls | Where-Object { $_.Key -eq [string]$f.K })
@@ -15385,12 +12003,7 @@ function Show-WDWindow {
             & $apply $me[0].Ctrl $others
         }
 
-        # ---- a field that only exists under one answer ----------------------
-        #
-        # Same shape as Collapses and the opposite direction: that one is a tick
-        # that empties its section, this is a radio group that reveals a field.
-        # Wired here for the same reason - it needs the control it watches and
-        # the card it hides, and neither exists while the loop is running.
+        # A field that only exists under one answer.
         foreach ($f in $UA_FIELDS) {
             if (-not $f.ContainsKey('ShowWhen') -or -not [string]$f.ShowWhen) { continue }
             $mine = @($uaControls | Where-Object { $_.Key -eq [string]$f.K })
@@ -15398,11 +12011,9 @@ function Show-WDWindow {
             if (-not $mine.Count -or -not $on.Count -or -not $mine[0].Card) { continue }
             $want = [string]$f.ShowIs
             $gated = $mine[0].Card
-            # NOT on the Tag, which is the usual trick on this page and is wrong
-            # here: a choice field's radios carry their own value on the Tag and
-            # $uaRead reads it back to answer the question. Overwriting it makes
-            # the form silently forget which mode was picked. GetNewClosure
-            # instead, which snapshots these two locals per iteration.
+            # Not on the Tag, which is the usual trick here and is wrong for
+            # this: a choice field's radios carry their own value there, and
+            # $uaRead reads it back.
             foreach ($rb in @($on[0].Ctrl)) {
                 $mineValue = [string]$rb.Tag
                 $rb.Add_Checked({
@@ -15415,20 +12026,8 @@ function Show-WDWindow {
             }
         }
 
-        # ---- auto-debloat needs an administrator, and says so ---------------
-        #
-        # The RUN needs no administrator - it happens as Local System before anybody
-        # signs in. But the account this file creates is the one that would have to
-        # UNDO it, and a standard user cannot open the toolkit to revert, cannot
-        # execute the rollback script, and cannot read half of what the run left
-        # behind. Debloating a machine and leaving its only account unable to
-        # reverse that is the one combination this page must not produce.
-        #
-        # Grayed rather than hidden, with the reason in the HEADING row - the body
-        # is what gets hidden while the section is Off, so a reason printed there
-        # could only be read after the thing it forbids had been done. And forced
-        # Off, not merely disabled: a disabled On still selected is a file that
-        # still runs it.
+        # Auto-debloat needs an administrator, and says so: the account this
+        # file creates is the one that would have to undo the run.
         $gate = $uaGate['toolkit']
         $grpBox = @($uaControls | Where-Object { $_.Key -eq 'AccountGroup' })
         if ($gate -and $grpBox.Count) {
@@ -15449,20 +12048,14 @@ function Show-WDWindow {
                 }
             }.GetNewClosure()
             foreach ($rb in @($grpBox[0].Ctrl)) { $rb.Add_Checked($syncToolkitGate) }
-            # The starting state. It is Administrators by default, so this is
-            # normally a no-op - and it is the file loaded from a saved answer
-            # that makes it not one.
+            # The starting state. Administrators is the default, so this is
+            # normally a no-op.
             & $syncToolkitGate
             $uaGateSync.Fn = $syncToolkitGate
         }
 
-        # ---- ticking the sync applies it there and then ---------------------
-        #
-        # Without this the tick only takes effect the next time the display
-        # language changes, so ticking it on a form whose language is already
-        # set does nothing visible - which reads as a control that does not
-        # work. It sets the two locales to the language immediately, which is
-        # both what it promises and the only way to see that it did anything.
+        # Ticking the sync applies it there and then, rather than waiting for
+        # the next language change.
         $syncBox = @($uaControls | Where-Object { $_.Key -eq 'SyncLocales' })
         $langBox = @($uaControls | Where-Object { $_.Key -eq 'UILanguage' })
         if ($syncBox.Count -and $langBox.Count) {
@@ -15486,12 +12079,7 @@ function Show-WDWindow {
             }.GetNewClosure())
         }
 
-        # ---- the two wipe labels follow the disk number ---------------------
-        #
-        # "Erase disk 0 and install fresh" beside a Disk number box reading 2 is
-        # the form being wrong about which drive it will destroy, in the one
-        # place on this page where being wrong cannot be undone. The labels
-        # carry a $0 and it is substituted as the number is typed.
+        # The two wipe labels follow the disk number.
         $numbered = @($UA_FIELDS | Where-Object { $_.ContainsKey('DiskNum') -and [bool]$_.DiskNum })
         if ($numbered.Count) {
             $diskBox = @($uaControls | Where-Object { $_.Key -eq 'DiskId' })
@@ -15521,16 +12109,7 @@ function Show-WDWindow {
             }
         }
 
-        # ---- more accounts, as many as somebody wants -----------------------
-        #
-        # This was a fixed "A second account (optional)" with a password and a
-        # type under it - three rows that were blank on almost every file, and
-        # a hard limit of two on a question that has no natural limit. It is a
-        # button now, and each press adds a box of its own.
-        #
-        # Everything the handlers need travels on a Tag. They are built inside
-        # this block, which is itself a closure, so a reach up the chain would
-        # capture null - the trap [6] exists to catch.
+        # More accounts, as many as somebody wants.
         $acctPanel = New-Object Windows.Controls.StackPanel
         $null = $uaSecPanel['account'].Children.Add($acctPanel)
 
@@ -15543,12 +12122,8 @@ function Show-WDWindow {
         $paintUa  = $Ref
         $acctList = $uaExtraAccts
         $acctHome = $acctPanel
-        # Numbered, not named "Another account". Three identical boxes stacked
-        # under one heading, all of them saying the same two words, is a form
-        # asking somebody to count boxes to know which one they are filling in -
-        # and the removal button makes the count change under them. The account
-        # above is the first, so the added ones start at two, and every card is
-        # renumbered after an add or a remove so the numbers stay contiguous.
+        # Numbered, not named "Another account": three identical boxes all
+        # saying the same two words asks somebody to count boxes.
         $renumberAccts = {
             param($List)
             for ($i = 0; $i -lt $List.Count; $i++) { $List[$i].Title.Text = "Account $($i + 2)" }
@@ -15591,14 +12166,9 @@ function Show-WDWindow {
             $pwdLbl.Text = 'Password'; $pwdLbl.FontSize = 13.5; $pwdLbl.Margin = '0,10,0,0'
             & $paintUa $pwdLbl 'Foreground' 'Text'
             $null = $sp.Children.Add($pwdLbl)
-            # No copy of the warning here, and that is a reversal of what this
-            # comment used to say. "The whole warning again, not a
-            # back-reference" is right about one repetition and wrong about
-            # four: with the two fixed password fields above and a card per
-            # added account, a section with two extra accounts printed eight
-            # lines of red text three times over, and something said three times
-            # in one box stops being read at all. It is said once, boxed, at the
-            # top of the section - which is where the eye starts anyway.
+            # No copy of the warning here: it is boxed once at the top of the
+            # section, because something said three times in one box stops being
+            # read.
             $pwdBox = New-Object Windows.Controls.PasswordBox
             $pwdBox.FontSize = 13; $pwdBox.Padding = '6,4'; $pwdBox.Width = 320
             $pwdBox.HorizontalAlignment = 'Left'; $pwdBox.Margin = '0,5,0,0'
@@ -15624,8 +12194,7 @@ function Show-WDWindow {
                                         Card = $card; Title = $ttl }
             $acctList.Add($entry)
             # The renumber travels on the Tag rather than being reached for: the
-            # handler is built inside a closure and a reach up the chain would
-            # capture null, which is the trap [6] of the self test exists for.
+            # handler is built inside a closure.
             $drop.Tag = @{ Entry = $entry; List = $acctList; Home = $acctHome; Renumber = $renumberAccts }
             $drop.Add_Click({
                 $t = $this.Tag
@@ -15639,9 +12208,8 @@ function Show-WDWindow {
         $addAcct.Add_Click($makeAcct)
         $uaAddBtn.Btn = $addAcct
 
-        # Two sections open with a boxed warning rather than a field, and they
-        # are built the same way for the same reason: what is dangerous about
-        # the section is true of the section, not of one control in it.
+        # What is dangerous is true of the section rather than of one control in
+        # it, so it is said once where the section starts.
         $uaWarnBox = {
             param([string]$Where, [string]$Text)
             $b = New-Object Windows.Controls.Border
@@ -15658,35 +12226,23 @@ function Show-WDWindow {
             $uaSecPanel[$Where].Children.Insert(0, $b)
         }
         & $uaWarnBox 'disks' 'Erasing a disk from an answer file happens silently, on whatever machine the medium is booted on. There is no confirmation at install time and no way back. Leave this alone unless the medium will only ever be used on a machine you are deliberately wiping.'
-        # Once, at the top, instead of above each of the two password fields and
-        # again inside every added account. Same box as the Disks one, which is
-        # the other place on this page where the danger belongs to the section.
+        # Once, at the top, instead of above each password field and again
+        # inside every added account.
         & $uaWarnBox 'account' $UA_PWD_WARN
-        # And the third, for the same reason. A Wi-Fi password ends up in the
-        # file in exactly the same plain text as an account password, so it gets
-        # exactly the same warning in exactly the same place rather than a
-        # differently-shaped one above one field.
+        # And the third, for the same reason: a Wi-Fi password ends up in the
+        # file in exactly the same plain text.
         & $uaWarnBox 'wifi' $UA_PWD_WARN
 
-        # ONE PARAGRAPH, and the procedure is in the README. What has to be here is
-        # what the page is, that it does nothing to THIS machine, why somebody
-        # would want one, and the instruction to leave the rest alone. Anything
-        # procedural - where the file goes, the Rufus conflict, the sysprep route
-        # on a machine already installed - is read once with the stick in hand.
-        #
-        # README.md is a LIVE LINK in both paragraphs that name it: it is sitting
-        # in the folder this application is running out of, and telling a reader
-        # the name of a file they then have to find is a citation where a door
-        # would do.
+        # One paragraph, and the procedure is in the README. What has to be here
+        # is what the page is, that it does nothing to this machine, and why
+        # somebody would want one.
         $readmeRun = {
             param($Block)
             $link = New-Object Windows.Documents.Hyperlink
             $null = $link.Inlines.Add((New-Object Windows.Documents.Run 'README.md'))
             $link.ToolTip = 'Opens README.md in whatever this machine uses for .md files.'
-            # The path is resolved when the link is built, not when it is
-            # clicked, and it is carried on the Hyperlink itself: this is a
-            # closure inside a closure and reaching further up the chain from
-            # the click handler captures $null.
+            # The path is resolved when the link is built and carried on the
+            # Hyperlink itself.
             $where = ''
             try { $where = [string](Join-Path (Split-Path -Parent $ModulePath) 'README.md') } catch { }
             $link.Tag = $where
@@ -15696,8 +12252,7 @@ function Show-WDWindow {
                 try { Start-Process -FilePath $p -ErrorAction Stop }
                 catch {
                     # No .md handler, or the file has moved. Showing the folder
-                    # is the useful failure - it puts the reader one click from
-                    # the thing rather than in front of an error about it.
+                    # is the useful failure.
                     try { Start-Process -FilePath (Split-Path -Parent $p) -ErrorAction Stop } catch { }
                 }
             }.GetNewClosure())
@@ -15712,27 +12267,20 @@ function Show-WDWindow {
         & $Ref $t 'Foreground' 'Sub'
         $null = $uaSecPanel['note'].Children.Add($t)
 
-        # The generated tally, folded in under the paragraph above rather than
-        # given a heading of its own. "What this file does" was a section - a
-        # second bordered box, directly under this one, holding four lines of
-        # counts - and the two are halves of one answer to somebody who has just
-        # arrived: what the page is, and what this particular file will carry. A
-        # rule between them, because they are still two thoughts.
+        # The generated tally, folded in under the paragraph rather than given a
+        # heading of its own.
         $sumRule = New-Object Windows.Controls.Border
         $sumRule.Height = 1; & $Ref $sumRule 'Background' 'Line'
         $sumRule.Opacity = 0.55; $sumRule.Margin = '0,13,0,11'
         $null = $uaSecPanel['note'].Children.Add($sumRule)
-        # No heading. It read "What this file does" over a list of counts of
-        # what the file does, which is a label announcing a thing that has just
-        # announced itself. The rule above is enough to say a new thought
-        # starts here, and everything under it is a sentence rather than a
-        # column that needs one.
+        # No heading: it read "What this file does" over a list of what the file
+        # does.
         $sumPanel = New-Object Windows.Controls.StackPanel
         $null = $uaSecPanel['note'].Children.Add($sumPanel)
         $uaSummary.Panel = $sumPanel
 
         # What to put on the stick beside the file, said where the option that
-        # needs it is rather than in the instructions three sections up.
+        # needs it is.
         $tk = New-Object Windows.Controls.TextBlock
         $null = $tk.Inlines.Add((New-Object Windows.Documents.Run 'To use this option, copy the WinSetupToolkit folder (app, Modules, Manifest, and profile_saves folders) to the top level of the installation USB, beside autounattend.xml. It is copied to the machine during installation, so the USB can be removed as soon as Windows restarts, and it runs at the very end of Setup - before the sign-in screen appears, with nobody signed in and nothing to confirm. Because there is no screen to show it on, it leaves a full write-up on the desktop and offers it to the first person who signs in. Items that need a download may fail if network or App Installer are not yet set up; failures are reported and skipped. More detailed instructions in '))
         & $readmeRun $tk
@@ -15742,14 +12290,7 @@ function Show-WDWindow {
         $null = $uaSecPanel['toolkit'].Children.Add($tk)
 
         # The rail. Same idea as Advanced's - an index into one page, never a
-        # router - and small enough at ten entries to be written plainly rather
-        # than generalised out of the other one.
-        #
-        # Its cards are collected as they are made so $uaSizeRail can grow them
-        # with the window. Eleven 12.5pt labels in a 184px column is right on a
-        # 1000px window and is a huddle in the top left corner of a maximized
-        # one, which is the complaint - the page's own content stretches to fill
-        # the width and the index beside it did not.
+        # router.
         $uaRailCards.Clear()
         foreach ($h in $uaHeads) {
             $card = New-Object Windows.Controls.Border
@@ -15762,7 +12303,7 @@ function Show-WDWindow {
             $card.Child = $lbl
             $uaRailCards.Add([pscustomobject]@{ Card = $card; Label = $lbl })
             # Copied into this scope for the handlers, which capture only what
-            # is local here - the rule this file has a section about.
+            # is local here.
             $setBrush = $Ref
             $sv = $ui.UaScroll
             $content = $ui.UaContent
@@ -15784,8 +12325,8 @@ function Show-WDWindow {
     }.GetNewClosure()
 
     # Generating is separated from writing so the self test can drive the whole
-    # form without a file dialog, and so "Show the file" and "Write" cannot
-    # disagree about what they produced.
+    # form without a file dialog, and so the two cannot disagree about what they
+    # produced.
     $uaGenerate = {
         $o = & $uaRead
         $items = $null
@@ -15796,18 +12337,8 @@ function Show-WDWindow {
         [pscustomobject]@{ Options = $o; Xml = $xml; Check = (Test-WDUnattendXml -Xml $xml -Options $o) }
     }.GetNewClosure()
 
-    # BUILT BEFORE THE PAGE IS SHOWN, not after. It used to swap pages, pump a
-    # frame, then build - painting the empty page on purpose, which is the whole of
-    # "it appears blank and then fills in". The frame was there so the window would
-    # not look frozen, and it bought a frame of nothing.
-    #
-    # There is nothing to look at during the build either way, so the choice is
-    # WHICH nothing: a blank version of the page you asked for, or the page you
-    # were already on for a moment longer. The second reads as a click that took a
-    # moment; the first reads as a page that is broken. Normally neither, because
-    # $advWarm has built this long before anybody clicks.
-    #
-    # $ui.BtnUnattend is the home page's third card - see $buildHomeCards.
+    # Built before the page is shown, not after. It used to swap pages, pump a
+    # frame, then build - painting the empty page on purpose.
     $ui.BtnUnattend.Add_Click({
         & $uaBuild
         & $uaPaintSummary
@@ -15821,8 +12352,7 @@ function Show-WDWindow {
         $r = & $uaGenerate
         $body = $r.Xml
         # A MessageBox truncates without saying so, and this is the one control
-        # whose whole job is showing the file. Written out and opened in
-        # whatever the machine uses for .xml.
+        # whose whole job is showing the file.
         try {
             $p = Join-Path ([IO.Path]::GetTempPath()) 'autounattend-preview.xml'
             [IO.File]::WriteAllText($p, $body, (New-Object System.Text.UTF8Encoding $false))
@@ -15860,14 +12390,13 @@ function Show-WDWindow {
                                    'Windows setup completion file', 'OK', $icon) | Out-Null
     }.GetNewClosure())
 
-    # ========================================================= RUN PAGE ====
     # Theme keys, handed to $Ref by the two callers.
     $statusColor = {
         param($s)
         switch ($s) {
             'Removed' { 'Ok' } 'Changed' { 'Ok' }
             # The same gray as "not present", because they mean the same thing
-            # to the person reading: nothing happened here and nothing needed to.
+            # to the person reading.
             'AlreadySet' { 'Muted' }
             'NotPresent' { 'Muted' } 'Skipped' { 'Muted' }
             'Obstruction' { 'Obstruct' }
@@ -15897,12 +12426,8 @@ function Show-WDWindow {
         $null = $ui.LegendPanel.Children.Add($sp)
     }
 
-    # Each counter doubles as a filter toggle for the log below it.
-    # Found belongs here even though nothing increments a count for it. A row
-    # whose status is missing from this table is added to $logRows and never to
-    # the list, silently - which is how every finding the residue sweep reports
-    # went unseen. The sweep deliberately changes nothing and only reports, so
-    # dropping its rows removed the entire point of the item.
+    # Each counter doubles as a filter toggle for the log below it. Found
+    # belongs here even though nothing increments a count for it.
     $statusFilter = @{ Removed=$true; Changed=$true; AlreadySet=$true; NotPresent=$true; Skipped=$true
                        Obstruction=$true; Partial=$true; Blocked=$true; Failed=$true; Found=$true }
     $logRows      = New-Object System.Collections.Generic.List[psobject]
@@ -15912,26 +12437,22 @@ function Show-WDWindow {
         Skipped='skipped'; Obstruction='obstruction'; Partial='partial'; Blocked='blocked'; Failed='failed'
         Found='to review'
     }
-    # The same set in the tense a simulation is entitled to. Nothing has been
-    # removed at the end of a preview, so a closing line reading "124 removed"
-    # is the one sentence on that page that is not true - and it is the sentence
-    # somebody reads before deciding whether to press Apply.
+    # The same set in the tense a simulation is entitled to: nothing has been
+    # removed at the end of a preview.
     $statLabelsAhead = [ordered]@{
         Removed='to remove'; Changed='to change'; AlreadySet='nothing to do'; NotPresent='not present'
         Skipped='to skip'; Obstruction='obstruction'; Partial='partial'; Blocked='blocked'; Failed='would fail'
         Found='to review'
     }
 
-    # How the run list can be ordered. Deliberately short: the status chips
-    # already group by outcome, so a sort by status would be the same question
-    # asked twice - what is left is finding a name, and finding the slow ones.
+    # Deliberately short: the status chips already group by outcome, so a sort
+    # by status would be the same question twice.
     $runSortRank = [ordered]@{
         'Order it happened' = 'seq'
         'Name (A-Z)'        = 'name'
         'Worst outcome'     = 'worst'
     }
-    # Worst first, so the things that need attention are at the top. Found and
-    # NotPresent are the two that never do.
+    # Worst first, so the things that need attention are at the top.
     $runStatusRank = @{
         Failed=0; Blocked=1; Partial=2; Obstruction=3; Found=4
         Removed=5; Changed=6; Skipped=7; AlreadySet=8; NotPresent=9
@@ -15939,8 +12460,7 @@ function Show-WDWindow {
 
     $applyLogFilter = {
         # Collapsing the row's content leaves its ListBoxItem container behind,
-        # complete with padding, so hidden entries showed up as ragged gaps.
-        # Rebuilding the item list is the only way to get an evenly spaced list.
+        # complete with padding, so hidden entries showed as ragged gaps.
         $ui.LogList.Items.Clear()
 
         $needle = ''
@@ -15955,8 +12475,7 @@ function Show-WDWindow {
             if (-not $statusFilter[$lr.Status]) { continue }
             if ($needle) {
                 # Name and detail both, because half of what somebody searches
-                # for after a run is in the detail - a package name, a path, or
-                # the word "refused".
+                # for after a run is in the detail.
                 if (($lr.Name -notlike "*$needle*") -and ($lr.Detail -notlike "*$needle*")) { continue }
             }
             $keep.Add($lr)
@@ -15988,12 +12507,7 @@ function Show-WDWindow {
     $filt     = $statusFilter
     $refilter = $applyLogFilter
 
-    # ---- the sort picker and the search box --------------------------------
-    #
-    # Items rather than bare strings, so each can carry the mode on its Tag and
-    # nothing has to map a display string back to a behaviour. No brushes on
-    # either: a ComboBox keeps the system chrome, and painting it is the trap
-    # this file documents twice already.
+    # The sort picker and the search box.
     foreach ($label in $runSortRank.Keys) {
         $it = New-Object Windows.Controls.ComboBoxItem
         $it.Content = $label
@@ -16002,9 +12516,8 @@ function Show-WDWindow {
     }
     $ui.CmbRunSort.SelectedIndex = 0
     $ui.CmbRunSort.Add_SelectionChanged({ & $refilter }.GetNewClosure())
-    # Debounced for the same reason the other two search boxes are: the pass
-    # rebuilds every visible row, and the letters are what the person is
-    # watching while it does.
+    # Debounced for the same reason the other two search boxes are: the letters
+    # are what the person is watching.
     $ui.TxtRunSearch.Add_TextChanged((& $newDebounce 180 $applyLogFilter))
 
     foreach ($k in $statLabels.Keys) {
@@ -16030,29 +12543,27 @@ function Show-WDWindow {
         $null = $ui.StatsPanel.Children.Add($box)
     }
 
-    # Rough seconds per action, used to estimate how long applying will take.
-    # Deliberately coarse - uninstaller speed varies by an order of magnitude.
+    # Rough seconds per action, deliberately coarse - uninstaller speed varies
+    # by an order of magnitude.
     $actionCost = @{
         appx = 4; appxPolicy = 1; winget = 50; uninstall = 30
         registry = 0.3; registryKey = 0.5; service = 2; task = 1
         feature = 50; capability = 45; file = 1; shortcut = 1; script = 15
     }
-    # Handlers whose cost is dominated by something other than their action type.
+    # Handlers whose cost is dominated by something other than their action
+    # type.
     $scriptCost = @{
         'mcafee' = 200; 'norton' = 150; 'remove-edge' = 100; 'od-uninstall' = 45
         'copilot-key' = 60; 'restart-explorer' = 8; 'close-resurrection' = 6
         # Reads every .lnk in the Start menu and on the desktop for every
-        # account, and resolves each target. Cheap per shortcut, but there are
-        # a few hundred of them.
+        # account, and resolves each target.
         'clear-stale-shortcuts' = 5
         'startup-clean' = 6; 'clear-logs' = 4; 'persistence-guard' = 4
         'oem-detect' = 2; 'uninstall-residue' = 20
     }
     # The steps Resolve-WDPlan appends rather than the operator selecting them.
-    # They get a row on the run page like everything else, but not the "exclude
-    # this from the run" offer that goes with one: the exclusion list is applied
-    # to the selection, and these are not in the selection, so the offer would
-    # be a button that reports success and changes nothing.
+    # They get a row but not the "exclude this" offer, because the exclusion
+    # list is applied to the selection and these are not in it.
     $AUTO_STEPS = New-WDStringSet @('close-resurrection', 'clear-stale-shortcuts', 'restart-explorer')
     $restorePointSeconds = 90
 
@@ -16068,21 +12579,13 @@ function Show-WDWindow {
         'Found'   = 'Something worth a look, not something that was done. Nothing was changed for this row and nothing will be: the sweep that produces these reports leftovers rather than deleting them, because "14 suspicious folders" is not a thing anybody can sensibly approve in advance. Read the path, decide for yourself.'
     }
 
-    # Everything somebody has to be told once an apply is over, written once so
-    # the card on the page and the question on the way out cannot drift.
-    #
-    # It carried the restart count and nothing else, which is the smallest of
-    # the three things that are true at that moment and the only one they could
-    # have guessed. The other two they cannot: that a folder has appeared on
-    # their desktop, and that one file in it exists to be searched weeks from
-    # now by somebody who will have forgotten this run happened. A lookup
-    # document nobody knows about is a document that does not exist.
+    # Written once so the card on the page and the question on the way out
+    # cannot drift.
     $wrapUpLines = {
         $out = New-Object System.Collections.Generic.List[string]
         $keep = [string]$state.Sync.KeepDir
-        # Generate rollback script is a row that can be unticked, so every line
-        # below has to describe the run that happened rather than the run this
-        # application would rather have had.
+        # The rollback script is a row that can be unticked, so every line below
+        # describes the run that happened.
         $undo = [bool]$state.Sync.HasUndo
         $holds = $(if ($undo) { 'the rollback script, a list of every change this run made, and a file to search when something breaks' }
                    else { 'a list of every change this run made, and a file to search when something breaks' })
@@ -16097,9 +12600,8 @@ function Show-WDWindow {
         } else {
             $out.Add('There is no rollback script for this run - "Generate rollback script" was not selected. To undo the whole run, open this toolkit and use Revert past changes, which reads the same journal the script would have been written from.')
         }
-        # Windows has its own way back, and it is worth naming - both when it
-        # worked, because nobody thinks to look, and when it did not, because
-        # the confirmation before the run said there would be one.
+        # Worth naming both when it worked, because nobody thinks to look, and
+        # when it did not, because the confirmation promised one.
         switch ([string]$state.Sync.RestorePoint) {
             'ok' {
                 $out.Add('Windows also took a system restore point immediately before the run. Search Windows for "Create a restore point" and press System Restore to roll the whole machine back to it - that undoes anything else you did since, so the rollback script above is the narrower and usually better answer.')
@@ -16110,22 +12612,10 @@ function Show-WDWindow {
         }
         ,$out
     }.GetNewClosure()
-    # The wrap-up goes in the run footer now, beside the buttons, rather than in
-    # a second bar below it - so both callers set TxtRunWrap directly and there
-    # is nothing left for a one-line helper to hide. Joined with spaces rather
-    # than blank lines: it is one paragraph in a footer, not a page of notes.
+    # The wrap-up goes in the run footer beside the buttons, so both callers set
+    # TxtRunWrap directly.
 
-    # ---- and said once, out loud, when the apply finishes ------------------
-    #
-    # The footer line is there to be re-read; this is there to be READ. The run
-    # has just put a folder on somebody's desktop that they did not ask for and
-    # do not know the purpose of, and the whole value of that folder depends on
-    # them knowing it exists before they need it. A line in a footer under a
-    # two-hundred row list is not that.
-    #
-    # One dialog, at the one moment it is certainly true, with a button that
-    # opens the folder - because "there is a folder on your desktop" and being
-    # shown it are different amounts of likely to stick.
+    # And said once, out loud, when the apply finishes.
     $offerRunFolder = {
         if ($state.NoPrompts) { return }
         $keep = [string]$state.Sync.KeepDir
@@ -16140,65 +12630,47 @@ function Show-WDWindow {
             }
         } else {
             # No folder to offer - a machine with no desktop, or a run that
-            # could not write there. Still say where everything went, because
-            # that is the half of the message that does not depend on it.
+            # could not write there. Still say where everything went.
             Show-WDMessage ($body, 'The run has finished', 'OK', 'None') | Out-Null
         }
-        # Reading this IS the acknowledgement, so closing the window afterwards
-        # does not ask the same question a second time.
+        # Reading this is the acknowledgement, so closing the window afterwards
+        # does not ask again.
         $state.Acknowledged = $true
     }.GetNewClosure()
 
     $updateExcludedNote = {
         # Both branches, so putting the last excluded item back also puts the
-        # note back rather than leaving "1 item(s) excluded" on screen.
-        #
-        # What to do next, and nothing else. This line and the card above it
-        # both used to open on "nothing was changed" and both used to end on
-        # "then Apply" - two sentences, three inches apart, saying the same
-        # thing in different words. The card carries the outcome now and this
-        # carries the instruction.
+        # note back.
         $ui.TxtRunNote.Text =
             'Click any line to see exactly what it will change, or to drop it from the run.' +
             $(if ($state.Excluded.Count) { " $($state.Excluded.Count) item(s) excluded so far." } else { '' })
     }.GetNewClosure()
 
-    # Flipping a row in or out of the pending run. Lives out here so the self
-    # test can drive it without the MessageBox that gates it in the GUI.
-    # Rows the preview page keeps track of, so excluding one can strike through
-    # another. Only Edge and its replacement browser are paired today.
+    # Lives out here so the self test can drive it without the MessageBox that
+    # gates it in the GUI.
     $logRowByItem = @{}
 
-    # Resolved on first use rather than here: the ListBox has no template, and
-    # so no ScrollViewer inside it, until the run page has been laid out once.
+    # Resolved on first use: the ListBox has no template, and so no ScrollViewer
+    # inside it, until the run page has been laid out once.
     $logScroll = @{ Sv = $null }
 
-    # $replayRun is written far below, with the run page's other machinery, and
-    # is called from the very end of this function. A holder, so the call site
-    # does not have to be a closure over something declared after it.
+    # $replayRun is written far below and called from the very end of this
+    # function.
     $replayRef = @{ Fn = $null }
 
     $setRowExcluded = {
         param($Tag, [bool]$Excluded)
         if (-not $Tag.ItemId) { return }
         # Dropping Edge removal from the run drops the browser that was only
-        # offered because of it. Putting Edge back brings the offer back too.
-        # A browser asked for in the Add section is not that browser: it was
-        # never a consequence of Edge, so Edge leaving does not take it.
+        # offered because of it.
         if ($Tag.ItemId -eq $EDGE_ID -and $state.BrowserAuto -and $logRowByItem.ContainsKey($BROWSER_ID)) {
             $mate = $logRowByItem[$BROWSER_ID]
             if ([bool]$state.Excluded.Contains($BROWSER_ID) -ne $Excluded) {
                 & $setRowExcluded $mate $Excluded
             }
         }
-        # THE LINE GOES THROUGH THE WHOLE ROW, not just the name. A strike on the
-        # name alone left the status word and the detail beside it undecorated, so
-        # a struck-out row still read as three quarters live - and on a page whose
-        # whole job is "here is what will happen", a row that is not going to
-        # happen has to look like it at a glance rather than on inspection.
-        #
-        # $Tag.Cells rather than walking the Grid: the three text blocks are what
-        # the row IS, and a walk would pick up whatever gets added to it later.
+        # The line goes through the whole row, not just the name: a strike on
+        # the name alone left the status word and the detail undecorated.
         $cells = @($Tag.Cells | Where-Object { $_ })
         if (-not $cells.Count) { $cells = @($Tag.Label) }
         if ($Excluded) {
@@ -16214,9 +12686,7 @@ function Show-WDWindow {
             foreach ($c in $cells) {
                 $c.TextDecorations = New-Object Windows.TextDecorationCollection
             }
-            # Each column back to its own colour rather than all three to Text:
-            # the status word is painted by its result and the detail is an aside,
-            # so repainting them alike would quietly flatten the page.
+            # Each column back to its own colour rather than all three to Text.
             & $Ref $Tag.Label 'Foreground' 'Text'
             if ($Tag.Cells -and $Tag.Cells[0]) { & $Ref $Tag.Cells[0] 'Foreground' (& $statusColor ([string]$Tag.Status)) }
             if ($Tag.Cells -and $Tag.Cells[2]) { & $Ref $Tag.Cells[2] 'Foreground' 'Sub' }
@@ -16227,14 +12697,11 @@ function Show-WDWindow {
     $addLogRow = {
         param($status, $name, $detail, $itemId)
         # Locals, because the click handler below is a closure built in this
-        # child scope and would otherwise capture these as null.
+        # child scope.
         $st         = $state
         $setExcl    = $setRowExcluded
         # The same two things the Advanced page's Details button assembles, so
-        # the preview can answer "what exactly will this change" in the same
-        # words rather than in a summary of its own that could drift. A preview
-        # row was the one place in the application that named an item, said what
-        # would happen to it, and could not say what it would do.
+        # the preview can answer "what exactly will this change" the same way.
         $detailFn   = $itemDetail
         $itemsL     = $itemById
 
@@ -16248,13 +12715,13 @@ function Show-WDWindow {
         }
         $s = New-Object Windows.Controls.TextBlock
         # In a simulation nothing has happened yet, so the past tense would be a
-        # lie. "removed" becomes "will remove".
+        # lie.
         $s.Text = if ($state.Preview) {
             switch ($status) {
                 'Removed'    { 'will remove' }
                 'Changed'    { 'will change' }
-                # Present tense on purpose. "will do nothing" is a promise
-                # about the future where this is a fact about now.
+                # Present tense on purpose: "will do nothing" is a promise about
+                # the future where this is a fact about now.
                 'AlreadySet' { 'nothing to do' }
                 'NotPresent' { 'not present' }
                 'Skipped'    { 'will skip' }
@@ -16281,10 +12748,8 @@ function Show-WDWindow {
         $g.ToolTip = if ($state.Preview -and $itemId) {
             'Click for the full explanation, or to drop this from the run and put it back'
         } else { 'Click for the full explanation' }
-        # Cells is all three columns - the status word, the name, and the detail.
-        # Excluding a row strikes the whole of it rather than the name alone,
-        # which is what makes it read as a line drawn through the option instead
-        # of as a name that happens to be crossed out beside a live status.
+        # Cells is all three columns, because excluding a row strikes the whole
+        # of it rather than the name alone.
         $g.Tag = @{ Status = $status; Name = $name; Detail = $detail; ItemId = $itemId
                     Label = $n; Cells = @($s, $n, $d) }
         $g.Add_MouseLeftButtonUp({
@@ -16297,9 +12762,6 @@ function Show-WDWindow {
                 $out.Add("Result: $($t.Status)")
             }
             # The detail under a heading that says what kind of detail it is.
-            # A refusal names the thing Windows refused, and that line arriving
-            # bare under "Result: Blocked" left the reader to work out whether
-            # they were looking at the cause, the target, or an error code.
             if ([string]$t.Detail) {
                 $out.Add('')
                 $out.Add($(switch ([string]$t.Status) {
@@ -16314,14 +12776,6 @@ function Show-WDWindow {
                 $out.Add("  $($t.Detail)")
             }
             # And the exact values, straight off the item's own actions.
-            #
-            # Guarded, because this is the one part of the dialog that goes and
-            # reads the machine - a registry value per line and a service lookup
-            # per name - while the rest is text already in hand. A row that
-            # cannot describe itself should cost its description, not the click:
-            # the outcome above it is what the operator came for, and on a
-            # preview the exclude question below it is the only thing on the page
-            # that can still change what a run will do.
             if ($t.ItemId -and $itemsL.ContainsKey([string]$t.ItemId)) {
                 $out.Add('')
                 try {
@@ -16334,8 +12788,7 @@ function Show-WDWindow {
             $body = ($out -join "`r`n")
 
             # In a simulation the plan is still editable, so every row can be
-            # dropped from the run - and dropping one is not a decision you have
-            # to live with, so the same click puts it back.
+            # dropped from the run.
             $isOut = ($t.ItemId -and $st.Excluded.Contains($t.ItemId))
             if ($st.Preview -and $t.ItemId) {
                 $body += if ($isOut) {
@@ -16355,27 +12808,17 @@ function Show-WDWindow {
 
         if ($itemId) { $logRowByItem[[string]$itemId] = $g.Tag }
         # Name and detail are kept so the search box has something to match on
-        # and the sort has something to order by. Seq is the arrival order,
-        # which is the default and the only one that can be restored exactly -
-        # a stable sort on any other key has to fall back to something, and
-        # "the order it happened in" is the answer somebody expects.
+        # and the sort something to order by.
         $logRows.Add([pscustomobject]@{
             Status = $status; Element = $g; Seq = $logRows.Count
             Name = [string]$name; Detail = [string]$detail
         })
-        # Nothing to narrow until there is a list. Appearing with the first row
-        # rather than at the end, because the reason to search is usually
-        # impatience part-way through a long run.
+        # Appearing with the first row rather than at the end, because the
+        # reason to search is usually a row that has just gone past.
         if ($ui.RunFilterBar.Visibility -ne 'Visible') { $ui.RunFilterBar.Visibility = 'Visible' }
         if ($statusFilter[$status]) {
             # Follow the tail only while the operator is already reading the
-            # tail. Scrolling up to look at something and being yanked back down
-            # by the next result makes the list unreadable exactly when there is
-            # most to read.
-            #
-            # Measured before the add, not after: adding a row grows
-            # ScrollableHeight, so a viewport that was at the bottom stops
-            # looking like it the moment the item lands.
+            # tail.
             if (-not $logScroll.Sv) { $logScroll.Sv = Get-WDChildScrollViewer $ui.LogList }
             $sv = $logScroll.Sv
             $follow = $true
@@ -16389,13 +12832,7 @@ function Show-WDWindow {
         }
     }
 
-    # ---- the "what is it doing right now" card -----------------------------
-    # The progress line at the top of the page was there all along and nobody
-    # found it: the eye is at the bottom, where the log is filling and where the
-    # buttons are. This is the same information, put where it is being looked
-    # for, plus the one thing the top line never had - how long this one item has
-    # been going. A vendor uninstaller that takes four minutes is normal and
-    # indistinguishable from a hang unless something is counting.
+    # The "what is it doing right now" card.
     $showNow = {
         param([string]$Head, [string]$Item, [bool]$Timed)
         $ui.NowCard.Visibility = 'Visible'
@@ -16409,15 +12846,14 @@ function Show-WDWindow {
     }.GetNewClosure()
 
     # Called from the timer, so it must be cheap and must not repaint what has
-    # not changed - this runs eight times a second for the length of the run.
+    # not changed - this runs eight times a second.
     $tickNow = {
         if (-not $state.NowSince) { return }
         $secs = [int]([datetime]::UtcNow - $state.NowSince).TotalSeconds
         $txt = $(if ($secs -ge 60) { '{0}m {1:00}s' -f [int]($secs / 60), ($secs % 60) } else { "${secs}s" })
         if ($ui.TxtNowElapsed.Text -ne $txt) { $ui.TxtNowElapsed.Text = $txt }
-        # Past twenty seconds, say so rather than leaving the operator to wonder.
-        # The offer to skip is real but limited, and the wording says which: it
-        # abandons the actions this item has left, not the one it is inside.
+        # Past twenty seconds, say so rather than leaving the operator to
+        # wonder. The offer to skip is real but limited.
         if ($secs -ge 20 -and $ui.TxtNowNote.Visibility -ne 'Visible' -and -not $state.Preview) {
             $ui.TxtNowNote.Text = 'This one is taking a while. Vendor uninstallers often do - ' +
                                   'each one is given five minutes before it is given up on. ' +
@@ -16430,23 +12866,18 @@ function Show-WDWindow {
 
     $timer = New-Object Windows.Threading.DispatcherTimer
     $timer.Interval = [TimeSpan]::FromMilliseconds(120)
-    # Kept as a named block rather than an anonymous handler so the harness can
-    # push synthetic events into the queue and drain them without a real run.
-    # Nothing on this page was under test before, which is how the apply came to
-    # open showing the simulation's numbers.
+    # A named block rather than an anonymous handler, so the harness can push
+    # synthetic events into the queue and drain them without a real run.
     $pumpRun = {
-      # An exception raised in a WPF event handler on the dispatcher thread ends
-      # the process. That is the one way this application could disappear
-      # mid-run without saying anything, so the whole tick is wrapped and a
-      # failure becomes a row in the log the operator can read.
+      # An exception raised in a WPF handler on the dispatcher thread ends the
+      # process.
       try {
         $q = $state.Sync.Queue
         while ($q.Count -gt 0) {
             $e = $q[0]; $q.RemoveAt(0)
             switch ($e.Phase) {
-                # The minutes before the first item: modules loading, the restore
-                # point, the software scan, resolving the plan. All of it used to
-                # happen behind a page that still said "Simulation complete".
+                # The minutes before the first item: modules loading, the
+                # restore point, the scan, resolving the plan.
                 'Stage' {
                     $ui.TxtPhase.Text   = $(if ($state.Preview) { 'Simulating changes' } else { 'Applying changes' })
                     $ui.TxtCurrent.Text = [string]$e.Text
@@ -16466,8 +12897,7 @@ function Show-WDWindow {
                     $state.RunTotal = [int]$e.Total
                     $ui.TxtCurrent.Text  = "[$($e.Index)/$($e.Total)]  $($e.ItemName)"
                     # The engine reports each item twice: once with no result on
-                    # the way in, once with one on the way out. The first is the
-                    # only moment anything knows what is running right now.
+                    # the way in, once with one on the way out.
                     if (-not $e.Result) {
                         & $showNow "Working on $($e.Index) of $($e.Total)" ([string]$e.ItemName) $true
                     }
@@ -16475,10 +12905,7 @@ function Show-WDWindow {
                         $txt = $e.Result.Message
                         if ($e.Result.Detail) { $txt = "$($e.Result.Message) - $($e.Result.Detail)" }
                         # It worked, but not the obvious way. Said on the row
-                        # rather than swallowed, because how a thing had to be
-                        # done is worth knowing later - and said as part of a
-                        # succeeded row rather than as a Blocked one, because
-                        # the outcome was reached.
+                        # rather than swallowed.
                         if ([string]$e.Result.Recovered) {
                             $txt = "$txt  [done another way: $($e.Result.Recovered)]"
                         }
@@ -16509,18 +12936,14 @@ function Show-WDWindow {
                 # One row per thing the operator has to look at. Deliberately
                 # outside $state.Counts: a finding is not an outcome.
                 'Finding' { & $addLogRow 'Found' $e.Name $e.Detail $null }
-                # A row for something the run did that is not a plan item - the
-                # restore point is the only one today. Outside $state.Counts for
-                # the same reason: the counters speak for the selection.
+                # A row for something the run did that is not a plan item.
+                # Outside $state.Counts for the same reason.
                 'Row' { & $addLogRow ([string]$e.Status) ([string]$e.Name) ([string]$e.Detail) $null }
                 'Done' {
                     $ui.BarOverall.IsIndeterminate = $false
                     $ui.BarOverall.Value = $ui.BarOverall.Maximum
-                    # Canceled first. A stopped run and a finished one produce
-                    # the same Done event and the same full bar, and calling the
-                    # first "Finished" over a summary of the handful of items
-                    # that did run is the most misleading thing this page could
-                    # say about what happened to the machine.
+                    # Canceled first: a stopped run and a finished one produce
+                    # the same Done event and the same full bar.
                     $ui.TxtPhase.Text = if ($state.Sync.Cancel)        { 'Canceled' }
                                         elseif ($state.Mode -eq 'revert') { 'Revert complete' }
                                         elseif ($state.Preview) { 'Simulation complete' } else { 'Finished' }
@@ -16540,11 +12963,8 @@ function Show-WDWindow {
             $ui.BarOverall.Value = $ui.BarOverall.Maximum
             $state.NowSince = $null
             if ($state.Sync.Error) { & $addLogRow 'Failed' 'Run aborted' $state.Sync.Error }
-            # What it came to, in one line. Built here rather than inside the
-            # apply branch, which is where it used to live - so the simulation
-            # ended on two lines of instruction and no numbers at all, and the
-            # one question somebody has after reading a two-hundred row preview
-            # is how many of them are going to do something.
+            # Built here rather than inside the apply branch, so the simulation
+            # gets the same line.
             $tally = @()
             $labelsNow = $(if ($state.Preview) { $statLabelsAhead } else { $statLabels })
             foreach ($sk in @('Removed','Changed','Partial','Blocked','Obstruction','Failed','Skipped','AlreadySet')) {
@@ -16552,18 +12972,7 @@ function Show-WDWindow {
             }
             $line = $(if ($tally.Count) { $tally -join ', ' } else { 'nothing to do' })
 
-            # ---- the line under the bar, at the end -------------------------
-            #
-            # That line tracks what is happening now, and at the end nothing is -
-            # so it held the last thing that HAD happened, which on a simulation is
-            # "Writing the report..." sitting under a full bar looking like a step
-            # that never finished. It gets the closing sentence instead, where the
-            # eye already is because the bar above just filled.
-            #
-            # The bar goes green with it. A finished run and one stopped halfway
-            # both end with a full bar, so the colour is the only thing saying
-            # which. Cleared at the start of the next run rather than set back to a
-            # literal, so the ProgressBar keeps the current theme's default.
+            # The line under the bar, at the end.
             if (-not $state.Sync.Cancel) { & $Ref $ui.BarOverall 'Foreground' 'Ok' }
 
             if ($state.Mode -eq 'revert') {
@@ -16571,32 +12980,24 @@ function Show-WDWindow {
                 $ui.TxtCurrent.Text = 'Revert complete. The changes it could undo have been undone.'
                 $ui.NowCard.Visibility = 'Collapsed'
                 # Every cached "how much of that run is still in place" answer
-                # was read before this, so all of them are now stale - including
-                # the runs this revert did not touch, since a rollback script
-                # run from a folder can reach any of them. Thrown away rather
-                # than patched: the idle timer reads them again for whatever the
-                # cards actually ask about, which is at most a handful.
+                # was read before this, so all of them are now stale.
                 $appliedState.Clear()
                 # The probe caches every key it reads for the life of the
-                # process, and it has just been made wrong by this very run.
+                # process, and this run has just made it wrong.
                 Clear-WDRegistryProbeCache
-                # And the Revert page itself, which is built once per session
-                # precisely because nothing else can change the machine while
-                # this window is open. This is the one thing that can, so this is
-                # where the exception is spent. Next visit reads the machine
-                # again; every visit before that one is free.
+                # And the Revert page itself, built once per session precisely
+                # because nothing else can change the machine while the window
+                # is open.
                 $revCache.Built = $false
                 & $repaintModeGrid
             } elseif ($state.Preview) {
                 $ui.TxtCurrent.Text = "Simulation complete - $line. Nothing on this machine has been changed."
-                # And nothing at the bottom. That card answers "what is it doing
-                # right now", which after a simulation is nothing at all - it was
-                # repeating the line above it and taking a strip of the window to
-                # do it.
+                # That card answers "what is it doing right now", which after a
+                # simulation is nothing at all.
                 $ui.NowCard.Visibility = 'Collapsed'
                 $ui.BtnApplyNow.Visibility = 'Visible'
 
-                # Wide band on purpose. The dominant term is third-party
+                # Wide band on purpose: the dominant term is third-party
                 # uninstallers, which range from two seconds to several minutes.
                 $total = $state.EstimateSeconds + $restorePointSeconds
                 $lo = [Math]::Max(1, [Math]::Round(($total * 0.6) / 60))
@@ -16606,22 +13007,15 @@ function Show-WDWindow {
                 $ui.TxtRunEstimate.Text = "Apply time estimate: $lo-$hi minutes"
                 $ui.TxtRunEstimate.Visibility = 'Visible'
             } else {
-                # Read from the run's own session, published through Sync. The
-                # UI thread has a session of its own that the background runspace
-                # never touches, so asking it produced a reboot flag that could
-                # never be true and a log folder that was always empty.
+                # Read from the run's own session, published through Sync: the
+                # UI thread has a session of its own.
                 $reboot = [bool]$state.Sync.Reboot
                 # The one artefact worth keeping somewhere the toolkit will not
                 # eventually delete.
                 if ([string]$state.Sync.NotesFile) { $ui.BtnSaveNotes.Visibility = 'Visible' }
 
                 # The end of a real run is the one place this application has to
-                # stop and be read. It used to end silently, and closing the
-                # window went straight through the in-progress guard because that
-                # only fires while a run is unfinished.
-                # How many, not whether. "A restart is required" over a list of
-                # ninety changes does not say whether that is one of them or all
-                # of them, and one is the usual answer.
+                # stop and be read.
                 $rc = [int]$state.Sync.RestartCount
                 $restartLine = ''
                 if ($rc -gt 0) {
@@ -16632,48 +13026,23 @@ function Show-WDWindow {
                 $ui.TxtRunNote.Text = "Done. $restartLine".Trim()
                 $ui.TxtCurrent.Text = "Finished - $line. $restartLine".Trim()
 
-                # ONE BAR AT THE END, NOT TWO.
-                #
-                # The card at the bottom answers "what is it doing right now",
-                # and at the end of an apply the answer is nothing - so it was
-                # being repurposed to carry the wrap-up, which left the page
-                # with two full-width bars stacked on top of each other, both
-                # talking about the finished run, one of them still headed
-                # "Finished" like a step in progress. The wrap-up is the more
-                # useful half and it now sits in the footer, beside the buttons
-                # somebody is about to press. The card goes.
+                # One bar at the end, not two.
                 $ui.NowCard.Visibility = 'Collapsed'
                 # Everything somebody would not otherwise know, in the one place
-                # they are certainly looking. The restart count was the whole of
-                # this and it is the least of it: the run has just left a folder
-                # on their desktop they did not ask for, holding a file whose
-                # entire purpose is to be searched weeks from now by somebody who
-                # will not remember it exists.
+                # they are certainly looking.
                 $ui.TxtRunWrap.Text = (@(& $wrapUpLines) -join "  ")
                 $ui.TxtRunWrap.Visibility = 'Visible'
-                # There is nowhere left to go back TO. The run has happened, the
-                # mode screen behind this describes a decision already made, and
-                # what somebody wants at this point is out. Only after an apply -
-                # a simulation genuinely does go back, to change the selection
-                # and run it again.
+                # There is nowhere left to go back to: the run has happened, and
+                # the mode screen behind this describes a decision already made.
                 $ui.BtnBackRun.Content = 'Close'
                 $state.Acknowledged = $false
 
-                # This machine has now had this preset applied to it, and the
-                # card on the mode screen should say so. Only when what ran was
-                # the preset - see $recordApplied - and only after an apply,
-                # which is the branch we are in.
-                #
-                # The folder named is the one on the desktop rather than the
-                # run directory under ProgramData, because that is the one
-                # somebody can find. It falls back to the run directory when
-                # there is no desktop to copy to.
+                # This machine has now had this preset applied, and the card
+                # should say so - only when what ran was the preset.
                 $where = [string]$state.Sync.KeepDir
                 if (-not $where) { $where = [string]$state.Sync.RunDir }
                 # The run's own id, taken off the ProgramData directory rather
-                # than the desktop copy: the marker uses it to ask how much of
-                # this run is still in place, and that question is answered from
-                # the journal, which only ever lives there.
+                # than the desktop copy.
                 $ranId = ''
                 if ([string]$state.Sync.RunDir) {
                     $ranId = (Split-Path ([string]$state.Sync.RunDir) -Leaf) -replace '^run-', ''
@@ -16691,11 +13060,7 @@ function Show-WDWindow {
             }
 
             # Said last, over whatever the branches above wrote, because a
-            # canceled run reaches every one of them and each ends on some
-            # variant of "done". Cancel was written by the button, reset at the
-            # start of a run, and until now never read here at all - so stopping
-            # an apply at item 12 of 200 ended on "Finished" above a summary of
-            # the 12, with nothing anywhere saying the other 188 were skipped.
+            # canceled run reaches every one of them.
             if ($state.Sync.Cancel) {
                 $reached = $(if ($state.RunTotal -gt 0) {
                     "Stopped at item $($state.RunIndex) of $($state.RunTotal); the remaining " +
@@ -16730,16 +13095,9 @@ function Show-WDWindow {
     $timer.Add_Tick($pumpRun)
 
     $enterRunPage = {
-        <#
-            Everything on this page has to go back to zero here, and the reason
-            is not tidiness. The page is entered twice in a row - once for the
-            simulation, once for the apply - and anything left behind reads as
-            live. The counter chips in particular were never repainted: they are
-            written in exactly one place, in the timer, and only when an event
-            carries a result, so the apply opened showing the simulation's
-            numbers under the simulation's heading and there was no way to tell
-            whether it had started.
-        #>
+        # Everything on this page has to go back to zero here: an apply is
+        # reached from a simulation, so the counters are already full when it
+        # starts.
         param([bool]$PreviewMode, [string]$Return)
         $state.Preview = $PreviewMode
         $state.ReturnPage = $Return
@@ -16759,20 +13117,13 @@ function Show-WDWindow {
         $logRows.Clear(); $logRowByItem.Clear()
         $ui.LogList.Items.Clear()
 
-        # The bar has no total until the plan is resolved, which is a good half
-        # minute into an apply. Indeterminate says "working" honestly; a bar
-        # sitting at 0 out of the previous run's total says something false.
+        # The bar has no total until the plan is resolved, half a minute into an
+        # apply. Indeterminate says "working" honestly.
         $ui.BarOverall.Value = 0
         $ui.BarOverall.Maximum = 100
         $ui.BarOverall.IsIndeterminate = $true
-        # The green a finished run leaves behind, taken off again. Put back to
-        # Accent rather than cleared: ClearValue drops the resource reference the
-        # build put there, so the bar fell through to the ProgressBar template's
-        # own colour - which is the system light green on a dark page, and is the
-        # exact thing that reference was added to fix. So the first run of a
-        # session drew a blue bar and every run after it drew a system-green one,
-        # and pressing Apply after reading a simulation is the path that shows it.
-        # Blue while it runs, green when it finishes, blue again next time.
+        # Put back to Accent rather than cleared: ClearValue drops the resource
+        # reference and the bar stops following the theme.
         & $Ref $ui.BarOverall 'Foreground' 'Accent'
 
         $ui.TxtPhase.Text   = $(if ($PreviewMode) { 'Preparing the simulation...' } else { 'Preparing to apply changes...' })
@@ -16792,9 +13143,8 @@ function Show-WDWindow {
         $ui.PageRun.Visibility = 'Visible'
         $ui.BtnCancel.IsEnabled = $true
         $ui.BtnBackRun.IsEnabled = $false
-        # Back to "Back" at the start of every visit. It becomes Close only when
-        # an apply has finished, and a leftover Close on a fresh preview would
-        # promise to shut the window and then not.
+        # Back to "Back" at the start of every visit: it becomes Close only when
+        # an apply has finished.
         $ui.BtnBackRun.Content = 'Back'
         $ui.BtnApplyNow.Visibility = 'Collapsed'
         $ui.TxtRunNote.Text = ''
@@ -16818,18 +13168,9 @@ function Show-WDWindow {
         }
     }
 
-    # ---- a run that already happened, put back on the page it belongs on ----
-    #
-    # For -ShowRun, which is how the first-sign-in prompt opens "the results". The
-    # alternative was a second read-only window rendering a report - a whole page
-    # built to look like the one three feet away, which would then have to be KEPT
-    # looking like it forever. This drives the real page through the same two
-    # functions a live run does: $enterRunPage, then $addLogRow per item. The
-    # status filter, the counters, Open log folder, and Save a copy are all the
-    # real thing, with no idea the run is not happening now.
-    #
-    # It never starts a runspace and never touches the machine. The only thing
-    # it fakes is the arrival of results.
+    # A run that already happened, put back on the page it belongs on. It starts
+    # no runspace and touches nothing; the only thing faked is the arrival of
+    # results.
     $replayRun = {
         param([string]$Dir)
         $info = Read-WDSetupResult -RunDir $Dir
@@ -16837,7 +13178,7 @@ function Show-WDWindow {
 
         & $enterRunPage $false 'PageModes'
         # The run is over, so nothing may look live: no cancel, no indeterminate
-        # bar, and the page's own guard against closing mid-run has to be off.
+        # bar, and the guard against closing mid-run has to be off.
         $state.Sync.Done = $true
         $state.Sync.RunDir       = [string]$info.RunDir
         $state.Sync.KeepDir      = [string]$info.KeepDir
@@ -16848,8 +13189,8 @@ function Show-WDWindow {
         $state.Sync.NotesFile    = ''
         try {
             # .md now, and .txt is still looked for: a replay is pointed at a
-            # run folder somebody kept, and a folder written by an older build
-            # is exactly the case this feature exists for.
+            # folder somebody kept, which may have been written by an older
+            # build.
             foreach ($leaf in @('What-this-run-did.md', 'What-this-run-did.txt')) {
                 $nf = Join-Path ([string]$info.RunDir) $leaf
                 if (Test-Path -LiteralPath $nf) { $state.Sync.NotesFile = $nf; break }
@@ -16865,7 +13206,7 @@ function Show-WDWindow {
             & $addLogRow ([string](Get-Prop $it 'Status' '?')) $nm $txt $null
         }
         # The counters are written by the timer, which is not running. Same
-        # table, filled from the report instead of from the queue.
+        # table, filled from the report.
         foreach ($k in @($state.Counts.Keys)) { $state.Counts[$k] = 0 }
         foreach ($pair in @(@{ K = 'removed'; C = 'Removed' }, @{ K = 'changed'; C = 'Changed' },
                             @{ K = 'notPresent'; C = 'NotPresent' }, @{ K = 'partial'; C = 'Partial' },
@@ -16891,9 +13232,8 @@ function Show-WDWindow {
         } elseif ($info.Reboot) { $restart = 'A restart is needed to finish. ' }
         $ui.TxtCurrent.Text = "Finished during Windows Setup - $done. $restart".Trim()
         $ui.TxtRunNote.Text = 'This run happened before anybody signed in, so this is a record of it rather than something in progress.'
-        # Same single bar a live apply ends on. The card would be a second
-        # full-width strip saying "Finished" about a run that finished before
-        # this window existed.
+        # Same single bar a live apply ends on: the card would be a second strip
+        # saying "Finished" about a run that finished before this window opened.
         $ui.NowCard.Visibility = 'Collapsed'
         $ui.TxtRunWrap.Text = (@(& $wrapUpLines) -join '  ')
         $ui.TxtRunWrap.Visibility = 'Visible'
@@ -16902,8 +13242,8 @@ function Show-WDWindow {
         $ui.BtnCancel.IsEnabled  = $false
         $ui.BtnBackRun.IsEnabled = $true
         $ui.BtnOpenLogs.IsEnabled = $true
-        # Nothing to acknowledge: the run is history, and the guard that asks
-        # "are you sure" on the way out exists for one still in progress.
+        # Nothing to acknowledge: the run is history, and that guard exists for
+        # one still in progress.
         $state.Acknowledged = $true
         & $applyLogFilter
         $true
@@ -16931,11 +13271,8 @@ function Show-WDWindow {
         }
         if (-not $PreviewMode) {
             $msg = "About to apply $($Selection.Count) items to $($Profile.ComputerName) using $Label."
-            # Asked of the selection, not of the label. The label describes which
-            # button was last pressed on the mode screen, which is a different
-            # question and gave the wrong answer both ways round: silent on a
-            # hand-picked Custom selection holding every Extreme item, and noisy
-            # on an Extreme preset stripped of everything dangerous.
+            # Asked of the selection, not of the label: the label describes
+            # which button was last pressed.
             $risky = $false
             try {
                 $below = New-WDStringSet $baseIds['Aggressive']
@@ -16944,16 +13281,8 @@ function Show-WDWindow {
                 }
             } catch { $risky = ($Label -eq 'Extreme') }
             if ($risky) { $msg += "`n`nThis goes beyond bloatware - it switches off services and features other software may depend on." }
-            # What this toolkit stands on, checked before the last chance to
-            # say no. This is the one moment where "6 of your 118 options need
-            # DISM, and DISM is refusing until you restart" changes what
-            # somebody does - afterwards it is only an explanation.
-            #
-            # Manifest items are handed straight to Get-WDHealthImpact rather
-            # than a resolved plan: property access in PowerShell is
-            # case-insensitive, so .Actions reads the manifest's own `actions`,
-            # and resolving a plan on the UI thread to build a dialog is work
-            # the run is about to do again anyway.
+            # What this toolkit stands on, checked before the last chance to say
+            # no.
             try {
                 if (Get-Command Get-WDHealthImpact -ErrorAction SilentlyContinue) {
                     $selSet = New-WDStringSet $Selection
@@ -16980,10 +13309,9 @@ function Show-WDWindow {
             } catch {
                 Write-WDLog "The tool check could not run before the apply: $($_.Exception.Message)" -Level Warn
             }
-            # Asked of the selection rather than asserted. "A rollback script
+            # Asked of the selection rather than asserted: "a rollback script
             # will be created" stopped being unconditionally true when it became
-            # a row somebody can untick, and a confirmation that promises a way
-            # back there is not is the worst possible place to be wrong.
+            # a row.
             if ($Selection -contains 'rollback-script') {
                 $msg += "`n`nA restore point and a rollback script will be created. Continue?"
             } else {
@@ -16994,9 +13322,9 @@ function Show-WDWindow {
         $state.Mode = 'debloat'
         if ($PreviewMode) { $state.RunLabel = $Label }
         $state.LastSelection = $Selection
-        # The one place the choice is written. Reconciled against what is
+        # The one place the choice is written, reconciled against what is
         # actually about to run, so a file left by an earlier session cannot
-        # turn into a surprise install.
+        # become a surprise install.
         $want = @()
         if ($Selection -contains $BROWSER_ID) { $want = @($state.BrowserChoices) }
         try {
@@ -17010,17 +13338,13 @@ function Show-WDWindow {
             }
         }
         # The rest of what the GUI collects and the manifest cannot carry. Same
-        # file, same moment, same reason: this side is elevated and the run is
-        # on a runspace that cannot see any of these variables. A failure here
-        # is not worth a dialog - every one of them has a manifest default that
-        # the handler falls back to.
+        # file, same moment: this side is elevated and the run is not.
         try {
             $null = Set-WDRunOptions -Root (Get-WDSession).Root -Values @{
                 deferFeatureDays = [int]$state.DeferDays.Feature
                 deferQualityDays = [int]$state.DeferDays.Quality
-                # Which browser to hand the web associations to. The handler
-                # falls back to picking one itself when this is absent, so the
-                # command line - which has no picker - behaves as it always did.
+                # The handler falls back to picking one itself when this is
+                # absent, so the command line behaves as it always did.
                 defaultBrowser   = [string]$state.DefaultBrowser
             }
         } catch {
@@ -17038,9 +13362,8 @@ function Show-WDWindow {
         } {
             try {
                 # Everything from here to the first item used to happen in
-                # silence - and on an apply that is module loading, a restore
-                # point, a full software scan and the plan, which together are
-                # minutes. Each stage says what it is before it does it.
+                # silence - on an apply that is module loading, a restore point,
+                # and a scan.
                 $stage = { param([string]$t, [bool]$timed = $false)
                            $null = $Sync.Queue.Add(@{ Phase='Stage'; Text=$t; Timed=$timed }) }
                 & $stage 'Loading the toolkit...'
@@ -17062,14 +13385,8 @@ function Show-WDWindow {
                 if (-not $PreviewMode) {
                     & $stage 'Creating a system restore point.' $true
                     # The result was thrown away here, which made the promise in
-                    # the confirmation dialog - "a restore point and a rollback
-                    # script will be created first" - one this application could
-                    # break in silence. It breaks it fairly often: System
-                    # Protection ships disabled on most consumer images and on
-                    # nearly every OEM one, and Enable-ComputerRestore does not
-                    # always take. Reported as a row like anything else, and
-                    # published so the closing notice can say which way back
-                    # actually exists.
+                    # the confirmation dialog one this application could break
+                    # in silence.
                     $rp = New-WDRestorePoint
                     $rpOk = ([string]$rp.Status -eq 'Changed')
                     $Sync.RestorePoint = $(if ($rpOk) { 'ok' } else { 'failed' })
@@ -17077,9 +13394,7 @@ function Show-WDWindow {
                         Phase  = 'Row'
                         # A restore point that could not be taken is something
                         # standing in the way of the way back, not a removal
-                        # this run was refused. System Protection ships off on
-                        # most consumer images, which is a setting to go and
-                        # turn on rather than a fault in the run.
+                        # that failed.
                         Status = $(if ($rpOk) { 'Changed' } else { 'Obstruction' })
                         Name   = 'System restore point'
                         Detail = "$($rp.Message)$(if ($rp.Detail) { " - $($rp.Detail)" } else { '' })" })
@@ -17092,36 +13407,14 @@ function Show-WDWindow {
                 & $stage 'Working out the plan...'
                 $plan = Resolve-WDPlan -Categories $cats -Selected $Selected -Profile $prof
 
-                # What this toolkit stands on, checked against what this run
-                # actually needs, as rows on the page - in preview AND in
-                # apply, because the whole value is saying it before rather
-                # than after. Get-WDHealthImpact is what keeps it quiet: a
-                # subsystem nothing in this run touches produces no row, and a
-                # warning about something irrelevant is how warnings come to be
-                # ignored.
-                #
-                # The whole block is best effort. A diagnostic that can stop a
-                # run is worse than no diagnostic.
+                # As rows on the page, in preview and in apply: the whole value
+                # is saying it before rather than after.
                 try {
                     foreach ($im in @(Get-WDHealthImpact -Plan $plan)) {
                         $hh = $im.Health
                         if ($hh.State -eq 'Ok') { continue }
                         # Every one of these is an obstruction rather than an
-                        # outcome. None of them is an option somebody ticked:
-                        # they are facts about the machine - the servicing
-                        # stack, the component store, winget, the Task
-                        # Scheduler - reported because something selected
-                        # depends on one of them.
-                        #
-                        # They were Blocked, and Failed when the plan depended
-                        # on them, which put "component store" and "policy
-                        # management" in the same column as a package Windows
-                        # refused to remove. Blocked has a specific meaning
-                        # worth keeping: this run tried something and was told
-                        # no. Nothing was tried here yet. How much it matters
-                        # is in the text - the count of selected options that
-                        # need it is right there - rather than in a colour that
-                        # claims the run has already gone wrong.
+                        # outcome: none is an option somebody ticked.
                         $st = switch ($hh.State) {
                             'Unavailable' { 'Obstruction' }
                             'Degraded'    { 'Obstruction' }
@@ -17151,42 +13444,32 @@ function Show-WDWindow {
                     $null = $Sync.Queue.Add(@{ Phase = $p.Phase; Index = $p.Index; Total = $p.Total
                         ItemName = $(if ($p.Item) { $p.Item.Name } else { '' })
                         # Action types ride along so the UI can cost the run
-                        # without needing a copy of the plan.
+                        # without a copy of the plan.
                         Types  = $(if ($p.Item) { @($p.Item.Actions | ForEach-Object { [string]$_.type }) } else { @() })
                         Result = $p.Result })
                 }
-                # The rollback script is written by the `rollback-script` plan
-                # item, not from here. It used to be unconditional and invisible:
-                # the one artefact this application's whole safety argument rests
-                # on had no row, no preview line, and no way to confirm it was
-                # coming before Apply was pressed.
+                # The rollback script is written by the rollback-script plan
+                # item, not from here.
                 & $stage 'Writing the report...'
                 $null = Export-WDReport -Results $results -Session $session -Profile $prof -PresetName $PresetName
-                # Only on an apply. A file called "what this run did" describing
+                # Only on an apply: a file called "what this run did" describing
                 # a preview is the sort of thing somebody finds three weeks
                 # later and believes.
                 if (-not $PreviewMode) {
                     $Sync.NotesFile = [string](Export-WDRunNotes -Items $plan -PresetName $PresetName)
-                    # The rollback script is an option now, so the closing notice
-                    # cannot simply promise one. Asked of the file rather than of
-                    # the selection: the item can be ticked and still fail.
+                    # Asked of the file rather than of the selection, because
+                    # the item can be ticked and still fail.
                     try { $Sync.HasUndo = [bool](Test-Path -LiteralPath $session.UndoFile) } catch { $Sync.HasUndo = $false }
                     # Last, because it copies the three files above. The run has
-                    # already succeeded by this point, so a failure here is
-                    # logged and swallowed rather than reported as a failed run.
+                    # already succeeded, so a failure here is logged rather than
+                    # raised.
                     try {
                         $keep = Export-WDRunFolder -Session $session
                         if ($keep) { $Sync.KeepDir = [string]$keep.Path }
                     } catch { }
                 }
-                # How many of the things that actually changed need a restart
-                # before they take effect. The session's RebootNeeded flag has
-                # always been there and answers yes or no; "a restart is
-                # required" over a list of ninety changes does not say whether
-                # that is one setting or all of them, and one is the usual
-                # answer. Counted off the results rather than off the plan, so
-                # an item that reported NotPresent is not counted for a restart
-                # it does not need.
+                # Counted off the results rather than the plan, so an item that
+                # changed nothing does not ask for a restart.
                 $needRestart = 0
                 $byId = @{}
                 foreach ($p in @($plan)) { $byId[[string]$p.Id] = $p }
@@ -17197,7 +13480,7 @@ function Show-WDWindow {
                 }
                 $Sync.RestartCount = $needRestart
                 # The reboot flag belongs to this runspace's session, so this is
-                # the only place it can be read from.
+                # the only place it can be read.
                 try { $Sync.Reboot = [bool](Get-WDSession).RebootNeeded } catch { }
             } catch { $Sync.Error = $_.Exception.Message } finally { $Sync.Done = $true }
         }
@@ -17211,15 +13494,7 @@ function Show-WDWindow {
         }
 
         # Ticked options become one rollback invocation per run, restricted with
-        # that script's own -Only. Its executor is the tested one, so there is no
-        # second answer here to "how is a step put back".
-        #
-        # NEWEST FIRST, and that ordering is the whole correctness argument for
-        # reverting several runs together: June's script puts a value back to
-        # what it was before June, then March's puts it back to what it was
-        # before March, and the last write is the one that stands. Oldest first
-        # would leave June's value in place and the machine holding something
-        # nobody chose.
+        # that script's own -Only. Its executor is the tested one.
         $ops    = New-Object System.Collections.Generic.List[psobject]
         $byRun  = @{}
         $noScript = New-Object System.Collections.Generic.List[string]
@@ -17247,9 +13522,7 @@ function Show-WDWindow {
                             'Windows Setup Toolkit', 'OK', 'Warning') | Out-Null
             return
         }
-        # Said before the button rather than discovered in the report: a run
-        # without its script is a thing this cannot do, and finding that out
-        # afterwards is finding it out too late.
+        # Said before the button rather than discovered in the report.
         $ask = "Revert $($picked.Count) option(s) across $($ops.Count) step(s)?"
         if ($noScript.Count) {
             $ask += "`n`n$($noScript.Count) of the runs involved have no rollback script left, so their share cannot be put back: " +
@@ -17291,8 +13564,6 @@ function Show-WDWindow {
     $applySelection  = { @($state.LastSelection | Where-Object { -not $state.Excluded.Contains($_) }) }
 
     # Preview is the only way in. Apply appears once a preview has been read.
-    # Filled rather than wired, like Compare beside it: the control is one of
-    # three on whichever mode card is selected, built long before this line.
     $goRef.Preview = { & $startRun $true (& $presetSelection) $state.Preset 'PageModes' }.GetNewClosure()
     $ui.BtnPreview.Add_Click({    & $startRun $true (& $checkSelection) 'a custom selection' 'PageAdvanced' }.GetNewClosure())
     # Apply is only reachable from a finished simulation, so the label the
@@ -17315,8 +13586,8 @@ function Show-WDWindow {
         $ui.TxtNowNote.Text = 'Skipping. It will stop once the step it is inside returns - which for an external ' +
                               'uninstaller can still be several minutes.'
     }.GetNewClosure())
-    # The run's own folder, not this thread's. They are different sessions and
-    # only one of them has a report in it.
+    # The run's own folder, not this thread's: they are different sessions and
+    # only one has a report in it.
     $ui.BtnOpenLogs.Add_Click({
         $dir = [string]$state.Sync.RunDir
         if (-not $dir) { $dir = (Get-WDSession).RunDir }
@@ -17331,9 +13602,9 @@ function Show-WDWindow {
             return
         }
         $dlg = New-Object Windows.Forms.SaveFileDialog
-        # Whatever the run actually wrote, rather than a fixed extension. A
-        # dialog offering to save a markdown file as .txt renames it into
-        # something no viewer will format.
+        # Whatever the run actually wrote, rather than a fixed extension:
+        # offering to save a markdown file as .txt renames it into something no
+        # reader will format.
         $ext = [System.IO.Path]::GetExtension($src)
         if (-not $ext) { $ext = '.md' }
         $dlg.Filter = "Markdown file (*.md)|*.md|Text file (*.txt)|*.txt"
@@ -17354,9 +13625,7 @@ function Show-WDWindow {
         # Leaving the page under your own steam is the acknowledgement.
         $state.Acknowledged = $true
         # It says Close after an apply, and a button that says Close and goes
-        # back to the mode screen instead is a button that lied. The Closing
-        # handler still runs; it just has nothing left to ask, because
-        # Acknowledged was set a line ago.
+        # back to the mode screen instead is a button that lied.
         if ([string]$ui.BtnBackRun.Content -eq 'Close') {
             $ui.PageRun.Visibility = 'Collapsed'
             $ui.NowCard.Visibility = 'Collapsed'
@@ -17369,10 +13638,8 @@ function Show-WDWindow {
         $ui[$state.ReturnPage].Visibility = 'Visible'
     }.GetNewClosure())
 
-    # Registered on the window once, in the block that creates it, and dispatched
-    # through the Tag - the window outlives any one build of its contents now, so
-    # binding handlers per build would stack up a new pair on every theme switch,
-    # each closed over a state object that no longer means anything.
+    # Registered on the window once and dispatched through the Tag: the window
+    # outlives any one build of its contents.
     $win.Tag.Closing = {
         param($e)
         if ($state.Shell -and -not $state.Sync.Done) {
@@ -17381,17 +13648,15 @@ function Show-WDWindow {
             }
             $state.Sync.Cancel = $true
         } elseif (-not $state.Acknowledged -and -not $state.NoPrompts) {
-            # A run that finished used to sail straight through this guard,
-            # because the guard only asked about runs still going. So the last
-            # thing an apply did was vanish on the first click of the X, with the
-            # results unread and no summary. Once is enough to ask.
+            # A run that finished used to sail through this guard, because the
+            # guard only asked about runs still going.
             $reboot = [bool]$state.Sync.Reboot
             $rc = [int]$state.Sync.RestartCount
             $restart = $(if ($rc -gt 0) {
                              "`n`n$rc change$(if ($rc -ne 1) { 's' }) still need$(if ($rc -eq 1) { 's' } else { '' }) a restart to take effect."
                          } elseif ($reboot) { "`n`nA restart is still needed to finish applying it." } else { '' })
             # The same three things the card says, because this is the last
-            # thing anybody sees and the card is behind it.
+            # thing anybody sees.
             $msg = 'The run has finished. Close the toolkit?' + $restart +
                    "`n`n" + (@(& $wrapUpLines) -join "`n`n")
             if ((Show-WDMessage ($msg, 'Windows Setup Toolkit', 'YesNo', 'None')) -ne 'Yes') {
@@ -17401,7 +13666,7 @@ function Show-WDWindow {
         }
         $timer.Stop()
         # Reached through the holder, not as a variable: the timer is created
-        # after this handler is, and GetNewClosure would have captured a null.
+        # after this handler is.
         if ($storage.Timer) { $storage.Timer.Stop() }
         # A drive walk can easily outlive the window that asked for it.
         Stop-WDDiskWalk
@@ -17410,13 +13675,8 @@ function Show-WDWindow {
     }.GetNewClosure()
 
     & $say 'Building the interface' 'Almost there'
-    # Opening state. The boxes, the account list and the layout belong to the
-    # deferred page and wait with it; the mode grid is the screen this opens on
-    # and cannot.
-    #
-    # $applyPresetToChecks reads $state.Preset when it runs rather than now, so
-    # a mode chosen on the opening screen before the page is ever opened is the
-    # one the boxes come up holding.
+    # Opening state. The boxes and the layout belong to the deferred page; the
+    # mode grid is the screen this opens on.
     $advWork.Add({
         if ($advSay.Fn) { & $advSay.Fn 'Laying the page out' }
         & $applyPresetToChecks $state.Preset
@@ -17426,88 +13686,43 @@ function Show-WDWindow {
         }
         & $updateTally
         & $syncAccounts
-        # Unconditionally, because this is what lays the page out and what builds
-        # the rail. It used to run only when the saved order was not 'category',
-        # on the reasoning that the build had already laid the page out that way
-        # - true of the rows, but the rail is built here too, so a normal start
-        # in category order opened with an empty rail until the order was changed
-        # and changed back. It ends by calling $applyFilter, which also has to
-        # happen exactly once here or a dependent row stays on screen with
-        # nothing above it ticked.
+        # Unconditionally, because this is what lays the page out and builds the
+        # rail. It used to be skipped when the saved order was already
+        # 'category', which opened with an empty rail.
         & $applyOrder
     }.GetNewClosure())
 
-    # Everything above only registered work. This is what runs it, and it is the
-    # one place that does - every entry point goes through the holder.
-    #
-    # Behind the same overlay the theme switch used to need, for the same
-    # reason: the thread is busy for several seconds and a window that does not
-    # repaint reads as a window that has crashed. The bar is fed per step from
-    # $advSay and the frame is pumped after each, so it actually advances rather
-    # than jumping from nothing to done at the end.
+    # Everything above only registered work. This is the one place that runs it.
     $ensureAdvanced = {
         if ($advBuilt.Done) { return }
-        # Set first, not last. Some of the work below asks the page questions
-        # about itself, and a second pass through this list would build the
-        # whole thing twice.
+        # Set first, not last: some of the work below asks the page questions
+        # about itself.
         $advBuilt.Done = $true
-        # NOTHING THE PRE-WARM HAS DONE IS THROWN AWAY, and nothing it has half
-        # done is either: $advWork is one list, both runners take from the front
-        # of it, and a category that has built eight of its rows carries its own
-        # position in its holder and puts its continuation back at the front. So
-        # a click that arrives mid-build finishes the list rather than starting
-        # it again - what is left below is the remainder, in source order.
-        #
-        # The timer is stopped rather than left to decline on its next tick.
-        # The drain below pumps dispatcher frames to move the overlay's bar, and
-        # a tick at ApplicationIdle can fire inside one of those - it would find
-        # Done set and stop itself, which is correct and is one more thing that
-        # has to stay correct. Stopping here means it cannot fire at all.
+        # Nothing the pre-warm has done is thrown away, and nothing it has half
+        # done either: one list, both runners take from the front.
         if ($win.Tag.AdvWarm) { $win.Tag.AdvWarm.Stop() }
-        # Raised before the first pump, not after. $veil.Show and the frame
-        # under it are dispatcher turns of their own, and Busy is the flag every
-        # other path tests to know a build is in flight.
+        # Raised before the first pump, not after: $veil.Show and the frame
+        # under it are dispatcher turns of their own.
         $advBuilt.Busy = $true
         $sw = [Diagnostics.Stopwatch]::StartNew()
-        # No overlay before the window has one - the command-line selection
-        # forces this build during the build, when there is nothing to cover.
+        # No overlay before the window has one - a command-line selection forces
+        # this build during the build.
         $veil = $win.Tag.Busy
-        # The overlay's own setup is inside the try as well, because Busy is
-        # raised above it: a throw there would otherwise leave the flag standing
-        # on a build that is not happening.
+        # The overlay's own setup is inside the try, because Busy is raised
+        # above it and a throw would leave the flag standing.
         try {
             $advSay.N = 0
             $advSay.Shown = 0.0
             if ($veil) {
-                # Copied in first: this block is a closure, so the reporter built
-                # below sees these locals and nothing else. Reaching for $advSay
-                # or $pumpFrame from inside it captures null, and the first
-                # category throws from under PushFrame.
+                # Copied in first: this block is a closure, so the reporter
+                # built below sees these locals and nothing else.
                 $tick = $advSay
                 $pump = $pumpFrame
                 $work = $advWork
                 & $veil.Show 'Opening the item list'
-                # THE DENOMINATOR IS READ, NEVER FIXED, and that is the whole of
-                # this. It used to be the count of every category, against a
-                # numerator counting only the categories this drain built - so
-                # with the pre-warm twelve categories in, the bar could not pass
-                # 48%, sat there for the tail, and the page then simply appeared.
-                # Warm enough and no category was left to report at all, so it
-                # sat at zero and said "Starting" for the whole wait. Both are
-                # what "jumps part way then stops" was.
-                #
-                # N / (N + what the queue still holds) is exact whatever the
-                # pre-warm did, and it is monotonic by construction: finishing an
-                # entry either shrinks the queue or leaves it the same length
-                # when the entry puts a continuation of itself back, and both
-                # raise N/(N+Left) whenever anything is left. The Max guards the
-                # day something inserts two.
-                #
-                # The +1 is the entry doing the reporting: it is off the queue
-                # and not finished, so without it the last step on the list
-                # reports 100% and the bar then sits full through the longest
-                # step of the whole build. The drain closes the bar at 1.0 itself
-                # once there is genuinely nothing left.
+                # The denominator is read, never fixed. It used to be the count
+                # of every category, so the bar could only reach (N - already
+                # done) / N and stopped part way.
                 $advSay.Fn = {
                     param([string]$What)
                     $raw = [double]$tick.N / [double][Math]::Max(1, $tick.N + $work.Count + 1)
@@ -17518,39 +13733,27 @@ function Show-WDWindow {
                 & $pumpFrame
             }
             # Consumed from the front rather than iterated, so this finishes a
-            # list the pre-warm has already partly emptied. Entries run in
-            # source order either way, which is the one thing they depend on.
+            # list the pre-warm has partly emptied.
             while ($advWork.Count) {
                 $w = $advWork[0]
                 $advWork.RemoveAt(0)
                 # Timed here too, but kept apart from the pre-warm's figure and
-                # NOT the one anything asserts on. A step through this path runs
-                # under the overlay, with $advSay pumping the dispatcher after
-                # each category - so its time includes a layout pass over
-                # everything built so far, and the longest step here measures
-                # around 1.8 seconds where the same step measures 30ms in the
-                # background. That is not a freeze: somebody clicked Advanced,
-                # the overlay is up, and its bar is moving. The figure that can
-                # be felt is the pre-warm's, and it is recorded there.
+                # not the one anything asserts on: this path pumps frames, so a
+                # layout pass lands inside the measurement.
                 $one = [Diagnostics.Stopwatch]::StartNew()
                 try { & $w } finally {
                     $one.Stop()
-                    # Counted here rather than in the reporter, because not every
-                    # entry reports: a category names itself once and then puts
-                    # continuations of itself back, and those carry on under the
-                    # name already on screen. The bar has to account for them
-                    # either way or it stalls for as long as the biggest
-                    # category takes.
+                    # Counted here rather than in the reporter, because not
+                    # every entry reports - a category names itself once and
+                    # then puts continuations back.
                     $advSay.N++
                     if ($one.ElapsedMilliseconds -gt $advBuilt.PeakOpen) {
                         $advBuilt.PeakOpen = [int]$one.ElapsedMilliseconds
                     }
                 }
             }
-            # Full, and only now. Every reporter above holds a place for the step
-            # it is about to run, so the bar arrives here somewhere in the high
-            # nineties; a bar that is whipped away at 96% is one somebody
-            # remembers as having got stuck.
+            # Full, and only now: every reporter above holds a place for the
+            # step it is about to run.
             if ($veil) { $advSay.Shown = 1.0; & $veil.Set '' 1.0 }
         } finally {
             $advBuilt.Busy = $false
@@ -17558,55 +13761,23 @@ function Show-WDWindow {
             if ($veil) { & $veil.Hide }
         }
         $advBuilt.Ms = [int]$sw.ElapsedMilliseconds
-        # The number that matters is what the click actually cost, so that is
-        # the headline; how much was already done just explains why it is small.
+        # The number that matters is what the click actually cost.
         Write-WDLog ("Item list finished in $([Math]::Round($advBuilt.Ms / 1000, 1))s on first use" +
                      $(if ($advBuilt.Warmed) { ", after $($advBuilt.Warmed) step(s) built ahead of time" } else { '' }) +
                      '.') -Level Info
     }.GetNewClosure()
     $advRef.Ensure = $ensureAdvanced
 
-    # ---- building it before anybody asks -----------------------------------
-    #
-    # Deferring the page took eight seconds off the time to first paint and did
-    # not stop the five seconds happening - it moved them to the moment somebody
-    # is waiting on them. So the same list is worked through WHILE THE MODE SCREEN
-    # IS BEING READ, one entry per tick. A click still calls $ensureAdvanced,
-    # which finishes whatever is left; usually nothing.
-    #
-    # WPF elements have thread affinity, so this cannot be a background thread and
-    # never could be. "In the background" means off the critical path, not off the
-    # UI thread - which is what makes the three rules below the design rather than
-    # tuning.
-    #
-    #   ApplicationIdle, NOT Background. Background is dispatched as soon as the
-    #   queue is momentarily empty, which during a scroll is between every pair of
-    #   input events - so the timer fired mid-gesture and held the thread for a
-    #   whole category. ApplicationIdle is only reached when nothing else is queued.
-    #
-    #   A QUIET PERIOD on top, because priority cannot fix the other half: once a
-    #   tick starts it runs to completion, so the only way it never costs a frame
-    #   is not to start while somebody is doing something. Every tunnelling input
-    #   on the window stamps $advQuiet and the tick declines for 250ms.
-    #
-    #   AND THE ENTRIES MUST BE SMALL, which is what the other two cannot supply
-    #   and what was missing. Neither helps against one entry that takes two
-    #   seconds: the first tick after the window appears is dispatched into a
-    #   genuinely idle application by a timer doing its job, and then holds the
-    #   thread for all of it. Clicks are queued, not lost - which is exactly what
-    #   "I can't click anything and my inputs arrive all at once" describes.
-    #   $advBuilt.Peak records the longest step that ran.
-    #
-    # The stamp is refreshed at $win.Show() too, so the grace period is measured
-    # from the window appearing rather than from here, which runs while the splash
-    # is still up.
+    # Building it before anybody asks. ApplicationIdle plus a quiet period,
+    # because a tick that starts mid-gesture holds the thread for as long as its
+    # entry takes.
     $advQuiet = @{ At = [DateTime]::UtcNow }
     $stamp = { $advQuiet.At = [DateTime]::UtcNow }.GetNewClosure()
     foreach ($ev in @('PreviewMouseMove', 'PreviewMouseDown', 'PreviewMouseWheel',
                       'PreviewKeyDown', 'PreviewTextInput')) {
         # Tunnelling handlers on the window see everything on the way down, so
         # one registration per kind covers every control on every page - and a
-        # handled event still counts, which a bubbling handler would miss.
+        # handled event still counts.
         $win."Add_$ev"($stamp)
     }
     $advWarm = New-Object Windows.Threading.DispatcherTimer([Windows.Threading.DispatcherPriority]::ApplicationIdle)
@@ -17617,22 +13788,13 @@ function Show-WDWindow {
             if ($advBuilt.Done) { $advWarm.Stop() }
             return
         }
-        # Still being used. Come back later; the timer keeps ticking and this
-        # costs nothing but the comparison.
+        # Still being used. Come back later; this costs nothing but the
+        # comparison.
         if (([DateTime]::UtcNow - $advQuiet.At).TotalMilliseconds -lt 250) { return }
         if (-not $advWork.Count) {
-            # The item list is done; the setup page is the other one that is
-            # built on demand and the other one somebody waits for. It goes
-            # after, not into $advWork, because $ensureAdvanced drains that list
-            # under its overlay when Advanced is opened first - and building the
-            # setup page there would charge the Advanced click for a page nobody
-            # asked for.
-            #
-            # One tick of its own, then round again to finish up. It is a single
-            # step rather than a list of small ones, so it is the one entry here
-            # that can hold the thread long enough to be felt; the quiet gate
-            # above is what keeps that off somebody's frame, and $uaBuilt.Ms
-            # records how long it really took rather than leaving it assumed.
+            # The setup page is the other one built on demand and the other one
+            # somebody waits for. Not in $advWork, because $ensureAdvanced would
+            # charge an Advanced click for a page nobody asked for.
             if (-not $uaBuilt.Done) {
                 $advBuilt.Busy = $true
                 try { & $uaBuild }
@@ -17646,11 +13808,8 @@ function Show-WDWindow {
             $advWarm.Stop()
             $advBuilt.Done = $true
             $advBuilt.Ms0  = [int]$warmWatch.ElapsedMilliseconds
-            # The peak matters more than the total here. The total is how long
-            # the pre-warm took, which nobody waits for; the peak is the longest
-            # the UI thread was held in one go, which is the only figure that
-            # can be felt. Anything over about 100ms is a dropped frame and a
-            # click that arrives late, so it is logged rather than assumed.
+            # The peak matters more than the total: the total is how long the
+            # pre-warm took, which nobody waits for.
             Write-WDLog ("Item list built in the background in " +
                          "$([Math]::Round($advBuilt.Ms0 / 1000, 1))s, before it was opened. " +
                          "Longest single step $([int]$advBuilt.Peak)ms.") -Level Info
@@ -17664,9 +13823,7 @@ function Show-WDWindow {
         try { & $w }
         catch {
             # A pre-warm that throws must not take the window with it, and must
-            # not leave the page half built and marked done. Stop, log, and let
-            # the click path rebuild the rest under its overlay where a failure
-            # is at least visible.
+            # not leave the page half built and marked done.
             $advWarm.Stop()
             Write-WDLog "Building the item list ahead of time failed, so it will be built on first use: $($_.Exception.Message)" -Level Warn
         }
@@ -17675,27 +13832,19 @@ function Show-WDWindow {
             if ($stepWatch.ElapsedMilliseconds -gt $advBuilt.Peak) {
                 $advBuilt.Peak = [int]$stepWatch.ElapsedMilliseconds
                 # The line the scriptblock was written on, which names the slow
-                # step exactly without anyone maintaining a table of labels
-                # alongside the list.
+                # step without anyone maintaining a table of labels.
                 $advBuilt.PeakAt = [int]$w.Ast.Extent.StartLineNumber
             }
         }
         $advBuilt.Warmed++
     }.GetNewClosure())
     $win.Tag.AdvWarm  = $advWarm
-    # Handed to the show below, which restamps it: the grace period has to be
-    # measured from the window appearing, not from here.
+    # Handed to the show below, which restamps it: the grace period is measured
+    # from the window appearing.
     $win.Tag.AdvQuiet = $advQuiet
 
-    # The other idle worker, and it is separate from $advWarm deliberately: that
-    # one builds a page and stops for good, this one has to come back whenever a
-    # revert changes the answer. One run id per tick, because a single
-    # Get-WDUndoStatus is nearly two seconds on a large run and a tick that runs
-    # long is a frame somebody loses.
-    #
-    # ApplicationIdle and the same quiet gate $advWarm uses, for the same
-    # reason: once a tick starts nothing can interrupt it, so it must not start
-    # while somebody is doing something.
+    # Separate from $advWarm deliberately: that one builds a page and stops for
+    # good, this has to come back whenever the cache is cleared.
     $appliedWarm = New-Object Windows.Threading.DispatcherTimer([Windows.Threading.DispatcherPriority]::ApplicationIdle)
     $appliedWarm.Interval = [TimeSpan]::FromMilliseconds(200)
     $appliedWarm.Add_Tick({
@@ -17705,7 +13854,7 @@ function Show-WDWindow {
         $appliedWant.RemoveAt(0)
         if (-not $runId -or $appliedState.ContainsKey($runId)) { return }
         # Recorded before the read, so a run that cannot be answered for is not
-        # asked about again on every repaint for the life of the window.
+        # asked about again on every repaint.
         $appliedState[$runId] = $null
         try {
             $run = @(Get-WDPastRuns | Where-Object { $_.Id -eq $runId })
@@ -17716,42 +13865,25 @@ function Show-WDWindow {
             Write-WDLog "Could not read how much of run $runId is still in place: $($_.Exception.Message)" -Level Warn
         }
         # Painted, not rebuilt: the columns have not changed shape, only what
-        # one line of one of them says. Two surfaces read this cache now - the
-        # mode cards' "Applied on..." line and the past-runs cards' "how much is
-        # still in place" - so both are told, and each only repaints text.
+        # one line of one of them says.
         try { & $repaintModeGrid } catch { }
         try { if ($revHomeRef.Paint) { & $revHomeRef.Paint } } catch { }
     }.GetNewClosure())
-    # Started after the window is up and stopped when this build's frame ends,
-    # exactly as $advWarm is: a theme switch drops the frame without closing the
-    # window, and a timer left running would repaint a grid that no longer
-    # exists through a closure over a page that no longer exists.
+    # Started after the window is up and stopped when this build's frame ends: a
+    # theme switch drops the frame without closing the window.
     $win.Tag.AppliedWarm = $appliedWarm
 
     & $selectPreset $state.Preset
     & $say 'Building the interface' 'opening: mode grid'
     # A selection handed in on the command line is a selection, and there is
-    # nowhere to keep one but the boxes - so that is the one start that has to
-    # build the page whether or not anybody opens it. It opens ON that page too:
-    # somebody who named a selection on the command line has already made the
-    # choice the home page exists to ask about.
+    # nowhere to keep one but the boxes - the one start that cannot defer.
     if ($PreSelected) {
         & $ensureAdvanced
         & $showPage 'PageAdvanced'
     }
     & $say 'Building the interface' 'opening: preselection'
 
-    # ---- what the drive is full of ----------------------------------------
-    #
-    # Started here rather than earlier in the build: the first thing it
-    # publishes needs rows to land on. Polled rather than marshalled back,
-    # because the worker never touches an element - it writes a snapshot into a
-    # synchronized hashtable and this reads it on the UI thread.
-    #
-    # Not started under the self test. Walking a whole drive is not something a
-    # test documented as changing nothing should set going in the background,
-    # and the harness paints from a snapshot it builds itself, which exercises
-    # the same code deterministically.
+    # What the drive is full of.
     if ($SelfTestSeconds -le 0) {
         $cap0 = Get-WDDiskCapacity
         $storage.Scan = Start-WDStorageScan -ModulePath $ModulePath `
@@ -17770,9 +13902,9 @@ function Show-WDWindow {
             if (-not $sc.Done) { return }
             $diskTimer.Stop()
             if ($sc.Error) { Write-WDLog "The drive could not be measured: $($sc.Error)" -Level Warn }
-            # Buckets are only set when they were actually walked - a run that
-            # used last week's answer must not stamp it with today's date, or
-            # the cache never expires and the drive is never measured again.
+            # Buckets are only set when they were actually walked: a run that
+            # used last week's answer must not stamp it with today's date, or it
+            # never expires.
             if (-not $storage.Saved -and $sc.Buckets -and $storage.Snapshot) {
                 $entry = New-WDStorageCacheEntry -Buckets $sc.Buckets -UsedBytes ([int64]$storage.Snapshot.UsedBytes)
                 if ($entry) { $storage.Cache = $entry; $storage.Saved = $true; & $saveUiState }
@@ -17782,10 +13914,7 @@ function Show-WDWindow {
         $diskTimer.Start()
     } else {
         # A drive with fixed numbers, so the harness draws and clicks the real
-        # bar rather than skipping past an empty one. Deliberately a machine
-        # whose parts add up to more than it holds - that is the branch where
-        # the buckets have to be scaled, and it is the usual case on a real
-        # disk, so it is the one worth having under test.
+        # bar rather than skipping an empty one.
         $storage.Snapshot = New-WDStorageSnapshot -Drive 'C:' -TotalBytes 1000GB -FreeBytes 600GB `
             -Items @{ 'disk-temp' = 6GB; 'disk-recycle-bin' = 20GB; 'disk-update-cache' = 3GB
                       'disk-windows-old' = 0L; 'disk-delivery-opt' = 0L } `
@@ -17798,14 +13927,8 @@ function Show-WDWindow {
 
     $selfTest = @{ Failures = 0 }
     if ($SelfTestSeconds -gt 0) {
-        # The harness is 5,897 lines and lives in WD.UITest, which nothing else
-        # imports: an ordinary launch pays neither the import nor the parse.
-        #
-        # $refs IS the contract. It used to be 117 aliases of this frame taken
-        # inside the timer tick, in one case-insensitive scope - a shape whose
-        # own comment demanded it be grepped before anything was added, and
-        # which had a duplicate in it. [6] now checks these fields against the
-        # names the harness reads, so a missing one is named rather than $null.
+        # The harness lives in WD.UITest, which nothing else imports: an
+        # ordinary launch pays neither the import nor the parse.
         Import-Module (Join-Path $PSScriptRoot 'WD.UITest.psm1') -Force -DisableNameChecking
         $refs = [pscustomobject]@{
             accountChecks          = $accountChecks
@@ -17942,9 +14065,8 @@ function Show-WDWindow {
         }
         $st = New-Object Windows.Threading.DispatcherTimer
         $st.Interval = [TimeSpan]::FromSeconds($SelfTestSeconds)
-        # $st.Stop() stays here, with the timer. It also stops a collision: the
-        # harness reuses the name $st as a scratch local 5,400 lines in, which
-        # was harmless only because nothing touched the timer after this line.
+        # $st.Stop() stays here with the timer. It also stops a collision: the
+        # harness reuses $st as a scratch local, and names are case-insensitive.
         $st.Add_Tick({
             $st.Stop()
             Invoke-WDInteractionTest -Refs $refs
@@ -17952,10 +14074,7 @@ function Show-WDWindow {
         $st.Start()
     }
 
-    # ---- mount the page in the window -------------------------------------
-    #
-    # The page goes into a host Grid with the busy overlay above it, so the
-    # overlay can cover the window during the long parts of the build.
+    # Mount the page in the window.
     & $say 'Building the interface' 'opening: mount'
         $page = $shell.Content
     $shell.Content = $null
@@ -17970,19 +14089,14 @@ function Show-WDWindow {
     $win.Tag.PageHost = $pageHost
     $win.Add_Closing({ if ($this.Tag.Closing) { & $this.Tag.Closing $_ } })
     $win.Add_Closed({  if ($this.Tag.Frame)   { $this.Tag.Frame.Continue = $false } })
-    # The HWND has to exist before DWM will take an attribute for it, and it
-    # has to be styled before the window is shown or the first frame is a
-    # flash of the wrong color. EnsureHandle creates it without showing it,
-    # which is exactly the gap between those two.
+    # The HWND has to exist before DWM will take an attribute, and the window
+    # has to be styled before it is shown or the first frame is the wrong
+    # colour.
     $null = (New-Object Windows.Interop.WindowInteropHelper $win).EnsureHandle()
     $pageHost.Children.Clear()
     $null = $pageHost.Children.Add($page)
 
-    # Mica, and the caption color that goes with it. Re-applied on every build
-    # because a theme switch is a rebuild and the title bar has to change with
-    # it. The page is only cleared to transparent once the backdrop reports it
-    # is actually there - on a machine below 22621 the solid page background set
-    # during theming stands, and nothing about the window looks unfinished.
+    # Mica, and the caption colour that goes with it.
     $win.Tag.Mica = [bool](Set-WDWindowBackdrop -Window $win -Dark ([bool]$pal.Dark))
     if ($win.Tag.Mica) {
         $win.Background     = [Windows.Media.Brushes]::Transparent
@@ -17991,109 +14105,64 @@ function Show-WDWindow {
 
     Write-WDLog ("Interface built in {0:n1}s." -f $buildClock.Elapsed.TotalSeconds) -Level Info
     if ($Splash) {
-        # The splash stays up through the whole build above - which is the slow
-        # part on a machine with 190 rows - and goes away only once there is
-        # something to replace it. Closing it earlier leaves the screen empty.
+        # The splash stays up through the whole build - the slow part on a
+        # machine with 190 rows - and goes only once there is something to look
+        # at.
         try { & $Splash.Close } catch { }
     }
     & $busy.Hide
     # The build is over: from here a call into $syncBrowser can only have come
-    # from something the user did, so the Edge notice is allowed to appear.
+    # from something the user did.
     $state.Building = $false
 
-    # Show() and a dispatcher frame rather than ShowDialog(), which is what makes
-    # a theme switch possible at all: the frame can be dropped to hand control
-    # back to the caller with the window still open, and a new one pushed when
-    # the rebuilt page is in. ShowDialog only ends by closing.
+    # Show() and a dispatcher frame rather than ShowDialog(), which is what
+    # makes a theme switch possible at all.
     $frame = New-Object Windows.Threading.DispatcherFrame
     $win.Tag.Frame = $frame
     # The self test renders the real window and drives real events through it,
-    # which is the point - but it must not steal the foreground while it does.
-    # A run takes a minute and a half, and taking focus off whatever the
-    # operator is doing for that long is not an acceptable cost for a test that
-    # is documented as changing nothing.
+    # but must not steal the foreground while it does.
     if ($state.NoPrompts) { $win.ShowActivated = $false }
     # Before Show, so the window's first frame is already the run page rather
-    # than the mode screen with a flash of the other one. A folder that cannot
-    # be replayed leaves the mode screen up, which is the right failure: the
-    # application still works, it just did not have the run to show.
+    # than a flash of the mode screen.
     if ($ShowRun -and $replayRef.Fn) {
         try { $null = & $replayRef.Fn $ShowRun } catch { }
     }
     $win.Show()
-    # Started only once the window is actually up, so nothing competes with the
-    # first paint. It runs at ApplicationIdle and stops itself when the work
-    # list empties or a click gets there first.
-    #
-    # The quiet stamp is refreshed here rather than left where it was set. It
-    # was set while this function was still building the window, several seconds
-    # before anything appeared, so its grace period had always expired by the
-    # time the window was up - the first tick therefore fired into a brand new
-    # window that nobody had had a chance to touch yet. Restamping means the
-    # first step waits for the window to have been on screen and still for the
-    # same moment every later step waits for.
+    # Started only once the window is up, so nothing competes with the first
+    # paint.
     if ($win.Tag.AdvQuiet) { $win.Tag.AdvQuiet.At = [DateTime]::UtcNow }
-    # What the item list looked like at the moment the window appeared, for the
-    # self test. The original assertion - "no rows exist three seconds after the
-    # window opened" - was written when the page was built strictly on the click
-    # and stopped being true when the pre-warm was added: the pre-warm builds
-    # rows before anybody opens anything, on purpose, so the check had become a
-    # race that happened to pass on a machine where the timer got no turn. What
-    # it was actually guarding is that nothing was built BEFORE the window was
-    # up, which is this number and cannot race.
+    # What the item list looked like at the moment the window appeared. The
+    # original assertion - no rows three seconds in - stopped being true when
+    # the pre-warm arrived.
     $win.Tag.RowsAtShow = [int]$rows.Count
     if ($win.Tag.AdvWarm) { $win.Tag.AdvWarm.Start() }
     if ($win.Tag.AppliedWarm) { $win.Tag.AppliedWarm.Start() }
-    # $null = because Activate() RETURNS A BOOLEAN, which without this escaped as
-    # Show-WDWindow's return value. Invisible for as long as a theme switch also
-    # returned a Restart object for the caller to read .Restart off.
-    #
-    # ACTIVATE IS NOT ENOUGH ON ITS OWN - a Windows rule, not a WPF one. It calls
-    # SetForegroundWindow, which the shell REFUSES from a process that does not
-    # already own the foreground, flashing the taskbar button instead. Every launch
-    # is that case: the elevated copy never had focus, the splash that did belongs
-    # to another runspace and has just closed, and seconds have passed in which
-    # the operator has reasonably clicked elsewhere.
-    #
-    # Topmost briefly, then off: a window may raise ITSELF whether or not it may
-    # take the foreground, and dropping the flag leaves it an ordinary window
-    # rather than one pinned over everything.
-    #
-    # Nothing at all under NoPrompts - a test documented as changing nothing must
-    # not take the screen off whatever the operator is doing.
+    # $null = because Activate() returns a Boolean, which without this escaped
+    # as Show-WDWindow's return value.
     if (-not $state.NoPrompts) {
         $win.Topmost = $true
         $null = $win.Activate()
         $win.Topmost = $false
         # Focus as well as foreground: without it the window is in front and the
-        # keyboard is still talking to whatever was there before, which reads as
-        # the application having opened and then ignored you.
+        # keyboard is still talking to whatever was there before.
         $null = $win.Focus()
     }
     [Windows.Threading.Dispatcher]::PushFrame($frame)
 
-    # This build's poll timer dies with this build. A theme switch drops the
-    # frame without closing the window, so the Closing handler never runs, and
-    # the old timer would go on painting into elements that are no longer on
-    # screen through a closure over a page that no longer exists. The pre-warm
-    # timer is the same shape and dies the same way.
+    # This build's poll timer dies with this build: a theme switch drops the
+    # frame without closing the window, so the Closing handler never runs.
     if ($storage.Timer) { $storage.Timer.Stop() }
     if ($win.Tag.AdvWarm) { $win.Tag.AdvWarm.Stop() }
     if ($win.Tag.AppliedWarm) { $win.Tag.AppliedWarm.Stop() }
-    # And the runspace, which is not a timer but dies here for the same reason:
-    # it is this build's, it holds this build's inventory, and on a theme switch
-    # the window carries on while everything it was filling is replaced. It has
-    # almost certainly finished long before now - it is a few seconds of work
-    # started when the window began building - so this is a dispose rather than
-    # an interruption in every ordinary case.
+    # And the runspace, which dies here for the same reason: it holds this
+    # build's inventory.
     Stop-WDSatisfiedScan -Job $satisfiedJob
 
     # Back in the function's own scope, so $script: reaches this module.
     $script:LastSelfTestFailures = [int]$selfTest.Failures
 
     # Nothing to hand back. A theme switch used to end this function so the
-    # caller could call it again in the other palette; the palette is a
-    # dictionary of brushes now and the switch never leaves the window.
+    # caller could call it again in the other palette.
     if ($win.IsVisible) { $win.Close() }
 }
 
@@ -18151,20 +14220,12 @@ $script:SplashXaml = @'
 '@
 
 function Get-WDSplashMachineLine {
-    <#  The caption under the title. One place, because the splash sets it
-        twice now - once at build when a profile was handed in, and once
-        afterwards on the launch path, where the profile is read behind the
-        window rather than in front of it.  #>
+    # The caption under the title. One place, because the splash sets it twice -
+    # once at build and once when the profile arrives.
     param($Profile)
     if (-not $Profile) { return '' }
-    # The computer's name first, because that is the one fact on this line that
-    # answers "am I looking at the right machine" - and this window is the last
-    # thing on screen before a tool that changes one. The make and the build say
-    # what kind of machine it is; the name says WHICH.
-    #
-    # Dropped rather than left as a blank lead when it cannot be read, which is a
-    # real state on an image mid-sysprep: $env:COMPUTERNAME is empty there, and a
-    # line opening with a dash reads as a rendering fault.
+    # The computer's name first, because that is the one fact answering "am I
+    # looking at the right machine".
     $line = "$($Profile.Caption) $($Profile.DisplayVersion)  -  $($Profile.Manufacturer) $($Profile.Model)"
     $name = [string]$Profile.ComputerName
     if ($name.Trim()) { $line = "$name  -  $line" }
@@ -18172,27 +14233,9 @@ function Get-WDSplashMachineLine {
 }
 
 function New-WDSplash {
-    <#
-        The window that stands in for the console, on a UI thread of its own.
-
-        THE SEPARATE RUNSPACE IS THE POINT AND IS NOT AN OPTIMISATION. WPF runs
-        its animation clock on the dispatcher that OWNS the element, so a
-        storyboard on the main thread advances only when the main thread is idle -
-        and the main thread spends this whole window doing the two slowest things
-        in the application: the manifest load and the scan, then two hundred rows.
-        Everything on that thread was tried first (chunking the build, pumping a
-        DispatcherFrame between chunks, raising the animation priority) and each
-        buys smoothness in proportion to how finely the work slices, which means
-        the bar stutters in exactly the places the work does not slice.
-
-        THE COST IS THREAD AFFINITY: nothing outside that runspace may touch the
-        window. The handles write to a synchronised hashtable and a timer INSIDE
-        the runspace reads it; there is no Window handle any more. State is handed
-        back, so the self test can watch the sweep move without reaching across.
-
-        Pump survives as a no-op. Its callers are right to say "let the splash
-        breathe"; there is nothing left for them to do about it.
-    #>
+    # The window that stands in for the console, on a UI thread of its own: WPF
+    # runs the animation clock on the dispatcher that owns the element, and this
+    # thread is about to block.
     param($Profile, [switch]$Quiet)
 
     $sync = [hashtable]::Synchronized(@{
@@ -18202,11 +14245,8 @@ function New-WDSplash {
         # is alive without touching an element it does not own.
         Shift  = 0.0
         Text   = ''
-        # The machine line, which arrives late on the launch path. Reading the
-        # profile is six CIM queries and about a second, and it used to be done
-        # before this window existed - so the caption nobody has read yet was
-        # costing a second of blank screen. The splash goes up first now and the
-        # line is filled in through here when the answer arrives.
+        # The machine line arrives late on the launch path: reading the profile
+        # is six CIM queries and about a second.
         Machine = ''
     })
 
@@ -18216,19 +14256,14 @@ function New-WDSplash {
     $rs.ApartmentState = 'STA'          # WPF refuses to start on an MTA thread
     $rs.ThreadOptions  = 'ReuseThread'
     $rs.Open()
-    # Plain data only. The runspace loads no modules, so the palette is passed
-    # as the hashtable it already is rather than by calling Get-WDPalette there.
+    # Plain data only. The runspace loads no modules, so the palette crosses as
+    # the hashtable it already is.
     $rs.SessionStateProxy.SetVariable('Sync',    $sync)
     $rs.SessionStateProxy.SetVariable('Xaml',    $script:SplashXaml)
     $rs.SessionStateProxy.SetVariable('Pal',     (Get-WDPalette))
     $rs.SessionStateProxy.SetVariable('Quiet',   [bool]$Quiet)
-    # The splash is the first thing on the taskbar, so it needs the icon too -
-    # and it has to cross as BYTES rather than as a decoded frame. Freezing is
-    # not enough: the frame keeps a reference to its decoder, the decoder is a
-    # DispatcherObject owned by this thread, and WPF reads .Decoder.Frames when
-    # it resolves an icon at handle-creation time. A foreign frame therefore
-    # assigns cleanly over there and throws inside Show(), which took the
-    # entire splash with it - no window, no error on screen, launch continues.
+    # The splash is the first thing on the taskbar, so it needs the icon - and
+    # it has to cross as bytes rather than as a decoded frame.
     $rs.SessionStateProxy.SetVariable('IconBytes', (Get-WDAppIconBytes))
 
     $ps = [powershell]::Create()
@@ -18237,22 +14272,13 @@ function New-WDSplash {
         try {
             Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
             # A local copy of the variable SessionStateProxy set, because the
-            # timer's handler below is a closure and this file's rule is that a
-            # closure reads locals of the scope it was written in - and the
-            # static check in [6] of the self test cannot know that a runspace
-            # variable exists at all, so a direct $Sync there reads as a capture
-            # of nothing whether or not it works.
+            # timer's handler is a closure and [6] cannot know a runspace
+            # variable exists.
             $box = $Sync
             $Brush = { param($hex) (New-Object Windows.Media.BrushConverter).ConvertFromString($hex) }
             $win = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader ([xml]$Xaml)))
-            # Decoded here, on the thread that owns the window, for the reason
-            # written beside IconBytes. This runspace loads no modules, so it
-            # is the one place the decode is spelled out a second time - the
-            # same trade $Brush makes rather than calling Get-WDPalette.
-            #
-            # In its own try, and that is the actual lesson of this bug: the
-            # splash must not be able to fail over decoration. Everything below
-            # is the window's reason to exist and the icon is not.
+            # Decoded here, on the thread that owns the window. This runspace
+            # loads no modules, so it builds its own decoder from the bytes.
             if ($IconBytes) {
                 try {
                     $ims = New-Object System.IO.MemoryStream (,[byte[]]$IconBytes)
@@ -18283,19 +14309,14 @@ function New-WDSplash {
 
             # Dragging: there is no title bar to grab.
             $win.Add_MouseLeftButtonDown({ try { $this.DragMove() } catch { } })
-            # -Quiet is for the self test. The splash is Topmost and activates
-            # itself, which is right when it stands in for a console somebody is
-            # waiting on and wrong when it is a test running behind whatever they
-            # are actually doing - a full-screen game, most of the time. Both are
-            # turned off rather than the window being skipped, because the point
-            # of that test is that this window really renders and really animates.
+            # -Quiet is for the self test: the splash is Topmost and activates
+            # itself, which is right when it stands in for a console and wrong
+            # in a test.
             if ($Quiet) { $win.Topmost = $false; $win.ShowActivated = $false }
             $win.Show()
 
             # The only thing that ever writes to these elements. Polling a
-            # hashtable at 60ms rather than marshalling each caller's update
-            # across: the caller must never block on the splash, and a
-            # BeginInvoke per status line is a queue that can outlive the window.
+            # hashtable at 60ms rather than marshalling each update across.
             $tick = New-Object Windows.Threading.DispatcherTimer
             $tick.Interval = [TimeSpan]::FromMilliseconds(60)
             $tick.Add_Tick({
@@ -18330,8 +14351,7 @@ function New-WDSplash {
     $handle = $ps.BeginInvoke()
 
     # Wait for the window to exist, but never forever: a splash that cannot
-    # start is not a reason to refuse to run, and the caller's own status calls
-    # are harmless writes to a hashtable either way.
+    # start is not a reason to refuse to run.
     $sw = [Diagnostics.Stopwatch]::StartNew()
     while (-not $sync.Ready -and $sw.ElapsedMilliseconds -lt 6000) { Start-Sleep -Milliseconds 15 }
 
@@ -18348,16 +14368,15 @@ function New-WDSplash {
 
     @{
         # Not Window. It belongs to another thread and touching it from here
-        # throws "the calling thread cannot access this object" - which is the
-        # trade this design makes and the reason State exists.
+        # throws.
         State   = $sync
         Text    = $setText
         Status  = $setText
-        # Fills the caption in after the fact, for the launch path, which now
-        # puts this window on screen before it reads the machine.
+        # Fills the caption in after the fact, for the launch path, which puts
+        # this window on screen before it reads the machine.
         Machine = $setMachine
         # Kept so the two callers that say "let the splash breathe" go on
-        # compiling and reading correctly. There is nothing left to pump.
+        # compiling. There is nothing left to pump.
         Pump   = { }
         Close  = {
             $sync.Close = $true
@@ -18369,36 +14388,16 @@ function New-WDSplash {
 }
 
 function Start-WDSatisfiedScan {
-    <#
-        "Is there anything left for this option to do", asked about every item on
-        a runspace of its own, into a map the item list reads as it builds.
-
-        THE COST THIS MOVES: 2,599 ms cold over the manifest, 629 warm. It was
-        paid one row at a time on the UI thread inside the deferred build, which
-        made it most of that build's five seconds - and it read as "element
-        creation" in any profile that did not measure the parts separately.
-
-        An answer is a boolean and the map is a synchronized hashtable, so nothing
-        crossing has thread affinity.
-
-        FILLED PROGRESSIVELY AND NEVER WAITED ON. The reader asks the map and falls
-        through to asking the machine, so an id that has not arrived costs what it
-        always cost. There is no state in which this being slow, late, or absent
-        makes an answer WRONG, which is why it can be started and forgotten.
-
-        Returns $null on any failure; a caller that gets one has an empty map.
-    #>
+    # "Is there anything left for this option to do", asked about every item on
+    # a runspace of its own.
     param([string]$ModulePath, $Categories, $Inventory, $Profile)
-    # Same rule as Start-WDRemovedScan: answer $null rather than throw. Every
-    # caller copes with an empty map by asking the machine, which is what it did
-    # before this existed, so there is no failure here worth taking a window down
-    # for.
+    # Answer $null rather than throw: every caller copes with an empty map by
+    # asking the machine.
     $map = [hashtable]::Synchronized(@{})
     if (-not $ModulePath) { return $null }
     try {
         # Flattened here rather than in the runspace: walking the category
-        # objects is this thread's own data structure, and handing over a plain
-        # list is one less thing for the far side to know about.
+        # objects is this thread's own data structure.
         $items = New-Object System.Collections.Generic.List[psobject]
         foreach ($c in @($Categories)) {
             foreach ($i in @($c.items)) { if ($i) { $items.Add($i) } }
@@ -18423,8 +14422,7 @@ function Start-WDSatisfiedScan {
             }
             foreach ($it in $Items) {
                 # Per item, so one bad item costs its own answer rather than
-                # every answer after it. A missing key reads as "not asked yet",
-                # which is the state the caller already copes with.
+                # every answer after it.
                 try { $Map[[string]$it.id] = [bool](Test-WDItemSatisfied -Item $it -Inventory $Inv -Profile $Prof) } catch { }
             }
         })
@@ -18436,7 +14434,7 @@ function Start-WDSatisfiedScan {
 }
 
 function Stop-WDSatisfiedScan {
-    <#  Tidies the runspace up. Never throws - it runs from a Closed handler.  #>
+    # Tidies the runspace up. Never throws - it runs from a Closed handler.
     param($Job)
     if (-not $Job) { return }
     try {
@@ -18446,19 +14444,7 @@ function Stop-WDSatisfiedScan {
 }
 
 function Start-WDStartupScan {
-    <#
-        Loads the manifest and runs the scan while the splash animates.
-
-        On its own runspace for one reason: enumerating Store packages takes
-        seconds, and WPF animates on the UI thread, so doing this inline would
-        freeze the very thing that is there to say work is happening.
-        PushFrame runs a real message loop for the duration - a Start-Sleep
-        wait here would block the dispatcher and stutter it just as badly.
-
-        Always returns; a scan that dies comes back with Error set and no Scan,
-        because the curated list alone still works and taking the app down
-        behind a splash screen leaves nowhere to report it.
-    #>
+    # Loads the manifest and runs the scan while the splash animates.
     param(
         [Parameter(Mandatory)][string]$ModulePath,
         [Parameter(Mandatory)][string]$ManifestPath,
@@ -18470,8 +14456,7 @@ function Start-WDStartupScan {
     $sync = [hashtable]::Synchronized(@{
         Status = 'Starting up'; Note = ''; Done = $false; Error = $null; Result = $null
         # Published as soon as it is known rather than with the rest of the
-        # result, because the splash's caption is waiting on it and the scan
-        # behind it takes seconds. See the note on Profile below.
+        # result, because the splash's caption is waiting on it.
         Profile = $null
     })
 
@@ -18492,11 +14477,9 @@ function Start-WDStartupScan {
             foreach ($m in $Modules) {
                 Import-Module (Join-Path $ModulePath "$m.psm1") -Force -DisableNameChecking
             }
-            # The machine profile, first and published straight away. It is six
-            # CIM queries and about a second - the first CIM call in a process
-            # is most of it - and this runspace was reading it anyway, so the
-            # main thread has no reason to read it a second time. Doing it here
-            # took that second off the launch entirely rather than moving it.
+            # The machine profile, first and published straight away: six CIM
+            # queries and about a second, which the main thread used to pay
+            # before anything could be drawn.
             $Sync.Status  = 'Looking at this machine'
             $Sync.Note    = 'Make, model, and what edition of Windows this is'
             $prof         = Get-WDSystemProfile
@@ -18517,9 +14500,7 @@ function Start-WDStartupScan {
                 $disc = New-WDDiscoveredCategories -Scan $scn
                 if (@($disc).Count) { $cats = Add-WDDiscoveredCategories -Categories $cats -Discovered $disc }
                 # After the discovered categories are folded in, so anything the
-                # scan itself found is asked about on the same terms as the
-                # curated list. It runs off the scan's own inventory, so this is
-                # matching rather than another enumeration.
+                # scan found is asked about on the same terms.
                 $Sync.Status = 'Checking what is on this machine'
                 $Sync.Note   = 'Matching the list against what is installed'
                 $seen = Get-WDItemPresence -Categories $cats -Inventory $scn.Inventory -Profile $prof
@@ -18539,19 +14520,7 @@ function Start-WDStartupScan {
 }
 
 function Wait-WDStartupScan {
-    <#
-        The other half of Start-WDStartupScan, and the reason it has halves.
-
-        This runspace spends about 400 ms importing modules and then a second
-        reading the machine profile before it does anything the caller wanted,
-        and every bit of that used to happen after the splash was already up -
-        with the main thread doing nothing but poll it. Started early instead,
-        it overlaps the WPF assembly load, the icon, and the settings file, and
-        the wait at the end is that much shorter.
-
-        Every caller that does not pass -Async still gets the old one-call
-        behavior, because Start-WDStartupScan ends by calling this.
-    #>
+    # The other half of Start-WDStartupScan, and the reason it has halves.
     param([Parameter(Mandatory)]$Job, $Splash)
 
     $sync   = $Job.Sync
@@ -18559,17 +14528,14 @@ function Wait-WDStartupScan {
     $rs     = $Job.RS
     $handle = $Job.Handle
 
-    # A plain wait, splash or no splash. This used to pump a DispatcherFrame on
-    # this thread so the splash could animate while the scan ran; the splash
-    # animates on its own thread now, so there is nothing here to keep alive and
-    # a message loop would only mean this thread could re-enter itself.
+    # A plain wait, splash or no splash. This used to pump a DispatcherFrame so
+    # the splash could animate; the splash animates on its own thread now, and a
+    # message loop here only lets this thread re-enter itself.
     $said = $false
     while (-not $sync.Done) {
         if ($Splash) { & $Splash.Text $sync.Status $sync.Note }
-        # The caption, as soon as the far side knows it. Once, not every pass:
-        # it is a string comparison in the splash's own timer either way, but a
-        # handle called from a 50ms loop for the length of a scan is the sort of
-        # thing that grows a cost later.
+        # Once, not every pass: it is a string comparison in the splash's own
+        # timer either way.
         if ($Splash -and -not $said -and $sync.Profile) {
             & $Splash.Machine $sync.Profile
             $said = $true
@@ -18581,8 +14547,7 @@ function Wait-WDStartupScan {
     $ps.Dispose(); $rs.Close(); $rs.Dispose()
 
     # Profile comes back with the rest so the caller does not read it again.
-    # Null when the scan died before it got that far, which the caller has to
-    # answer for - it is the one field here that has no useful empty value.
+    # Null when the scan died before it got that far.
     $out = @{ Categories = $null; Scan = $null; Presence = $null
               Profile = $sync.Profile; Error = $sync.Error }
     if ($sync.Result) {
@@ -18599,21 +14564,8 @@ function Wait-WDStartupScan {
 $script:StorageScan = $null
 
 function Start-WDStorageScan {
-    <#
-        Measures the drive on a runspace of its own and publishes what it knows
-        as it learns it. Nothing here blocks; the caller polls.
-
-        Three publications rather than one, because they are three very
-        different costs. Capacity is a single CIM call and lands immediately, so
-        the bar is drawn the moment the page is. The clean-up sizes come next -
-        seconds, usually, though a machine still holding Windows.old can make it
-        a minute. The three drive walks come last and are the expensive half,
-        which is why their answer is cached between sessions.
-
-        Started once per process. A theme switch rebuilds the page but not the
-        machine, and the self test builds the window twice; neither is a reason
-        to walk the disk again.
-    #>
+    # Measures the drive on a runspace of its own and publishes what it knows as
+    # it knows it.
     param([Parameter(Mandatory)][string]$ModulePath, $Cached)
 
     if ($script:StorageScan) { return $script:StorageScan }
@@ -18651,17 +14603,16 @@ function Start-WDStorageScan {
                                                    -Items $rec.Items -Unmeasured $rec.Unmeasured -Overlap $rec.Overlap -Priced
             $Sync.Version++
 
-            # Buckets are published only when they were actually walked. Handing
+            # Buckets are published only when they were actually walked: handing
             # back the cache would let a session that never measured anything
-            # restamp it with today's date, and it would then never expire.
+            # restamp it.
             $buckets = $Cached
             if (-not $buckets) {
                 $buckets = Measure-WDDiskBuckets -Cancellable
                 $Sync.Buckets = $buckets
             }
             # Read again: the walk takes long enough that the free space it was
-            # compared against has moved, and a bar whose parts do not add up to
-            # the drive is the one thing this must not draw.
+            # compared against has moved.
             $cap = Get-WDDiskCapacity
             $Sync.Snapshot = New-WDStorageSnapshot -Drive $cap.Drive -TotalBytes $cap.TotalBytes -FreeBytes $cap.FreeBytes `
                                                    -Items $rec.Items -Unmeasured $rec.Unmeasured -Overlap $rec.Overlap `
@@ -18675,20 +14626,15 @@ function Start-WDStorageScan {
     })
     $null = $ps.BeginInvoke()
 
-    # Not disposed here and not waited on. The walk runs on a thread-pool
-    # thread, which is a background thread, so it cannot hold the process open;
-    # closing the window sets the flag that ends it early.
+    # Not disposed here and not waited on: the walk runs on a background thread,
+    # so it cannot hold the process open.
     $script:StorageScan = $sync
     $sync
 }
 
 function New-WDBusyOverlay {
-    <#
-        The panel that covers the window while its contents are rebuilt. A bar
-        rather than a spinner, and a determinate one: the build blocks the UI
-        thread between pumps, so anything meant to animate smoothly would judder
-        and read as a hang. A bar that advances in visible steps reads as work.
-    #>
+    # The panel that covers the window while its contents are rebuilt. A
+    # determinate bar, because the work blocks the UI thread between pumps.
     param($Palette, [scriptblock]$Brush)
 
     $veil = New-Object Windows.Controls.Border
@@ -18731,15 +14677,8 @@ function New-WDBusyOverlay {
     $card.Child = $sp
     $veil.Child = $card
 
-    # What the bar actually did, so the self test can tell a bar that filled from
-    # one that sat at zero - which is not visible in any property afterwards,
-    # because by then it has been hidden and reset.
-    #
-    # Full is the half MaxWidth cannot answer, and it was added because a real
-    # defect passed the MaxWidth check for a year: the Advanced build's bar
-    # advanced perfectly well and then stopped at whatever fraction the pre-warm
-    # had left room for - 48% on a normal launch - and the page simply appeared.
-    # "The bar moved" is not the claim worth checking; "the bar arrived" is.
+    # What the bar actually did, so the self test can tell a bar that filled
+    # from one that sat at zero.
     $seen = @{ Shown = $false; MaxWidth = 0.0; Full = $false }
 
     @{
@@ -18757,21 +14696,18 @@ function New-WDBusyOverlay {
         }.GetNewClosure()
         Set = {
             # $Line, not $Note: PowerShell names are case-insensitive, so a
-            # parameter called $Note shadows the captured $note TextBlock and
-            # every update quietly sets .Text on a string instead.
+            # parameter called $Note shadows the captured $note TextBlock.
             param([string]$Line, [double]$Fraction)
             if ($Line) { $note.Text = $Line }
             # The card is a fixed width, so the bar can be sized directly rather
-            # than measured - one less layout pass in a loop that is already the
-            # slow part.
+            # than measured.
             $fill.Width = [Math]::Max(0, 284 * [Math]::Min(1.0, [Math]::Max(0.0, $Fraction)))
             if ($fill.Width -gt $seen.MaxWidth) { $seen.MaxWidth = [double]$fill.Width }
             if ($Fraction -ge 0.999) { $seen.Full = $true }
         }.GetNewClosure()
         Hide = { $veil.Visibility = 'Collapsed' }.GetNewClosure()
         # The overlay belongs to the window, so it outlives the palette it was
-        # built in. Repainted after a switch rather than during one: while the
-        # rebuild runs it should match the page still underneath it.
+        # built in.
         Retheme = {
             param($P)
             $veil.Background      = & $Brush $(if ($P.Dark) { '#D81F1F1F' } else { '#E8F5F5F5' })
@@ -18786,7 +14722,7 @@ function New-WDBusyOverlay {
 }
 
 function Get-WDSelfTestFailures {
-    <#  Interaction failures from the last -SelfTest GUI pass.  #>
+    # Interaction failures from the last -SelfTest GUI pass.
     if ($null -eq $script:LastSelfTestFailures) { return 0 }
     [int]$script:LastSelfTestFailures
 }
@@ -18812,14 +14748,9 @@ $script:ThemeXaml = @'
 '@
 
 function Show-WDThemeChooser {
-    <#
-        Asked once, on the very first run, before anything else is on screen.
-        Returns 'dark' or 'light'; closing the window without answering follows
-        Windows, which is what every run did before this existed.
-
-        Drawn in the Windows theme rather than in a theme nobody has chosen yet -
-        picking one to ask the question in would be answering it.
-    #>
+    # Asked once, on the very first run, before anything else is on screen.
+    # Drawn in the Windows theme: picking one to ask the question in would be
+    # answering it.
     $pal = Get-WDPalette
     $win = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader ([xml]$script:ThemeXaml)))
     $themeIcon = Get-WDAppIcon
@@ -18844,29 +14775,13 @@ function Show-WDThemeChooser {
     [string]$picked.Value
 }
 
-
 function Show-WDSetupResult {
-    <#
-        The prompt at the first sign-in after a run that had no interface.
-
-        A SetupComplete.cmd run finishes in session 0, before anybody has a
-        desktop, so nobody has been told it happened. This tells them, and OFFERS
-        ONE THING rather than a menu - somebody who has just signed into a new
-        machine and been told a program they may never have heard of changed
-        things does not need to choose between two ways of being shown.
-
-        Deliberately cancelable throughout: unelevated, changes nothing, and it
-        disappears without a trace if anything is not as expected - no run folder,
-        no report, a preview, no desktop. The text file on the desktop is the
-        promise; this is the courtesy on top, and a courtesy that gets in the way
-        has stopped being one.
-    #>
+    # The prompt at the first sign-in after a run that had no interface.
     param([string]$RunDir, [string]$ScriptPath, [string]$Theme = '')
 
     $info = Read-WDSetupResult -RunDir $RunDir
     if (-not $info) { return $false }
-    # No desktop to put a window on - a session with no interactive station,
-    # which is not a state this should try to be clever in.
+    # No desktop to put a window on - a session with no interactive station.
     if (-not [Environment]::UserInteractive) { return $false }
 
     $pal = Get-WDPalette -Theme $Theme
@@ -18878,9 +14793,8 @@ function Show-WDSetupResult {
     $win.ResizeMode = 'NoResize'
     $win.WindowStartupLocation = 'CenterScreen'
     $win.Background = & $b $pal.Panel
-    # Get-WDIconSource with no path returns null on its first line, so this
-    # window has never had an icon. It is the one window somebody meets before
-    # they have any idea what the application is.
+    # It is the one window somebody meets before they know what this program is,
+    # so it wears the mark.
     try { $win.Icon = Get-WDAppIcon } catch { }
 
     $sp = New-Object Windows.Controls.StackPanel
@@ -18913,7 +14827,7 @@ function Show-WDSetupResult {
     }
 
     # Which of the three states this is, decided once, because the sentence and
-    # the button have to agree about it.
+    # the button have to agree.
     $canApp   = [bool]($ScriptPath -and (Test-Path -LiteralPath $ScriptPath))
     $canWrite = [bool]($info.KeepDir -or $info.SummaryFile)
 
@@ -18926,10 +14840,7 @@ function Show-WDSetupResult {
                        "Everything it did is written up in $($info.RunDir)."
                    } else {
                        # Nothing left to open, so say where the files are rather
-                       # than offering a button that cannot work. This is the
-                       # state where the medium was unplugged and the desktop
-                       # copy did not survive - rare, and the one case where an
-                       # honest dead end beats a hopeful button.
+                       # than offering a button that cannot work.
                        "There is nothing here that can open it for you. The files are in $($info.RunDir)."
                    })
     $null = $sp.Children.Add($tail)
@@ -18938,8 +14849,8 @@ function Show-WDSetupResult {
     $row.Orientation = 'Horizontal'; $row.HorizontalAlignment = 'Right'; $row.Margin = '0,18,0,0'
     $null = $sp.Children.Add($row)
 
-    # Everything a handler needs, in this scope, because each one below is a
-    # closure and reaching up the chain from inside one captures $null.
+    # Everything a handler needs, in this scope, because each is a closure and
+    # reaching up the chain captures $null.
     $theWin  = $win
     $theDir  = [string]$info.KeepDir
     $theRun  = [string]$info.RunDir
@@ -18956,9 +14867,7 @@ function Show-WDSetupResult {
         $btn
     }
 
-    # The write-up on the desktop, folder first and the file behind it. One
-    # scriptblock because both branches below need it and two copies of a
-    # fallback ladder is how the two come to disagree about the order.
+    # One scriptblock because both branches below need it.
     $openWriteUp = {
         foreach ($p in @($theDir, $theText)) {
             if (-not $p) { continue }
@@ -18967,21 +14876,8 @@ function Show-WDSetupResult {
         $false
     }.GetNewClosure()
 
-    # **One offer, never a menu.** Somebody has just signed into a new machine
-    # and been told that a program they may never have heard of changed things
-    # while they were away. The useful answer to that is "show me"; asking them
-    # to choose between two ways of being shown is a decision with nothing
-    # behind it, at the worst possible moment to be asked one.
-    #
-    # The three states are strictly ordered - the real run page beats the
-    # write-up, and the write-up beats nothing - so the ladder never has to ask.
-    # The page is the same one an ordinary apply ends on, fully working, which
-    # is why it wins: everything the folder holds is reachable from it.
-    #
-    # It needs administrator rights, because it is the window that can also
-    # apply changes. That is why the elevation prompt belongs here rather than
-    # at sign-in: it arrives after somebody has asked for something, from a
-    # window with a name on it.
+    # One offer, never a menu: somebody has just signed into a new machine and
+    # been told a program they may never have heard of changed things.
     if ($canApp) {
         $null = & $mkBtn 'Show me what it did' {
             try {
@@ -18992,7 +14888,7 @@ function Show-WDSetupResult {
             } catch {
                 # Refused at the prompt, or a standard account with no rights to
                 # give. Fall through to the write-up rather than leaving the one
-                # button on the window having done nothing at all.
+                # button having done nothing.
                 if (& $openWriteUp) { $theWin.Close() }
             }
         }.GetNewClosure() $true
@@ -19011,26 +14907,21 @@ Export-ModuleMember -Function Show-WDWindow, Get-WDPalette, New-WDGridLength, Ge
                               Get-WDAppIcon, Get-WDAppIconBytes, New-WDIconBytes,
                               Set-WDTaskbarIdentity,
                               Get-WDCategoryGlyph, Get-WDSelfTestFailures, New-WDSplash,
-                              # Exported for the same reason Set-WDWindowBackdrop is:
-                              # the splash's Machine handle is a GetNewClosure block
-                              # handed to the caller, and one of those resolves
-                              # commands against its own module and then global,
-                              # never against this one.
+                              # Exported for the same reason
+                              # Set-WDWindowBackdrop is: a GetNewClosure block
+                              # resolves commands against its own module and
+                              # then global, never against the one that defined
+                              # it.
                               Get-WDSplashMachineLine,
-                              # Every dialog in the application goes through these,
-                              # and most of the calls are inside GetNewClosure blocks
-                              # - which resolve commands against their own dynamic
-                              # module and then global, never against this one. An
-                              # unexported function is invisible from in there.
+                              # Every dialog goes through these, and most of the
+                              # calls are inside GetNewClosure blocks.
                               Show-WDMessage, Set-WDDialogHost,
                               Start-WDStartupScan, Wait-WDStartupScan, Start-WDStorageScan,
                               Start-WDSatisfiedScan, Stop-WDSatisfiedScan,
                               Get-WDChildScrollViewer, Get-WDChildScrollBar, Show-WDThemeChooser,
                               Show-WDSetupResult,
-                              # Exported because the theme-switch handler calls it, and a
-                              # GetNewClosure scriptblock resolves commands against its own
-                              # dynamic module and then global - never against the module
-                              # that defined it. An unexported function is invisible in
-                              # there, which is a runtime error inside a click handler.
+                              # Exported because the theme-switch handler calls
+                              # it, and a GetNewClosure scriptblock cannot see
+                              # an unexported function.
                               Set-WDWindowBackdrop
 
