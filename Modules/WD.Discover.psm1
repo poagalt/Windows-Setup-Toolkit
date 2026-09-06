@@ -1,28 +1,11 @@
-﻿<#
-    WD.Discover - runtime scan of everything installed, classified against a
-    protection list.
-
-    Design note. A curated removal list cannot know about a vendor app that
-    ships on a model nobody has seen yet. A pure runtime scan cannot know that
-    Lenovo Vantage owns battery charge thresholds while Lenovo Now is junk.
-    So this inverts the problem: enumerate what must be KEPT - a small, stable,
-    knowable set - and treat everything else as a candidate, surfaced with its
-    publisher and install date so the operator decides.
-
-    Nothing in the protected lists below is ever offered for removal, at any
-    preset, including Extreme. That is the whole safety guarantee of this module.
-#>
-
-# --------------------------------------------------------------------------
-# Protected: Windows itself. Removing any of these breaks the shell, servicing,
-# sign-in, or app deployment.
-# --------------------------------------------------------------------------
+﻿# Windows itself. Removing any of these breaks the shell, servicing, sign-in, or
+# app deployment.
 $script:ProtectedAppx = @(
     # Frameworks and runtimes every Store app links against
     'Microsoft.NET.Native.*', 'Microsoft.VCLibs.*', 'Microsoft.UI.Xaml.*'
     'Microsoft.WindowsAppRuntime.*', 'MicrosoftCorporationII.WinAppRuntime.*'
     'Microsoft.Services.Store.Engagement', 'Microsoft.DirectXRuntime'
-    # Shell, sign-in and system UI hosts
+    # Shell, sign-in, and system UI hosts
     'Microsoft.Windows.ShellExperienceHost', 'Microsoft.Windows.StartMenuExperienceHost'
     'MicrosoftWindows.Client.Core', 'MicrosoftWindows.Client.CBS', 'MicrosoftWindows.Client.FileExp'
     'MicrosoftWindows.Client.Photon', 'MicrosoftWindows.Client.OOBE'
@@ -45,13 +28,10 @@ $script:ProtectedAppx = @(
     'Microsoft.HEIFImageExtension', 'Microsoft.HEVCVideoExtension', 'Microsoft.VP9VideoExtensions'
     'Microsoft.WebMediaExtensions', 'Microsoft.WebpImageExtension', 'Microsoft.RawImageExtension'
     'Microsoft.AV1VideoExtension', 'Microsoft.AVCEncoderVideoExtension', 'Microsoft.MPEG2VideoExtension'
-    # Obfuscated in-box accessibility packages (voice access, live captions, etc.)
+    # Obfuscated in-box accessibility packages (voice access, live captions)
     'MicrosoftWindows.5*', 'MicrosoftWindows.6*'
 )
 
-# --------------------------------------------------------------------------
-# Protected: drivers, runtimes and redistributables. Never candidates.
-# --------------------------------------------------------------------------
 $script:ProtectedPrograms = @(
     'Microsoft Visual C++*', 'Microsoft .NET*', 'Microsoft ASP.NET*', 'Windows Driver Package*'
     'Microsoft Edge WebView2 Runtime', 'Microsoft GameInput*', 'DirectX*'
@@ -64,22 +44,14 @@ $script:ProtectedPrograms = @(
     'Windows Security*', 'Microsoft Defender*', 'Windows Defender*', 'Windows Assessment*'
 )
 
-# --------------------------------------------------------------------------
-# Protected: a binary that versions itself as part of Windows is part of
-# Windows, wherever on disk it happens to live. Defender for Endpoint, the
-# GameInput redistributable and Media Player's sharing service all sit outside
-# System32 and were being offered as "third-party" on that basis alone.
-# --------------------------------------------------------------------------
+# A binary that versions itself as part of Windows is part of Windows, wherever
+# on disk it lives.
 $script:WindowsProductNames = @(
     'Microsoft* Windows*', 'Windows* Operating System'
 )
 
-# --------------------------------------------------------------------------
-# Protected: vendor tools that own power, thermals, firmware or input.
-# These are system dependencies on the hardware they ship with. Stripping them
-# costs you battery charge limits, fan curves or BIOS updates, so they are not
-# offered for removal at any preset.
-# --------------------------------------------------------------------------
+# Vendor tools that own power, thermals, firmware, or input are system
+# dependencies on the hardware they ship with.
 $script:ProtectedVendorTools = @{
     lenovo    = @('Lenovo Vantage*', 'Lenovo Commercial Vantage*', 'Lenovo System Interface*',
                   'Lenovo Utility*', 'Lenovo Hotkey*', 'Legion*', 'Lenovo Power*', 'Lenovo Intelligent*',
@@ -99,24 +71,15 @@ $script:ProtectedVendorTools = @{
     generic   = @()
 }
 
-# Cross-vendor hardware tools, whoever built the machine.
-#
-# Intel XTU is here for the reason the vendor power tools are: it owns CPU
-# voltage, turbo, and thermal limits, and the profile it last applied PERSISTS IN
-# FIRMWARE - remove it and an undervolt stays in force with nothing left that can
-# change it. Vendors rebadge it, so the patterns have to cover more than Intel's
-# own installer name.
-#
-# Never a bare *XTU*: that matches every product with "texture" in its name.
+# Intel XTU owns CPU voltage, turbo, and thermal limits, and the profile it last
+# applied persists in firmware - remove it and an undervolt stays in force with
+# nothing left that can change it.
 $script:ProtectedHardwareTools = @(
     'X-Rite*', 'Portrait Displays*', 'Logitech*', 'Logi Options*', 'LGHUB*'
     'Corsair iCUE*', 'SteelSeries*', 'Elgato*', 'Wacom*', 'Focusrite*', 'ASIO*'
     '*Extreme Tuning Utility*', '*Intel*XTU*', 'XTU_*', 'Intel*Overclocking*'
 )
 
-# --------------------------------------------------------------------------
-# Protected: services. Windows core plus anything driver-backed.
-# --------------------------------------------------------------------------
 $script:ProtectedServices = @(
     # Servicing and update - removing these strands the machine unpatched
     'wuauserv', 'UsoSvc', 'WaaSMedicSvc', 'BITS', 'CryptSvc', 'TrustedInstaller', 'msiserver'
@@ -142,28 +105,8 @@ function Test-WDPatternMatch {
     $false
 }
 
-# =========================================================== presence ======
-#
-# Whether each curated item has anything to act on, decided BEFORE the list is
-# drawn rather than in the preview. An item that is not on this machine still
-# earns a row - it says what the toolkit covers - but not as a decision.
-#
-# Pure matching against inventories the startup scan already enumerated, so it
-# costs one task walk and a handful of Test-Paths.
-
 function Get-WDTaskFacts {
-    <#
-        Every registered task path, walked once, and which of them are already
-        disabled.
-
-        Both come out of the one walk because the COM object carries Enabled
-        beside Path and reading it costs nothing. They answer two different
-        questions and the difference matters: presence asks "is there a task
-        here", which stays true after a run disables it, while a run's own
-        "is there anything left to do" asks whether it is still enabled. Asking
-        the second with the first is how an option that has already been applied
-        goes on claiming there is work in it.
-    #>
+    # Both come out of one walk: the COM object carries Enabled next to Path.
     $paths = New-Object System.Collections.Generic.List[string]
     $off   = New-Object System.Collections.Generic.List[string]
     $svc = $null
@@ -189,16 +132,12 @@ function Get-WDTaskFacts {
 }
 
 function Get-WDTaskInventory {
-    <#  The path list alone, for callers that only ask about presence.  #>
     (Get-WDTaskFacts).Paths
 }
 
 function Get-WDMachineInventory {
-    <#
-        The lists every presence question is answered from. Built from what the
-        scan already has where possible - re-enumerating Store packages is the
-        slowest thing this toolkit does and it is not doing it twice.
-    #>
+    # Built from what the scan already has where possible - re-enumerating Store
+    # packages is the slowest thing this toolkit does.
     param([string[]]$AppxNames, [string[]]$ServiceNames, [string[]]$InboxNames)
 
     if ($null -eq $AppxNames) {
@@ -218,45 +157,21 @@ function Get-WDMachineInventory {
     $taskFacts = Get-WDTaskFacts
     [pscustomobject]@{
         Appx     = @($AppxNames)
-        # The subset Windows marks NonRemovable: in-box CBS components and shell
-        # hosts, serviced by Windows Update, which no privilege, ownership change
-        # or policy removes. Kept alongside the full list rather than derived
-        # later because it costs nothing here - the enumeration has already
-        # happened - and re-running Get-AppxPackage to ask a second question
-        # about the same list is the slowest thing this toolkit does.
+        # The NonRemovable subset: in-box CBS components and shell hosts that no
+        # privilege, ownership change, or policy removes.
         Inbox    = @($InboxNames)
         Services = @($ServiceNames)
         Programs = @(Get-WDInstalledPrograms)
         Tasks    = @($taskFacts.Paths)
-        # The subset already switched off, kept beside the full list for the
-        # same reason Inbox is: the walk has happened and asking again would be
-        # a second enumeration for a question the first one answered.
+        # The already-disabled subset, from the same walk.
         TasksOff = @($taskFacts.Disabled)
     }
 }
 
 function Get-WDItemPresence {
-    <#
-        Per item: is there anything here to act on, and roughly how much disk it
-        holds. Returns id -> @{Present; Bytes; Counted; Blind}.
-
-        PRESENT IS THREE-VALUED. $true and $false are answers; $null is "no
-        opinion", which an item gets the moment any of its actions is a kind this
-        cannot ask about (registry, script, feature, capability, winget). A policy
-        write applies whether or not the app it disables is installed, so an item
-        that is half policy and half package is NOT a no-op because the package is
-        missing, and graying it would be a lie.
-
-        Bytes comes from the size the installer recorded in its uninstall key.
-        Store packages have no readable size - WindowsApps refuses administrators
-        - so they are counted rather than measured, which is what Blind reports.
-
-        Asks "is there anything HERE", deliberately NOT "is there anything left to
-        DO" - Test-WDActionSatisfied answers that one. They differ: a task a run
-        has disabled is still present with nothing left to do to it. Keeping them
-        apart is what lets a row say "not on this machine" and "already applied"
-        as the different statements they are.
-    #>
+    # Returns id -> @{Present; Bytes; Counted; Blind}. Present is three-valued:
+    # $true and $false are answers, $null is "no opinion" - which is what any
+    # action type this cannot ask about forces.
     param($Categories, $Inventory, $Profile)
 
     if (-not $Inventory) { $Inventory = Get-WDMachineInventory }
@@ -267,20 +182,14 @@ function Get-WDItemPresence {
     $tasksOff = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
     foreach ($t in @($Inventory.TasksOff)) { $null = $tasksOff.Add([string]$t) }
 
-    # NESTED LOOPS, NOT PIPELINES - this is why the pass can run at startup.
-    # Written as a Where-Object per package with a second pipeline inside it, 64
-    # appx actions against 147 packages was ~9,500 scriptblock invocations for
-    # one action type and about a second of the launch; this measures ~40 ms.
-    # Parameter binding and pipeline setup are the cost, never the comparison.
-    #
-    # Program names cast once, out here, rather than per item.
+    # Nested loops, not pipelines, and that is why this can run at startup: as a
+    # Where-Object per package with a second pipeline inside, 64 appx actions
+    # against 147 packages was ~9,500 scriptblock invocations. Parameter binding
+    # is the cost, never the comparison.
     $progNames = New-Object 'string[]' $progs.Count
     for ($i = 0; $i -lt $progs.Count; $i++) { $progNames[$i] = [string]$progs[$i].DisplayName }
 
-    # Shortcut folders, walked once each rather than once per action. Worth
-    # nothing measurable today - the manifest has two shortcut actions and both
-    # name the desktop - but a Start menu is a recursive Get-ChildItem over a
-    # few hundred files, and nothing inside this pass changes what is in it.
+    # Walked once each rather than once per action.
     $lnkCache = @{}
 
     $out = @{}
@@ -293,11 +202,8 @@ function Get-WDItemPresence {
             $known = 0; $found = 0; $opaque = $false
             $bytes = 0L; $blind = 0
             foreach ($a in $acts) {
-                # An action whose guards fail never runs on this machine, so it
-                # can neither make the item present nor keep it outstanding.
-                # Ten items carry one - the Enterprise-only half of "Lock screen
-                # Spotlight ads" among them - and counting those was enough on
-                # its own to stop the item ever reading as done.
+                # An action whose guards fail never runs here, so it can neither
+                # make the item present nor keep it outstanding.
                 $ag = @(Get-Prop $a 'guards' @())
                 if ($ag.Count -and $Profile -and -not (Test-WDGuard -Guards $ag -Profile $Profile)) { continue }
                 switch ([string]$a.type) {
@@ -335,9 +241,10 @@ function Get-WDItemPresence {
                         $skip = @(Get-Prop $a 'exclude' @())
                         $pat  = @(Get-Prop $a 'match' @())
                         $any  = $false
-                        # $pi rather than $i: variable names are case-insensitive
-                        # here and this file has already paid for a collision
-                        # between a loop counter and something above it.
+                        # $pi rather than $i: variable names are
+                        # case-insensitive, and this file has already paid for a
+                        # collision between a loop counter and something above
+                        # it.
                         for ($pi = 0; $pi -lt $progNames.Length; $pi++) {
                             $nm = $progNames[$pi]
                             $ok = $false
@@ -367,9 +274,8 @@ function Get-WDItemPresence {
                         }
                     }
                     'shortcut' {
-                        # Names are wildcards over whichever locations the action
-                        # lists, and a shortcut sweep with no matches is a no-op
-                        # the same way a missing package is.
+                        # A shortcut sweep with no matches is a no-op the same
+                        # way a missing package is.
                         $known++
                         $names = @(Get-Prop $a 'names' @())
                         foreach ($loc in @(Get-Prop $a 'locations' @('desktop'))) {
@@ -401,11 +307,10 @@ function Get-WDItemPresence {
                         }
                     }
                     default {
-                        # registry, registryKey, script, feature, capability,
-                        # winget. The first three apply regardless of what is
-                        # installed; the last three cost a DISM call or a
-                        # network round trip to answer, which is not a price
-                        # worth paying to gray out five rows.
+                        # registry, registryKey, and script apply whatever is
+                        # installed; feature, capability, and winget cost a DISM
+                        # call or a network round trip, which is not worth
+                        # paying to gray out five rows.
                         $opaque = $true
                     }
                 }
@@ -424,7 +329,6 @@ function Get-WDItemPresence {
 }
 
 function Get-WDProtectedPrograms {
-    <#  The full keep-list for this machine, vendor tools included.  #>
     param($Profile)
     if (-not $Profile) { $Profile = Get-WDSystemProfile }
 
@@ -441,26 +345,19 @@ function Get-WDProtectedPrograms {
 }
 
 function Get-WDManifestPatterns {
-    <#
-        Every pattern the curated manifest already targets, so the scan does not
-        offer the same app twice under a different name.
-    #>
     param($Categories)
 
-    # Only action types whose "names" identify a piece of software. The others
-    # name something else entirely, and harvesting them cost the whole scan
-    # once: "Remove desktop shortcuts" legitimately sweeps names "*", that "*"
-    # landed here, and every installed program then matched as already-covered.
-    # The result was a scan that found nothing and said so quietly.
+    # Only action types whose names identify software. Harvesting the others
+    # cost the whole scan once: "Remove desktop shortcuts" sweeps names "*",
+    # that "*" landed here, and every installed program then matched as already
+    # covered.
     $identityTypes = @('appx', 'appxPolicy', 'service', 'winget')
 
     $pat = New-Object System.Collections.Generic.List[string]
     $add = {
         param([string]$Pattern)
         # A pattern of nothing but wildcards matches everything, so it can only
-        # ever be a mistake here however it arrived. Belt and braces with the
-        # type filter above, because the next one of these will come from an
-        # action type nobody thought about.
+        # be a mistake however it arrived.
         if (-not $Pattern) { return }
         if (-not ($Pattern -replace '[\*\?\s]', '')) {
             Write-WDLog "Ignoring manifest pattern '$Pattern' - it would match every installed program." -Level Warn
@@ -476,13 +373,11 @@ function Get-WDManifestPatterns {
                     foreach ($n in @(Get-Prop $a 'names' @()))    { & $add ([string]$n) }
                     foreach ($n in @(Get-Prop $a 'packages' @())) { & $add ([string]$n) }
                 }
-                # 'match' only ever appears on uninstall, and always names a
-                # program, so it needs no type check.
+                # 'match' only appears on uninstall and always names a program.
                 foreach ($n in @(Get-Prop $a 'match' @())) { & $add ([string]$n) }
             }
             # Script-handler items carry no match patterns, so without this the
-            # scanner re-offers what they already remove - OneDrive and Edge
-            # were both showing up as "unknown third-party software".
+            # scanner re-offers what they already remove.
             foreach ($n in @(Get-Prop $i 'covers' @())) { & $add ([string]$n) }
         }
     }
@@ -490,19 +385,16 @@ function Get-WDManifestPatterns {
 }
 
 function Get-WDServiceImagePath {
-    <#
-        The executable out of a service's PathName, which is not a path: it can
-        be quoted with arguments after it, or unquoted with spaces in the middle
-        (Riot Vanguard registers itself that way). Returns $null when nothing on
-        disk matches, which is itself information - see the caller.
-    #>
+    # PathName is not a path: it can be quoted with arguments after it, or
+    # unquoted with spaces in the middle. $null means nothing on disk matched,
+    # which is itself information.
     param([string]$PathName)
     if (-not $PathName) { return $null }
     $p = $PathName.Trim()
     if ($p -match '^"([^"]+)"') { return $Matches[1] }
 
-    # Unquoted. Walk back from the longest prefix so a path with spaces wins
-    # over the first token, which would be a directory that does not exist.
+    # Walk back from the longest prefix, so a path with spaces beats the first
+    # token.
     $parts = @($p -split '\s+')
     for ($i = $parts.Count; $i -ge 1; $i--) {
         $cand = ($parts[0..($i - 1)] -join ' ')
@@ -515,12 +407,9 @@ function Get-WDServiceImagePath {
 $script:FileIdentityCache = @{}
 
 function Get-WDFileIdentity {
-    <#
-        Company, product and description off a binary's version resource. This
-        is the only reliable way to tell whose software a service belongs to -
-        the service name and display name are chosen by whoever registered it
-        and frequently match nothing at all.
-    #>
+    # The only reliable way to tell whose software a service is: the service
+    # name and display name are chosen by whoever registered it and frequently
+    # match nothing.
     param([string]$Path)
     if (-not $Path) { return $null }
     if ($script:FileIdentityCache.ContainsKey($Path)) { return $script:FileIdentityCache[$Path] }
@@ -541,11 +430,8 @@ function Get-WDFileIdentity {
 }
 
 function Get-WDInstallPathSegments {
-    <#
-        The directory names between Program Files (or ProgramData) and the
-        binary. Version folders are dropped - they identify nothing - and so is
-        anything one or two characters long, which is where x64 and bin live.
-    #>
+    # Version folders identify nothing, and so does anything one or two
+    # characters long - x64 and bin.
     param([string]$Path)
     if (-not $Path) { return @() }
     if ($Path -notmatch '\\(?:Program Files(?: \(x86\))?|ProgramData)\\(.+)$') { return @() }
@@ -555,31 +441,17 @@ function Get-WDInstallPathSegments {
 }
 
 function Get-WDOwningAppxPackage {
-    <#
-        The package name for a binary under WindowsApps. A service that ships
-        inside an Appx package is removed with the package, so it must be
-        classified as the package is rather than on its own.
-    #>
+    # A service shipping inside an Appx package is removed with the package, so
+    # it must be classified as the package is.
     param([string]$Path)
     if ($Path -match '\\WindowsApps\\([^\\]+)') { return (($Matches[1] -split '_')[0]) }
     $null
 }
 
 function Get-WDAppxFacts {
-    <#
-        Two facts out of a package's manifest, read together because they cost
-        one XML parse.
-
-        Display  the name the package calls itself. Microsoft.4297127D64EC6 is
-                 the Minecraft Launcher, and nobody can decide about a row
-                 labelled with a hash. $null when the manifest adds nothing.
-        Listed   whether it puts anything in Start. One that does not is a
-                 component something else registered - the PowerToys
-                 context-menu packages, VS Code's shell integration - and
-                 removing it alone breaks the app that owns it. $true when the
-                 manifest cannot be read, so an unreadable package is still
-                 offered rather than silently dropped.
-    #>
+    # Both read together because they cost one XML parse. Display is the name
+    # the package calls itself; the registered name is a hash nobody can decide
+    # about.
     param($Package)
     $facts = [pscustomobject]@{ Display = $null; Listed = $true }
     try {
@@ -602,11 +474,8 @@ function Get-WDAppxFacts {
 }
 
 function Get-WDPublisherName {
-    <#
-        The O= field out of an Appx publisher DN. The value is quoted whenever
-        it contains a comma, and taking [^,]+ from it left Anthropic showing as
-        a stray double quote plus half a name.
-    #>
+    # The value is quoted whenever it contains a comma, and [^,]+ leaves a stray
+    # quote plus half a name.
     param([string]$Dn)
     if ($Dn -match 'O="([^"]+)"')  { return $Matches[1].Trim() }
     if ($Dn -match 'O=([^,]+)')    { return $Matches[1].Trim(' "') }
@@ -614,14 +483,13 @@ function Get-WDPublisherName {
 }
 
 function Get-WDSoftwareOrigin {
-    <#  'microsoft' or 'thirdparty' - drives wording only, never selection.  #>
+    # Drives wording only, never selection.
     param([string]$Publisher)
     if ($Publisher -match 'Microsoft') { 'microsoft' } else { 'thirdparty' }
 }
 
-# Where each browser keeps its per-profile data, relative to a user's AppData.
-# Opera is the odd one: it lives under Roaming, and its profile is the base
-# folder itself rather than a Default child of it.
+# Opera is the odd one: under Roaming, and its profile is the base folder rather
+# than a Default child.
 $script:ChromiumProfiles = @(
     [pscustomobject]@{ Browser = 'Chrome';   Area = 'Local';   Rel = 'Google\Chrome\User Data' }
     [pscustomobject]@{ Browser = 'Edge';     Area = 'Local';   Rel = 'Microsoft\Edge\User Data' }
@@ -632,10 +500,8 @@ $script:ChromiumProfiles = @(
     [pscustomobject]@{ Browser = 'Opera GX'; Area = 'Roaming'; Rel = 'Opera Software\Opera GX Stable' }
 )
 
-# Component extensions the browser ships with and depends on. They sit in the
-# profile alongside everything the user chose, which is the only reason they
-# turn up here at all. Bundled-but-optional ones (Docs Offline, Edge's text
-# suggestions) are deliberately not on this list - those are fair game.
+# Component extensions the browser depends on, which sit in the profile beside
+# what the user chose. Bundled-but-optional ones are deliberately not here.
 $script:ProtectedExtensions = @{
     'nmmhkkegccagdldgiimedpiccmgmieda' = 'Chrome Web Store Payments - the Web Store stops working without it'
     'mhjfbmdgcfjbbpaeojofohoefgiehjai' = 'Built-in PDF viewer - PDFs would download instead of opening'
@@ -645,12 +511,8 @@ $script:ProtectedExtensions = @{
 }
 
 function Get-WDChromiumExtensionName {
-    <#
-        A Chromium manifest is allowed to name the extension indirectly, as
-        __MSG_appName__, and resolve it out of the locale bundle. Roughly a
-        third of what is installed does, so without this the list reads as a row
-        of message keys.
-    #>
+    # A Chromium manifest may name itself __MSG_appName__ and resolve it from
+    # the locale bundle; about a third do.
     param([string]$VersionDir, $Manifest)
 
     $name = [string](Get-Prop $Manifest 'name' '')
@@ -674,15 +536,8 @@ function Get-WDChromiumExtensionName {
 }
 
 function Get-WDBrowserExtensions {
-    <#
-        Every browser extension installed under any user profile on this
-        machine, with a readable name and the folders that hold it.
-
-        Extensions the browser ships with are not here: those live inside the
-        application directory, and only what somebody added lands under the user
-        profile. That is the whole reason this scans profiles rather than
-        asking the browser.
-    #>
+    # Profile-installed only. What the browser ships with lives in the
+    # application directory.
     $byKey = @{}
 
     $userDirs = @()
@@ -709,16 +564,13 @@ function Get-WDBrowserExtensions {
             $base = Join-Path $u.FullName "AppData\$($b.Area)\$($b.Rel)"
             if (-not (Test-Path -LiteralPath $base -PathType Container)) { continue }
 
-            # Opera's profile is the base itself; everything else keeps one
-            # folder per profile under it.
             $profiles = @($base) + @(Get-ChildItem -LiteralPath $base -Directory -ErrorAction SilentlyContinue |
                                      ForEach-Object { $_.FullName })
             foreach ($prof in ($profiles | Select-Object -Unique)) {
                 $extRoot = Join-Path $prof 'Extensions'
                 if (-not (Test-Path -LiteralPath $extRoot -PathType Container)) { continue }
                 foreach ($ext in @(Get-ChildItem -LiteralPath $extRoot -Directory -ErrorAction SilentlyContinue)) {
-                    # An extension folder holds one directory per installed
-                    # version; the newest is the one in use.
+                    # One directory per installed version; the newest is in use.
                     $ver = @(Get-ChildItem -LiteralPath $ext.FullName -Directory -ErrorAction SilentlyContinue |
                              Sort-Object Name) | Select-Object -Last 1
                     if (-not $ver) { continue }
@@ -734,9 +586,8 @@ function Get-WDBrowserExtensions {
             }
         }
 
-        # Firefox records everything in one file per profile, names included,
-        # and marks where each add-on came from. Only profile-installed ones
-        # belong here - the rest ship with the browser.
+        # Firefox records everything in one file per profile and marks where
+        # each add-on came from.
         $ffRoot = Join-Path $u.FullName 'AppData\Roaming\Mozilla\Firefox\Profiles'
         foreach ($prof in @(Get-ChildItem -LiteralPath $ffRoot -Directory -ErrorAction SilentlyContinue)) {
             $db = Join-Path $prof.FullName 'extensions.json'
@@ -759,15 +610,9 @@ function Get-WDBrowserExtensions {
 }
 
 function Get-WDDiscoveredSoftware {
-    <#
-        Scans installed Win32 programs, Appx packages and third-party services,
-        classifying each as Protected, Known (manifest already covers it) or
-        Discovered. Only Discovered items become removal candidates.
-    #>
     param($Categories, $Profile, [scriptblock]$Progress)
 
-    # The scan is the long part of starting up, and the splash has nothing to
-    # say without this. Never let a reporting callback break the scan.
+    # Never let a reporting callback break the scan.
     $say = {
         param([string]$Text, [string]$Note)
         if ($Progress) { try { & $Progress $Text $Note | Out-Null } catch { } }
@@ -782,14 +627,13 @@ function Get-WDDiscoveredSoftware {
     $otherSvcs   = New-Object System.Collections.Generic.List[psobject]
     $protected   = New-Object System.Collections.Generic.List[psobject]
 
-    # Records why something was spared, so the Advanced tab can explain itself
-    # rather than just asserting "protected".
+    # Records why something was spared, so Advanced can explain rather than
+    # assert.
     $keep = {
         param([string]$Name, [string]$Kind, [string]$Reason)
         $protected.Add([pscustomobject]@{ Name = $Name; Kind = $Kind; Reason = $Reason })
     }
 
-    # Publisher fragments that identify this machine's manufacturer.
     $vendorMatch = switch ($Profile.Vendor) {
         'hp'      { 'HP |Hewlett' }      'dell'    { 'Dell' }
         'lenovo'  { 'Lenovo' }           'asus'    { 'ASUS|ASUSTek' }
@@ -802,7 +646,6 @@ function Get-WDDiscoveredSoftware {
         default   { $null }
     }
 
-    # ---- Win32 programs ---------------------------------------------------
     & $say 'Reading installed programs' 'Uninstall entries, machine and per-user'
     foreach ($p in (Get-WDInstalledPrograms)) {
         if (Test-WDPatternMatch $p.DisplayName $protectedProgs) {
@@ -812,11 +655,10 @@ function Get-WDDiscoveredSoftware {
         if (Test-WDPatternMatch $p.DisplayName $knownPatterns)  { continue }
         if (-not $p.UninstallString -and -not $p.QuietString)    { continue }   # nothing to run
 
-        # Sub-features and bundle records of a product that has its own visible
-        # entry. Windows hides them from Add/Remove Programs, and so does every
-        # uninstaller worth the name. Offering them separately put Python on the
-        # list eleven times and PowerToys twice, and picking one of the eleven
-        # does not uninstall Python.
+        # Sub-features and bundle records of a product with its own visible
+        # entry. Windows hides these from Add/Remove Programs; offering them put
+        # Python on the list eleven times, and removing one of the eleven
+        # uninstalls nothing.
         if ($p.SystemComponent -eq 1 -or $p.ParentName) {
             $owner = $(if ($p.ParentName) { $p.ParentName } else { 'the product that installed it' })
             & $keep $p.DisplayName 'program' "Part of $owner rather than a program in its own right - Windows hides it from Add/Remove Programs, and removing it separately does not uninstall anything"
@@ -838,7 +680,6 @@ function Get-WDDiscoveredSoftware {
         if ($isVendor) { $vendorApps.Add($entry) } else { $otherApps.Add($entry) }
     }
 
-    # ---- Appx packages ----------------------------------------------------
     & $say 'Reading Store packages' ''
     $pkgs = @()
     try { $pkgs = @(Get-AppxPackage -ErrorAction SilentlyContinue) } catch { }
@@ -847,8 +688,8 @@ function Get-WDDiscoveredSoftware {
             & $keep $pkg.Name 'appx' 'Windows component - shell, sign-in, servicing or a media codec'
             continue
         }
-        # Vendor hardware tools ship as Store packages too - lighting, hotkey
-        # and thermal controllers among them - so the same keep-list applies.
+        # Vendor hardware tools ship as Store packages too, so the same
+        # keep-list applies.
         if (Test-WDPatternMatch $pkg.Name $protectedProgs) {
             & $keep $pkg.Name 'appx' (Get-WDProtectionReason -Name $pkg.Name -Profile $Profile)
             continue
@@ -861,11 +702,9 @@ function Get-WDDiscoveredSoftware {
             continue
         }
 
-        # Only now, on what is left, is it worth opening a manifest per package.
+        # Only now, on what is left, is a manifest parse per package worth it.
         # The name a package registers under and the name it calls itself are
-        # different strings, and the keep-list is written against the second:
-        # NVIDIACorp.NVIDIAControlPanel is "NVIDIA Control Panel", and
-        # AppUp.IntelArcSoftware is "Intel Graphics Software".
+        # different strings, and the keep-list is written against the second.
         $facts = Get-WDAppxFacts -Package $pkg
         $disp  = $facts.Display
         if ($disp -and (Test-WDPatternMatch $disp $protectedProgs)) {
@@ -873,8 +712,8 @@ function Get-WDDiscoveredSoftware {
             continue
         }
         if ($disp -and (Test-WDPatternMatch $disp $knownPatterns)) { continue }
-        # Last, so that anything the curated list names explicitly still wins:
-        # Widgets is an app-list-less package too, and it is meant to be offered.
+        # Last, so anything the curated list names explicitly still wins -
+        # Widgets has no app-list entry either and is meant to be offered.
         if (-not $facts.Listed) {
             & $keep $pkg.Name 'appx' 'Component registered by another installed app rather than an app in its own right - it goes when its owner does'
             continue
@@ -893,14 +732,8 @@ function Get-WDDiscoveredSoftware {
         if ($isVendor) { $vendorApps.Add($entry) } else { $otherApps.Add($entry) }
     }
 
-    # ---- services belonging to installed software -------------------------
-    #
-    # A SERVICE IS NOT AN INDEPENDENT THING. It belongs to a program, a package,
-    # or to Windows, and must be classified as its owner is. Testing only the
-    # display name against the keep-list offered Edge's three updater services as
-    # unrecognized third-party software while remove-edge was already disabling
-    # them, and offered to disable the critical service behind a Lenovo Vantage
-    # the same scan was busy protecting.
+    # A service is not an independent thing: it belongs to a program, a package,
+    # or Windows, and has to be classified as its owner is.
     & $say 'Checking background services' 'Working out what each one belongs to'
     $discoveredPkgs = @(@($otherApps) + @($vendorApps) |
                         Where-Object { $_.Kind -eq 'appx' } | ForEach-Object { $_.Name })
@@ -914,9 +747,8 @@ function Get-WDDiscoveredSoftware {
         if ($s.Name -match '^(WpnUserService|CDPUserSvc|OneSyncSvc|PrintWorkflow|BluetoothUserService|CaptureService|DevicesFlow|MessagingService|PimIndex|UdkUserSvc|UnistoreSvc|UserDataSvc|WpnService)') { continue }
 
         $exe = Get-WDServiceImagePath ([string]$s.PathName)
-        # Nothing on disk to look at means nothing can be established about it.
-        # NetSetupSvc reports an empty PathName, and "unidentified" is the worst
-        # possible reason to offer to switch something off.
+        # Nothing on disk means nothing can be established, and "unidentified"
+        # is the worst possible reason to offer to switch something off.
         if (-not $exe) { continue }
         if ($exe -match '\.sys$') { continue }
         if ($winRoot -and $exe -like "$winRoot\*") { continue }
@@ -926,15 +758,14 @@ function Get-WDDiscoveredSoftware {
         $idents    = @($s.Name, [string]$s.DisplayName)
         if ($fi)        { $idents += @($fi.Product, $fi.Description, $fi.Company) }
         if ($owningPkg) { $idents += $owningPkg }
-        # The install folder names the owner when nothing else does. Legion
-        # Space registers two services: one calls itself "Legion Space" and was
-        # protected, the other calls itself "Lenovo Gaming AI Service" and was
-        # not, from the same directory.
+        # The install folder names the owner when nothing else does: Legion
+        # Space registers two services from one directory, and only one of them
+        # says Lenovo.
         $idents += @(Get-WDInstallPathSegments -Path $exe)
         $idents = @($idents | Where-Object { $_ })
 
-        # Windows outside System32: Defender for Endpoint, GameInput, Media
-        # Player network sharing. The binary says so itself.
+        # Windows outside System32 - Defender for Endpoint, GameInput, Media
+        # Player sharing. The binary says so itself.
         if ($fi -and (Test-WDPatternMatch $fi.Product $script:WindowsProductNames)) {
             & $keep "$($s.Name) service" 'service' 'Part of Windows - the binary versions itself as an operating system component'
             continue
@@ -949,9 +780,8 @@ function Get-WDDiscoveredSoftware {
             continue
         }
 
-        # Already handled by the curated list, or by a package this same scan is
-        # about to offer. Either way the owner takes the service with it, so a
-        # separate entry is a duplicate that can only be got wrong.
+        # The owner takes the service with it, so a separate entry is a
+        # duplicate that can only be got wrong.
         $isKnown = $false
         foreach ($v in $idents) {
             if (Test-WDPatternMatch $v $knownPatterns) { $isKnown = $true; break }
@@ -982,9 +812,8 @@ function Get-WDDiscoveredSoftware {
         }
     } catch { }
 
-    # Handed back so the presence pass can run off it. Enumerating Store
-    # packages is the slowest thing this toolkit does, and doing it twice in one
-    # startup to answer two questions about the same list would be indefensible.
+    # Handed back so the presence pass runs off it rather than enumerating Store
+    # packages a second time.
     $inventory = Get-WDMachineInventory -AppxNames @($pkgs | ForEach-Object { [string]$_.Name }) `
                                         -InboxNames @($pkgs | Where-Object { $_.NonRemovable -eq $true } |
                                                       ForEach-Object { [string]$_.Name }) `
@@ -1003,7 +832,6 @@ function Get-WDDiscoveredSoftware {
 }
 
 function Get-WDProtectionReason {
-    <#  Human-readable explanation for why an item is on the keep-list.  #>
     param([string]$Name, $Profile)
 
     if (-not $Profile) { $Profile = Get-WDSystemProfile }
@@ -1029,21 +857,12 @@ function Get-WDProtectionReason {
     'Driver or hardware support package'
 }
 
-# Icon lookup is cached because the Advanced tab asks for a couple of hundred
-# of them and each miss costs a disk hit.
 $script:IconCache = @{}
-# Package name to install location, filled once by the first appx icon that asks
-# and never again. Null rather than empty so "nobody has asked" and "there are
-# none" stay different states - the same three-valued habit the rest of this
-# codebase keeps.
+# $null rather than empty, so "nobody has asked" and "there are none" stay
+# different states.
 $script:AppxLocations = $null
 
 function Get-WDIconPath {
-    <#
-        Best-effort path to something WPF can render as an icon: an .exe/.dll
-        to extract from, or a .png shipped inside an Appx package. Returns null
-        when nothing sensible is available, and the caller falls back to a glyph.
-    #>
     param([string]$Kind, [string]$Name)
 
     $key = "$Kind|$Name"
@@ -1053,12 +872,9 @@ function Get-WDIconPath {
     try {
         if ($Kind -eq 'appx') {
             # One enumeration, not one Get-AppxPackage -Name per icon.
-            # Break-even is about FOUR packages, and this machine's scan finds
-            # three - so here this form is ~130 ms slower and is still right: the
-            # count has no ceiling, the per-name form grows without bound, and the
-            # worst this costs is one enumeration. A fixed 150 ms beats a slope.
-            #
-            # Lazy and cached, so a list with no Store apps never pays it.
+            # Break-even is about four packages and this machine finds three, so
+            # it is slower here and still right: the count has no ceiling and
+            # the per-name form grows without bound.
             if ($null -eq $script:AppxLocations) {
                 $script:AppxLocations = @{}
                 try {
@@ -1089,7 +905,8 @@ function Get-WDIconPath {
                     if (Test-Path -LiteralPath $base) {
                         $result = $base
                     } else {
-                        # Packages ship scaled variants: Logo.scale-200.png etc.
+                        # Packages ship scaled variants: Logo.scale-200.png and
+                        # friends.
                         $dir  = Split-Path $base -Parent
                         $stem = [IO.Path]::GetFileNameWithoutExtension($base)
                         if (Test-Path -LiteralPath $dir) {
@@ -1115,17 +932,9 @@ function Get-WDIconPath {
     $result
 }
 
-
 function Get-WDStableId {
-    <#
-        Deterministic short id for a discovered item.
-
-        String.GetHashCode is only guaranteed stable within a process, so using
-        it here would let a saved profile stop matching its own items on a later
-        run. Hand-rolled FNV is worse: PowerShell widens the multiply past
-        UInt32 before the mask applies and the cast throws. MD5 sidesteps both -
-        it is an identifier here, not a security primitive.
-    #>
+    # String.GetHashCode is only stable within a process, so a saved profile
+    # would stop matching its own items on a later launch.
     param([string]$Text)
     $md5 = [System.Security.Cryptography.MD5]::Create()
     try {
@@ -1137,25 +946,17 @@ function Get-WDStableId {
 }
 
 function New-WDDiscoveredCategories {
-    <#
-        Turns a scan into manifest categories the engine can execute, so
-        discovered software flows through exactly the same executors, journal
-        and rollback path as everything curated.
-
-        Tiers: vendor bloat is 3 (Aggressive), general software and services
-        are 4 (Extreme only) because that bucket contains the operator's own
-        applications - browsers, editors, games - not just junk.
-    #>
     param($Scan)
 
     $cats = New-Object System.Collections.Generic.List[psobject]
 
     # The visible name and the name the action targets are not always the same
-    # string, so keep them apart: the id, the icon and the uninstall all key off
-    # the real one, and only the label uses the readable one.
+    # string: the id, icon, and uninstall key off the real one, only the label
+    # uses the readable one.
     $label = { param($E) $(if ($E.PSObject.Properties['Display'] -and $E.Display) { $E.Display } else { $E.Name }) }
-    # "Third-party" is a claim, and it was wrong on roughly half of what it was
-    # printed on - Office, Gaming Services and the Edge updaters are Microsoft's.
+    # "Third-party" is a claim, and it was wrong on about half of what it was
+    # printed on - Office, Gaming Services, and the Edge updaters are
+    # Microsoft's.
     $found = {
         param($E, [string]$Noun)
         $who = $(if ($E.PSObject.Properties['Origin'] -and $E.Origin -eq 'microsoft') { 'Microsoft' } else { 'third-party' })
@@ -1179,11 +980,9 @@ function New-WDDiscoveredCategories {
                 desc    = "$($a.Publisher) | found on this machine by scan"
                 riskNote = 'Found by scanning this machine rather than from the curated list, so it has not been individually vetted. Check you do not need it.'
                 iconKind = $a.Kind; iconName = $a.Name
-                # Vendor software the scan found: "software you did not ask
-                # for" by definition, which is what band 3 says. The scanner's
-                # finds cannot be rated in the manifest, so the rating is set
-                # here or they arrive unrated and sort to the bottom of the
-                # bloat order as though they were not removals at all.
+                # Rated here because the scanner's finds cannot be rated in the
+                # manifest; unrated they sort to the bottom as though they were
+                # not removals.
                 risk    = 1; tier = 4; order = 82; bloat = 3
                 actions = @($act)
             })
@@ -1210,11 +1009,8 @@ function New-WDDiscoveredCategories {
                 desc    = (& $found $a 'software')
                 riskNote = 'This is software you or the vendor installed, not bloatware the toolkit recognizes. No preset selects it - tick it yourself if you want it gone.'
                 iconKind = $a.Kind; iconName = $a.Name
-                # Tier 0: no preset, Extreme included. The scan cannot tell a
-                # program somebody depends on from one they forgot about, and a
-                # mode that quietly uninstalls the first is the worst thing this
-                # application could do. Extreme used to take the lot, which made
-                # it a preset nobody could safely pick without reading 40 rows.
+                # Tier 0, no preset including Extreme: the scan cannot tell a
+                # program somebody depends on from one they forgot about.
                 risk    = 2; tier = 0; order = 86; bloat = 3
                 actions = @($act)
             })
@@ -1235,11 +1031,8 @@ function New-WDDiscoveredCategories {
                 name    = "$($s.Name) service"
                 desc    = (& $found $s 'service')
                 riskNote = 'A background service belonging to installed software. Disabling it may stop that software working, though it is fully reversible from the rollback script.'
-                # Tier 0, alongside the software and extensions above and for the
-                # same reason: this belongs to a program somebody installed
-                # deliberately, and the scan knows its name but not whether it is
-                # load-bearing for the way they use it. Extreme took the lot,
-                # which is a preset deciding about somebody else's software.
+                # Tier 0 for the same reason as the software above - this
+                # belongs to a program somebody installed deliberately.
                 risk    = 2; tier = 0; order = 88; bloat = 4
                 actions = @([pscustomobject]@{ type = 'service'; startupType = 'Disabled'; names = @($s.Name) })
             })
@@ -1259,18 +1052,14 @@ function New-WDDiscoveredCategories {
             $items.Add([pscustomobject]@{
                 id      = "disc-ext-$($(Get-WDStableId -Text "$($e.Browser)|$($e.Id)"))"
                 name    = "$($e.Name) ($($e.Browser))"
-                # Which browser owns it, as a field rather than as the suffix on
-                # the name. Removing a browser leaves its extensions as folders
-                # in a profile nothing reads any more, so the interface ties the
-                # two together - and it cannot do that by parsing a label it
-                # also has to translate one day.
+                # A field rather than the suffix on the name, so the interface
+                # can tie an extension to its browser without parsing a label it
+                # also has to translate.
                 browser = [string]$e.Browser
                 desc    = "$($e.Id)$where | browser extension found by scan"
                 riskNote = 'Extensions carry passwords, session cookies and page-blocking rules. Removing one loses whatever it was storing, and an ad or script blocker takes its filter lists with it. The folder goes to the Recycle Bin, so it can be put back, but the browser has to be closed for the removal to stick.'
-                # Tier 0, for the same reason as the software above: an
-                # extension is something the person deliberately added, and a
-                # password manager or an ad blocker is exactly the kind of thing
-                # a preset must not decide about on their behalf.
+                # Tier 0: an extension is something the person added, and a
+                # password manager is not a thing a preset may decide about.
                 risk    = 1; tier = 0; order = 87; bloat = 3
                 actions = @([pscustomobject]@{ type = 'file'; recycle = $true; paths = @($e.Paths) })
             })

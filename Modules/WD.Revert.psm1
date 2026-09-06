@@ -1,36 +1,12 @@
-﻿<#
-    WD.Revert - undoing what past runs did.
-
-    Two separate jobs, deliberately kept apart because they fail in different
-    ways:
-
-      Recurring effects - things this toolkit installed that keep running or
-      keep firing. These are always fully removable, and each carries an honest
-      resource estimate so the cost is visible before you opt in.
-
-      Removed software - reinstalling is best-effort and frequently impossible.
-      Rather than pretend, every entry carries a feasibility class and a plain
-      reason, so the answer to "why can't I get this back" is on screen instead
-      of buried in a log.
-#>
-
-$script:GuardTaskName  = 'Windows Setup Toolkit Persistence Guard'
+﻿$script:GuardTaskName  = 'Windows Setup Toolkit Persistence Guard'
 $script:UpdateTaskName = 'Windows Setup Toolkit Update Guard'
 $script:NoticeTaskName = 'Windows Setup Toolkit Guard Notice'
 
 $script:SchedSvc = $null
 
 function Test-WDTaskPresent {
-    <#
-        Is a task registered in the root folder?
-
-        Not Get-ScheduledTask: given a -TaskName alone it enumerates every task
-        in every folder over CIM and filters afterwards, which measures at ~900
-        ms per call on a normal machine. Three of those is most of the delay
-        before the Revert page could open. The Task Scheduler COM object answers
-        the same question directly, in single-digit milliseconds. All three
-        toolkit tasks register without -TaskPath, so they are in the root.
-    #>
+    # Not Get-ScheduledTask: given a -TaskName alone it enumerates every task in
+    # every folder over CIM, which is about a second a question.
     param([string]$Name)
     try {
         if (-not $script:SchedSvc) {
@@ -41,19 +17,16 @@ function Test-WDTaskPresent {
         # GetTask throws rather than returning null when the name is unknown.
         try { [bool]$folder.GetTask($Name) } catch { $false }
     } catch {
-        # The service can be disabled outright, and COM is refused in some
-        # locked-down images. Slow and correct beats fast and absent.
+        # The service can be disabled outright and COM is refused in some
+        # locked-down images, so slow and correct beats fast and absent.
         $script:SchedSvc = $null
         try { [bool](Get-ScheduledTask -TaskName $Name -ErrorAction SilentlyContinue) } catch { $false }
     }
 }
 
 function Remove-WDGuardLeftovers {
-    <#
-        Files and the shared notice task, cleaned up once the guard that needed
-        them is gone. The notice is shared, so it only goes when neither guard
-        is left - otherwise removing one guard would silently mute the other.
-    #>
+    # The notice task is shared, so it only goes when neither guard is left -
+    # removing one would otherwise mute the other.
     param([string[]]$Files)
     $root = Join-Path $env:ProgramData 'WinSetupToolkit'
     foreach ($f in $Files) {
@@ -66,25 +39,20 @@ function Remove-WDGuardLeftovers {
     }
     $p = Join-Path $root 'Show-WDGuardNotice.ps1'
     if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
-    # The copy of the toolkit the guards run from, which exists so a guard
-    # survives the folder it was installed from going away. With neither guard
-    # left there is nothing to run it, and a few megabytes of dormant copy under
-    # ProgramData is exactly the kind of leftover this toolkit exists to remove.
-    # A directory, so it needs -Recurse and cannot ride along in the file loop.
+    # The copy of the toolkit the guards run from. With neither guard left there
+    # is nothing to run it, and dormant megabytes under ProgramData are exactly
+    # the leftover this toolkit exists to remove.
     $t = Join-Path $root 'toolkit'
     if (Test-Path -LiteralPath $t) { Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue }
     $true
 }
 
 function Get-WDRecurringEffects {
-    <#
-        Lasting or repeating changes, with what they actually cost. Present is
-        evaluated live, so this doubles as "what is currently installed".
-    #>
+    # Present is evaluated live, so this doubles as "what is currently
+    # installed".
 
     $effects = New-Object System.Collections.Generic.List[psobject]
 
-    # --- logon task installed by persistence-guard -------------------------
     $task = Test-WDTaskPresent $script:GuardTaskName
     $effects.Add([pscustomobject]@{
         Id       = 'guard-task'
@@ -94,7 +62,6 @@ function Get-WDRecurringEffects {
         Present  = [bool]$task
     })
 
-    # --- boot task installed by update-guard -------------------------------
     $upd = Test-WDTaskPresent $script:UpdateTaskName
     $stampFile = Join-Path (Join-Path $env:ProgramData 'WinSetupToolkit') 'guard-build.txt'
     $stamped   = ''
@@ -110,7 +77,6 @@ function Get-WDRecurringEffects {
         Present  = [bool]$upd
     })
 
-    # --- PowerToys, required by the Copilot key remap ----------------------
     $ptCfg = Join-Path $env:LOCALAPPDATA 'Microsoft\PowerToys\Keyboard Manager\default.json'
     $hasRemap = $false
     if (Test-Path -LiteralPath $ptCfg) {
@@ -127,7 +93,6 @@ function Get-WDRecurringEffects {
         Present  = $hasRemap
     })
 
-    # --- Edge reinstall block ---------------------------------------------
     $edgePol = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate' `
                                  -Name 'InstallDefault' -ErrorAction SilentlyContinue).InstallDefault
     $effects.Add([pscustomobject]@{
@@ -138,7 +103,6 @@ function Get-WDRecurringEffects {
         Present  = ($edgePol -eq 0)
     })
 
-    # --- consumer content suppression --------------------------------------
     $cc = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' `
                             -Name 'DisableWindowsConsumerFeatures' -ErrorAction SilentlyContinue).DisableWindowsConsumerFeatures
     $effects.Add([pscustomobject]@{
@@ -152,7 +116,6 @@ function Get-WDRecurringEffects {
 }
 
 function Remove-WDRecurringEffect {
-    <#  Undo one recurring effect. Returns a WD.Result.  #>
     param([Parameter(Mandatory)][string]$Id, [switch]$Preview)
 
     switch ($Id) {
@@ -173,7 +136,7 @@ function Remove-WDRecurringEffect {
             try {
                 Unregister-ScheduledTask -TaskName $script:UpdateTaskName -Confirm:$false -ErrorAction Stop
                 # The runner and the build stamp are only meaningful with the
-                # task, so they go too rather than being left as litter.
+                # task.
                 $quiet = Remove-WDGuardLeftovers -Files @('Invoke-WDUpdateGuard.ps1', 'guard-build.txt')
                 New-WDResult -Status Removed -Message 'Feature update guard removed' `
                              -Detail $(if ($quiet) { 'Its notifications stopped with it.' }
@@ -233,25 +196,6 @@ function Remove-WDRecurringEffect {
 }
 
 function Get-WDPastRuns {
-    <#
-        Every apply this machine has a record of, newest first.
-
-        TWO SOURCES, merged on the bare run id (not the folder name - the session
-        is 20260817-001047 and its folder is run-20260817-001047, so keying on
-        the directory lists every run twice). Neither is complete alone: the run
-        FOLDERS carry the journals, which are the only thing that can put
-        anything back, and runs.jsonl at the root outlives "Delete old run logs"
-        - so a run whose folder is gone still appears, named and dated, saying
-        plainly that it can no longer be undone.
-
-        RUNS FROM ANOTHER MACHINE ARE DROPPED. Export-WDRunFolder copies a run to
-        the desktop precisely so it can be carried away, and one brought back
-        here describes registry values that were never on this computer.
-
-        SameMachine is three-valued and only an explicit $false excludes. Runs
-        written before identities were recorded answer "cannot say", and calling
-        those foreign would empty this page for everybody on an older build.
-    #>
     param([string]$Root, [switch]$AllMachines)
 
     if (-not $Root) { $Root = Join-Path $env:ProgramData 'WinSetupToolkit' }
@@ -259,7 +203,6 @@ function Get-WDPastRuns {
 
     $byId = [ordered]@{}
 
-    # --- the run folders: the only source that carries a journal ---
     foreach ($d in (Get-ChildItem -LiteralPath $Root -Directory -Filter 'run-*' -ErrorAction SilentlyContinue)) {
         $report  = Join-Path $d.FullName 'report.json'
         $journal = Join-Path $d.FullName 'journal.jsonl'
@@ -278,8 +221,8 @@ function Get-WDPastRuns {
         # A preview writes no journal, so those runs have nothing to revert.
         if ($preview) { continue }
 
-        # Written by Write-WDRunEnvironment before anything was touched. Absent
-        # on every run older than the identity block, which is a real state.
+        # Absent on every run older than the identity block, which is a real
+        # state.
         $machine = $null
         if (Test-Path -LiteralPath $envf) {
             try {
@@ -288,10 +231,9 @@ function Get-WDPastRuns {
             } catch { }
         }
 
-        # Keyed on the bare stamp, not the folder name. The session calls itself
-        # '20260817-001047' and its folder is 'run-20260817-001047', so keying
-        # on the directory would never match an index entry and every run with
-        # both would be listed twice - once revertible, once not.
+        # Keyed on the bare stamp, not the folder name: the session calls itself
+        # 20260817-001047 and its folder is run-20260817-001047, so keying on
+        # the directory would list every run twice.
         $byId[($d.Name -replace '^run-', '')] = [pscustomobject]@{
             Id          = ($d.Name -replace '^run-', '')
             Folder      = $d.Name
@@ -308,15 +250,12 @@ function Get-WDPastRuns {
         }
     }
 
-    # --- the standing index: what survives the folders being deleted ---
     foreach ($rec in (Get-WDRunIndex -Root $Root)) {
         $id = [string]$rec.run
         if (-not $id) { continue }
         if ($byId.Contains($id)) {
-            # The folder is here and is the better record. Take only the machine
-            # identity from the index, and only where the run itself did not
-            # write one - a run folder that predates environment.json's identity
-            # block can still have been indexed by a later build.
+            # The folder is the better record. Take the machine identity from
+            # the index only where the run itself wrote none.
             if (-not $byId[$id].Machine -and $rec.PSObject.Properties['machine'] -and $rec.machine) {
                 $byId[$id].Machine     = $rec.machine
                 $byId[$id].SameMachine = (Test-WDSameMachine $rec.machine)
@@ -348,40 +287,25 @@ function Get-WDPastRuns {
 }
 
 function Get-WDRemovedItems {
-    <#
-        Everything past runs uninstalled, each classified for reinstall.
-
-        Feasibility is computed offline - no network, no winget queries - so the
-        list renders instantly. The real answer only comes from attempting it,
-        and Invoke-WDReinstall reports that.
-    #>
     param($Runs, $Provisioned)
 
     # ContainsKey, not -not $Runs: an empty list means the caller already looked
-    # and found nothing, and treating that as "not supplied" made the Revert
-    # page walk every run folder twice for no result.
+    # and found nothing, and treating that as "not supplied" walked every run
+    # folder twice.
     if (-not $PSBoundParameters.ContainsKey('Runs')) { $Runs = Get-WDPastRuns }
     $items = New-Object System.Collections.Generic.List[psobject]
     $seen  = New-Object System.Collections.Generic.HashSet[string]
 
-    # Provisioned packages can be re-registered offline; everything else can't.
-    # Null until something actually asks: this is a DISM call, and it was being
-    # paid on every visit to the Revert page including the common case of no
-    # past runs at all, or none that uninstalled an Appx package.
-    # Handed in when somebody has already paid for it on another thread - see
-    # Start-WDRemovedScan. ContainsKey rather than a truth test, because an empty
-    # provisioned list is a real answer and asking DISM again for it would be the
-    # whole cost this exists to avoid.
+    # Null until something asks: this is a DISM call, and it was paid on every
+    # visit to the Revert page including the common case of no past runs at all.
     $provisioned = $null
     if ($PSBoundParameters.ContainsKey('Provisioned') -and $null -ne $Provisioned) {
         $provisioned = @($Provisioned)
     }
 
-    # Installed packages, enumerated ONCE. A Get-AppxPackage -Name per removed
-    # package is ~76 ms each and was the real cost here - 2,220 ms against 170 for
-    # one enumeration. The DISM call above took the blame because it sounds
-    # expensive; measured unelevated, where DISM refuses instantly, the 2.2
-    # seconds did not move. Lazy, so a run that removed no package never pays it.
+    # Enumerated once. A Get-AppxPackage -Name per removed package is ~76 ms
+    # each and was the real cost - 2,220 ms against 170. The DISM call above
+    # took the blame because it sounds expensive.
     $installed = $null
 
     foreach ($run in $Runs) {
@@ -448,31 +372,9 @@ function Get-WDRemovedItems {
 }
 
 function Start-WDRemovedScan {
-    <#
-        Get-WDRemovedItems on a runspace of its own, started early and collected
-        later.
-
-        It is the single most expensive thing the Revert page does - measured at
-        3,035 ms cold and 2,278 ms warm on this machine, against about 1,500 ms
-        for everything else the page reads put together - and almost all of that
-        is one Get-AppxProvisionedPackage, which is a DISM call and does not get
-        cheaper for having been asked before.
-
-        The list it answers with is plain data, so unlike a decoded bitmap there
-        is nothing here with thread affinity. Same shape as Start-WDFeatureRead
-        in the generated rollback script, and for the same reason: the work is
-        known the moment the run list is known, and the page has a second and a
-        half of other reading to do before anything wants the answer.
-
-        Answers $null rather than throwing. A caller that gets one asks the
-        ordinary way, which is what every caller did before this existed.
-    #>
     param([string]$ModulePath, $Runs)
-    # $ModulePath is not used and not Mandatory, and both are deliberate. It is
-    # kept because every other scan starter here takes one and a caller should
-    # not have to know which of them needs it; and nothing is Mandatory because
-    # this runs inside the Revert page's build, under the busy overlay, where a
-    # parameter binding failure would take the page down to save two seconds.
+    # $ModulePath is unused and not Mandatory on purpose: every other scan
+    # starter takes one, and a caller should not have to know which needs it.
     try {
         $rs = [runspacefactory]::CreateRunspace()
         $rs.ApartmentState = 'STA'
@@ -480,13 +382,9 @@ function Start-WDRemovedScan {
         $rs.Open()
         $ps = [powershell]::Create()
         $ps.Runspace = $rs
-        # ONLY THE DISM CALL CROSSES, not the whole function. Sending the function
-        # over meant the runspace spent its first 600 ms importing four modules
-        # before it could start the thing being waited for, and that came straight
-        # off the overlap.
-        #
-        # No comma: EndInvoke hands back a collection of what the script emitted,
-        # so ",@(...)" would be one element holding the whole array.
+        # Only the DISM call crosses, not the whole function - sending the
+        # function meant the runspace spent its first 600 ms importing four
+        # modules before starting the thing being waited for.
         $null = $ps.AddScript({
             @(Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
                 ForEach-Object { $_.DisplayName })
@@ -499,24 +397,15 @@ function Start-WDRemovedScan {
 }
 
 function Receive-WDRemovedScan {
-    <#
-        The other half. Never throws and never returns nothing useful: a job that
-        failed, was never started, or came back empty-handed falls through to
-        reading it here, which is exactly what used to happen every time.
-    #>
     param($Job, $Runs)
     if ($Job) {
         try {
             $out = @($Job.PS.EndInvoke($Job.Handle))
             $bad = @($Job.PS.Streams.Error)
             $Job.PS.Dispose(); $Job.RS.Dispose()
-            # AN ERROR HERE IS AN ANSWER, NOT A TRANSPORT FAILURE. The commonest
-            # one by far is "the requested operation requires elevation", which
-            # is what an unelevated run gets and is exactly the state the inline
-            # version ends in too - it initialises the list to empty and lets the
-            # call fail into it. So the empty list is handed on, and the only
-            # thing the log gets is a note. Falling back here instead meant an
-            # unelevated Revert page did the whole read a second time.
+            # An error here is an answer, not a transport failure. The commonest
+            # is "requires elevation", which is the state the inline version
+            # ends in too.
             if ($bad.Count) {
                 try { Write-WDLog "The provisioned-package read answered with an error, so nothing is offered for offline re-registration: $($bad[0])" -Level Info } catch { }
             }
@@ -529,45 +418,14 @@ function Receive-WDRemovedScan {
 }
 
 function Get-WDUndoStatus {
-    <#
-        How much of one run is still in place.
-
-        Offering "Roll back 15 August, 22:30" over a run already rolled back - by
-        this script, by hand, or by an MDM putting its policies back - is the same
-        defect as a preview promising 121 changes where all 121 are already made.
-        The journal holds what changed and what it was before, so the question is
-        answerable: read each target and see which side of the change it is on.
-
-        Three counts, and Unknown is a real answer:
-
-          Outstanding  the change this run made is still in place
-          Done         the machine is back at the previous value
-          Unknown      could not be asked cheaply, or at all
-
-        UNKNOWN IS MOSTLY THE DEFAULT PROFILE. allusers values go to
-        HKU:\WD_DEFAULT too, and that hive is only mounted for the length of a run
-        - about a third of a full run's registry entries, far too many to fold
-        into either of the others. Features, capabilities, and winget packages are
-        Unknown for cost.
-
-        Changes nothing, and MOUNTS nothing: a status read that loads a registry
-        hive is no longer a status read.
-    #>
     param([Parameter(Mandatory)][string]$Journal)
 
     $out = [pscustomobject]@{ Total = 0; Outstanding = 0; Done = 0; Unknown = 0 }
     if (-not (Test-Path -LiteralPath $Journal)) { return $out }
 
-    # THROUGH Get-WDUndoPlan, which is what the rollback script is generated from,
-    # so the number on the page and the list in the script cannot disagree. Two
-    # things come with it:
-    #
-    #   - previous values are normalised, so a string compares against a string.
-    #     Holding a PowerShell literal ("'Allow'", quotes included) made all 75
-    #     string values in a real run read as outstanding for ever, including
-    #     right after a rollback that had restored every one.
-    #   - duplicates are gone. Two options can write the same value, and only the
-    #     first entry knows what was there before the run.
+    # Through Get-WDUndoPlan, which is what the rollback script is generated
+    # from, so the number on the page and the list in the script cannot
+    # disagree.
     $plan = Get-WDUndoPlan -Journal $Journal
     if (Get-Command Use-WDUserHiveDrive -ErrorAction SilentlyContinue) { Use-WDUserHiveDrive }
 
@@ -583,24 +441,7 @@ function Get-WDUndoStatus {
 }
 
 function Get-WDUndoStepState {
-    <#
-        Which side of its change one step's target is on: 'done', 'todo', or
-        'unknown'.
-
-        Split out of Get-WDUndoStatus so the revert page can label a single
-        option without a second copy of the rules. The counts and the row have
-        to agree - a page saying an option is already back above a total that
-        counts it as outstanding is worse than either number on its own - and
-        the only way to guarantee that is one function.
-
-        'unknown' is a real answer rather than a rounding error, and is mostly
-        the default profile: values written with scope allusers go to
-        HKU:\WD_DEFAULT as well, and that hive is only mounted for the length of
-        a run. Reading nothing there is not evidence the change is undone.
-
-        Nothing here changes anything and nothing here mounts anything - a
-        status read that loads a registry hive is no longer a status read.
-    #>
+    # Answers 'done', 'todo', or 'unknown' for one step's target.
     param($Step)
 
     if (-not $Step) { return 'unknown' }
@@ -632,8 +473,7 @@ function Get-WDUndoStepState {
             if ($cur -eq [string]$Step.Previous)     { return 'done' }
             return 'todo'
         }
-        # Free, through the same COM interface Test-WDTaskPresent uses, so the
-        # twenty-odd tasks a real run disables stopped being Unknown.
+        # Free, through the same COM interface Test-WDTaskPresent uses.
         'task' {
             $on = Get-WDTaskEnabledState -Path ([string]$Step.Path) -Name ([string]$Step.Name)
             if ($null -eq $on) { return 'unknown' }
@@ -662,22 +502,14 @@ function Get-WDUndoStepState {
             if (Test-Path -LiteralPath ([string]$Step.Target)) { return 'todo' }
             return 'done'
         }
-        # Features and capabilities need DISM, a power setting needs a powercfg
-        # query, a .reg import cannot be compared against a live key at all, and
-        # a winget package needs winget. Every one of those is seconds, and this
-        # runs per step with somebody waiting on a page.
+        # Features and capabilities need DISM, a power setting needs powercfg, a
+        # .reg import cannot be compared against a live key at all. Every one is
+        # seconds, and this runs per step with somebody waiting.
         default { return 'unknown' }
     }
 }
 
 function Get-WDTaskEnabledState {
-    <#
-        $true, $false, or $null for a task that cannot be found or asked about.
-
-        Test-WDTaskPresent answers for the root folder, which is where the three
-        toolkit tasks live. Everything a RUN disables is several folders down
-        under \Microsoft\Windows, so this takes the path as well.
-    #>
     param([string]$Path, [string]$Name)
 
     try {
@@ -700,7 +532,6 @@ function Get-WDTaskEnabledState {
 }
 
 function Invoke-WDReinstall {
-    <#  Best-effort reinstall of one previously removed item.  #>
     param([Parameter(Mandatory)]$Item, [switch]$Preview)
 
     if ($Preview) { return New-WDResult -Status Changed -Message "Would attempt to reinstall $($Item.Name)" -Detail $Item.Reason }
@@ -751,7 +582,8 @@ function Invoke-WDReinstall {
             if ($r.ExitCode -eq 0) {
                 New-WDResult -Status Changed -Message "$($Item.Name) reinstalled via winget"
             } else {
-                # 0x8A15002B / no applicable package is the common, expected miss.
+                # 0x8A15002B / no applicable package is the common, expected
+                # miss.
                 New-WDResult -Status Blocked -Message "$($Item.Name) is not available through winget" `
                              -Detail "winget exit $($r.ExitCode). Download it from the vendor if you still want it."
             }
@@ -760,12 +592,6 @@ function Invoke-WDReinstall {
 }
 
 function Invoke-WDRevertPlan {
-    <#
-        Runs a list of revert operations, emitting the same progress events as
-        Invoke-WDPlan so the existing run page renders them without changes.
-
-        Each op is @{ Kind = 'effect' | 'reinstall' | 'rollback'; Name = ...; ... }
-    #>
     param(
         [Parameter(Mandatory)]$Ops,
         [Parameter(Mandatory)]$Session,
@@ -799,11 +625,6 @@ function Invoke-WDRevertPlan {
                     # The script's own -Only, not a second executor here: that
                     # script is the tested one, and a copy means two answers to
                     # "how is a step put back".
-                    #
-                    # The caller orders these NEWEST FIRST, which is what gets a
-                    # value several runs wrote right: June's script restores
-                    # pre-June, then March's restores pre-March, and the last
-                    # write stands. Oldest first leaves June's value standing.
                     $only = @(@($op.Only) | Where-Object { $_ })
                     $cmdArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$($op.Path)`"", '-Console')
                     if ($only.Count) { $cmdArgs += @('-Only', ($only -join ',')) }
@@ -841,38 +662,17 @@ function Invoke-WDRevertPlan {
     ,$results
 }
 
-# ================================================== the rollback script =====
-#
-# Here rather than WD.Core because this is the third thing in this module that
-# undoes a past run, and Core is what a rollback READS rather than what reads it.
-#
-# The generator's one job is to hand the emitted script REAL VALUES. Quoting,
-# escaping, and rendering all belong on this side: the script imports nothing,
-# and a mistake in it is only ever discovered by somebody running a rollback.
+# Here rather than WD.Core: this is the third thing in this module that undoes a
+# past run, and Core is what a rollback reads rather than what reads it.
 
 function ConvertTo-WDPsLiteral {
-    <#
-        A value as PowerShell source, for pasting into the generated script.
-
-        This exists because the journal used to be written the other way round:
-        Invoke-WDRegistryAction wrapped a previous string value in quotes before
-        recording it, so the journal held a PowerShell literal rather than a
-        value, and Export-WDUndoScript interpolated that literal unquoted. It
-        worked, and it put the escaping in the one place that could not test it -
-        a previous value containing an apostrophe produced a script that stopped
-        parsing at that line, and a MultiString previous value came out as the
-        text "System.String[]".
-
-        It also broke reading. Get-WDUndoStatus compared the journalled
-        "'Allow'" against the machine's Allow and found them different, so all
-        75 of the string values in a real run's journal read as outstanding
-        forever, including immediately after a successful rollback.
-    #>
+    # Handles both shapes the journal has used: a raw value, and the pre-quoted
+    # PowerShell source older runs recorded.
     param($Value)
 
     if ($null -eq $Value)     { return '$null' }
     if ($Value -is [bool])    { return $(if ($Value) { '$true' } else { '$false' }) }
-    # Before the general array case: a byte array IS an array, and rendering it
+    # Before the general array case - a byte array is an array, and rendering it
     # as one loses the type the registry needs.
     if ($Value -is [byte[]])  { return '[byte[]]@(' + ((@($Value) | ForEach-Object { [int]$_ }) -join ',') + ')' }
     if ($Value -is [int] -or $Value -is [long] -or $Value -is [int16] -or $Value -is [uint32]) { return [string]$Value }
@@ -884,21 +684,6 @@ function ConvertTo-WDPsLiteral {
 }
 
 function ConvertFrom-WDUndoPrevious {
-    <#
-        The value a registry entry held before the run, whatever shape the
-        journal recorded it in.
-
-        Two shapes, because journals outlive builds. A modern entry carries
-        raw = $true and the value itself. An older one carries a PowerShell
-        literal: a string wrapped in single quotes, or - for the taskbar
-        auto-hide blob, which is a handler rather than a manifest action - the
-        text "@(48,0,4,...)". Both are unwrapped here so that everything
-        downstream, the emitted script and the status read alike, only ever
-        sees a value.
-
-        '__ABSENT__' is not a value and stays the sentinel it is: it means the
-        name did not exist before the run, so putting it back is a delete.
-    #>
     param($Value, [string]$Kind = 'DWord', [bool]$Raw = $false)
 
     if ($null -eq $Value) { return $null }
@@ -925,23 +710,8 @@ function ConvertFrom-WDUndoPrevious {
 }
 
 function Get-WDUndoStepKey {
-    <#
-        What this step ACTS ON, as one string.
-
-        The dedup rule - keep the first entry for a target and drop the rest,
-        because only the first knows what was there before - has to be applied
-        twice now: within a journal, and again across journals when several runs
-        are being undone together. Two copies of "what counts as the same
-        target" is one copy plus a way for them to disagree, so it is written
-        once here and both callers ask.
-
-        The four strings that used to be inline in Get-WDUndoPlan are reproduced
-        exactly, because a journal read by an older build and this one must
-        dedup to the same set. The methods that had no key have one now, which
-        means two items disabling the same feature in one run collapse to one
-        step - correct, and previously an accident of nobody having written the
-        line.
-    #>
+    # One definition of "the same target", because the dedup rule is now applied
+    # in two places.
     param($Step)
 
     if (-not $Step) { return '' }
@@ -964,43 +734,17 @@ function Get-WDUndoStepKey {
 }
 
 function Get-WDUndoPlan {
-    <#
-        The journal, normalised into the steps a rollback would take.
-
-        Three things happen here that the emitter used to do inline or not at
-        all, and all three are correctness rather than tidiness:
-
-        DEDUPLICATION, and it is the one that silently produced a wrong result.
-        Two options can write the same value, and the second one's "previous" is
-        what the first one wrote. Replaying both in order restores the original
-        and then puts the first option's value straight back on top of it, so
-        the machine ends up holding a value nobody asked for. The FIRST entry
-        for a target is the only one that knows what was there before the run,
-        so that is the one kept and the rest are dropped.
-
-        NORMALISATION of the previous value - see ConvertFrom-WDUndoPrevious.
-
-        NAMES. The journal records an option's id, and 'perm-account-info' is
-        not something to show anybody. The plan the run executed carries the
-        name and the category, so it is handed in and each step is labelled
-        with it; a step whose id is not in the plan keeps the id, which is what
-        happens for a journal read back on its own.
-    #>
     param(
         [Parameter(Mandatory)][string]$Journal,
-        # The resolved plan, for names and categories. Optional: without it the
-        # steps carry their raw ids, which is still a working script.
+        # Optional: without it the steps carry their raw ids, which is still a
+        # working script.
         $Items
     )
 
     $names = @{}
     $cats  = @{}
-    # And the one-line description, in the tense a page about what has already
-    # happened is written in - see Get-WDRevertDescription. Collected here
-    # because it comes off the same items the names do, and keyed by option
-    # rather than by step: a description belongs to the option, and repeating it
-    # on each of a hundred steps would put the same paragraph a hundred times
-    # into a file whose whole premise is that somebody can read it.
+    # Keyed by option rather than by step - a description belongs to the option,
+    # and repeating it per step would print one paragraph a hundred times.
     $descs = @{}
     foreach ($it in @($Items)) {
         if (-not $it) { continue }
@@ -1060,18 +804,17 @@ function Get-WDUndoPlan {
                 $p = [string]$e.undo.path; $n = [string]$e.undo.name
                 $step = [pscustomobject]@{ Method = 'task'; Path = $p; Name = $n }
             }
-            # Registered BY the run, so undoing it means taking it off again.
-            # This had no case in the emitter at all, which meant a run that
-            # installed a persistence guard offered no way to remove it.
+            # Registered by the run, so undoing it means taking it off again.
+            # This had no case at all, so a run that installed a persistence
+            # guard offered no way to remove it.
             'unregister-task' {
                 $step = [pscustomobject]@{ Method = 'unregister-task'; Name = [string]$e.undo.name }
             }
             'feature'        { $step = [pscustomobject]@{ Method = 'feature';        Name = [string]$e.undo.name } }
             'feature-off'    { $step = [pscustomobject]@{ Method = 'feature-off';    Name = [string]$e.undo.name } }
             'capability-off' { $step = [pscustomobject]@{ Method = 'capability-off'; Name = [string]$e.undo.name } }
-            # A whole key branch exported to a .reg file before it was deleted.
-            # Also had no case: SetNoSoundScheme is the one that uses it, and
-            # its undo - every custom sound anybody had - was being dropped.
+            # A whole key branch exported before it was deleted. Also had no
+            # case, so every custom sound somebody had was being dropped.
             'regfile' {
                 $step = [pscustomobject]@{ Method = 'regfile'; File = [string]$e.undo.file; Target = [string]$e.target }
             }
@@ -1085,9 +828,8 @@ function Get-WDUndoPlan {
                 $p = [string]$e.undo.path
                 $step = [pscustomobject]@{ Method = 'recycle'; Path = $p }
             }
-            # Installed by the run rather than removed by it - a winget package
-            # from the Add section. Undoing an install is an uninstall, and this
-            # is the third method the emitter never had a case for.
+            # Installed by the run rather than removed by it, so undoing it is
+            # an uninstall.
             'uninstall' {
                 $step = [pscustomobject]@{ Method = 'uninstall'; Name = [string]$e.undo.name }
             }
@@ -1097,9 +839,9 @@ function Get-WDUndoPlan {
 
         if (-not $step) { continue }
 
-        # One dedup, after the step exists, rather than four spellings of the
+        # One dedup after the step exists, rather than four spellings of the
         # rule inside the branches. The first entry for a target is the only one
-        # that knows what was there before the run, so it is the one kept.
+        # that knows what was there before.
         $key = Get-WDUndoStepKey $step
         if ($key -and -not $seen.Add($key)) { $dropped++; continue }
 
@@ -1126,24 +868,16 @@ function Get-WDUndoPlan {
         Dropped      = $dropped
         WantsHku     = [bool]$hku
         WantsDefault = $def
-        # Only for the options this journal actually names. Every description in
-        # the manifest would put two hundred paragraphs into a script that has
-        # twenty options to show.
+        # Only the options this journal names: every description in the manifest
+        # would put two hundred paragraphs into a script with twenty options to
+        # show.
         Descs        = $kept
     }
 }
 
 function Get-WDUndoStepKind {
-    <#
-        Which kind of thing this step puts back, as a heading somebody reads.
-
-        A second copy of what the generated script's Get-WDUndoKind answers, and
-        deliberately so: that script imports nothing by design, so the two
-        cannot share code and never could. The strings match exactly, because
-        the toolkit's revert page and the standalone window are meant to look
-        like one interface and a heading that differed between them would say
-        they are not.
-    #>
+    # A second copy of what the generated script's own Get-WDUndoKind answers,
+    # so the two surfaces use one set of headings.
     param($Step)
 
     switch ([string]$Step.Method) {
@@ -1164,13 +898,8 @@ function Get-WDUndoStepKind {
     }
 }
 
-# The verbs item descriptions actually open with, past-tensed. HARVESTED from the
-# manifest, not imagined: ~107 of 266 begin with one of these and the rest begin
-# with a noun ("The taskbar search box...", "Windows sends...") which describes
-# the SUBJECT and reads correctly on either page, so those are left alone.
-#
-# A table rather than a rule because the irregulars break "add -ed": Takes/Took,
-# Goes/Went, Hides/Hid, Leaves/Left, Makes/Made, Runs/Ran, Holds/Held, Sets/Set.
+# Harvested from the manifest, not imagined: ~107 of 266 descriptions open with
+# one of these, and the rest open with a noun and read correctly either way.
 $script:WDPastVerbs = @{
     'adds' = 'Added'; 'blocks' = 'Blocked'; 'brings' = 'Brought'; 'checks' = 'Checked'
     'clears' = 'Cleared'; 'compacts' = 'Compacted'; 'confirms' = 'Confirmed'
@@ -1184,52 +913,25 @@ $script:WDPastVerbs = @{
     'stops' = 'Stopped'; 'switches' = 'Switched'
     'takes' = 'Took'; 'turns' = 'Turned'; 'uninstalls' = 'Uninstalled'
     'uses' = 'Used'; 'writes' = 'Wrote'
-    # Never 'steps'. The one description that opens with it is "Steps Recorder,
-    # Math Recognizer, Windows Fax and Scan..." - a list of Windows features, and
-    # Steps Recorder is the name of one of them. "Stepped Recorder" is what a
-    # table that cannot tell a verb from a product name produces, and it is the
-    # reason every entry here was checked against the rewritten output rather
-    # than reasoned about.
+    # Never 'steps'. The one description opening with it is "Steps Recorder,
+    # Math Recognizer, ..." - a product name, and "Stepped Recorder" is what a
+    # table that cannot tell a verb from a noun produces.
 }
 
-# Verbs that only ever get rewritten in a LATER clause, never at the start. A
-# description opening with one of these is usually naming a thing - "Sponsored
-# links...", "Sync..." - but "..., and drops the ads" can only be a verb, because
-# the sentence has already been established as being in this voice.
+# Rewritten only in a later clause, never at the start: "Sponsored links..."
+# names a thing, but ", and drops the ads" can only be a verb.
 $script:WDPastVerbsTail = @{
     'drops' = 'Dropped'; 'points' = 'Pointed'; 'sends' = 'Sent'; 'moves' = 'Moved'
     'opens' = 'Opened'; 'forces' = 'Forced'; 'allows' = 'Allowed'
     'prevents' = 'Prevented'; 'restores' = 'Restored'; 'redirects' = 'Redirected'
     'silences' = 'Silenced'; 'suppresses' = 'Suppressed'; 'skips' = 'Skipped'
     're-runs' = 'Re-ran'; 'finds' = 'Found'
-    # Deliberately NOT here: re-installs, re-applies, watches, refuses, installs.
-    # Every one of those turns up inside a relative clause describing something
-    # that is still true - "the policy that stops Windows checking", "It never
-    # re-installs anything" - and a relative clause stays in the present after a
-    # past-tense main verb. Rewriting them is the one way this can produce a
-    # sentence that is grammatical and false.
+    # Deliberately absent: re-installs, re-applies, watches, refuses, installs.
+    # Each appears inside a relative clause describing something still true,
+    # which stays present after a past main verb.
 }
 
 function Get-WDRevertDescription {
-    <#
-        An item's own description, in the tense the Revert page is written in.
-
-        The page lists what a machine has ALREADY had done to it, so "Stops
-        Windows sending diagnostic data" describes something that already happened
-        as though it were about to.
-
-        PAST TENSE RATHER THAN REVERSAL VOICE. Turning "Stops X" into "Allows X"
-        needs the object rearranged - "Allows Windows sending diagnostic data"
-        wants "to send" - and every rule that fixes one description breaks
-        another. Past tense touches one word and cannot produce a sentence that
-        does not parse.
-
-        THE WHOLE SENTENCE MOVES OR NONE OF IT DOES. "Removes the Copilot app and
-        blocks its return" must become "Removed ... and blocked ...", or the
-        second half claims a removal is still being enforced by the run you are
-        undoing. But a description OPENING with a noun is not in this voice at
-        all, so a later clause is only touched when the first word was.
-    #>
     param([string]$Desc)
     $Desc = [string]$Desc
     if (-not $Desc.Trim()) { return '' }
@@ -1242,9 +944,8 @@ function Get-WDRevertDescription {
     $tail = $first.Substring($key.Length)
     $out  = $script:WDPastVerbs[$key] + $tail + $Desc.Substring($first.Length)
 
-    # The later clauses, now that the sentence is known to be in this voice.
-    # Case-insensitive on the boundary word and lower-case on the way out: a verb
-    # after "and" is not the start of a sentence.
+    # Lower-case on the way out: a verb after "and" is not the start of a
+    # sentence.
     $tails = @{}
     foreach ($k in $script:WDPastVerbs.Keys)     { $tails[$k] = $script:WDPastVerbs[$k] }
     foreach ($k in $script:WDPastVerbsTail.Keys) { $tails[$k] = $script:WDPastVerbsTail[$k] }
@@ -1263,14 +964,6 @@ function Get-WDRevertDescription {
 }
 
 function Get-WDUndoStepText {
-    <#
-        One line saying exactly what putting this step back would do.
-
-        The other half of the pair above, and the same argument applies. It is
-        what the Details panel under a row shows, and what the search box looks
-        inside - so a registry path typed into the box finds the option that
-        wrote it.
-    #>
     param($Step)
 
     switch ([string]$Step.Method) {
@@ -1302,33 +995,8 @@ function Get-WDUndoStepText {
 }
 
 function Get-WDCombinedUndoPlan {
-    <#
-        One plan over several runs, oldest first.
-
-        THE DEDUP RULE HAS TO CROSS RUNS, and that is the whole reason this
-        exists rather than the page calling Get-WDUndoPlan per run and
-        concatenating the results. If March's run moved a value from 1 to 0 and
-        June's moved it from 0 to 2, the value to put back is 1 - and only
-        March's entry knows it. So: oldest first, and the first entry for a
-        target wins, which is exactly the rule applied inside a single journal
-        and for exactly the same reason.
-
-        Concatenating without this is not a cosmetic fault. It would replay
-        June's entry as well, putting 0 back over the 1 that had just been
-        restored, and leaving the machine holding a value nobody ever chose -
-        with a journal saying it had been returned to its original state.
-
-        Each step is stamped with the run that contributed it, so the page can
-        show one run's share without reading anything again. That is NOT the
-        same list as reverting that run on its own, which is its own journal's
-        plan with its own previous values - a step superseded here still belongs
-        to the earlier run. The two answer different questions and the page asks
-        whichever one the picker is on.
-
-        A run whose folder has been deleted carries no journal and contributes
-        nothing; it is still counted in Runs so the page can say so rather than
-        leave it out and look complete.
-    #>
+    # The dedup rule has to cross runs: if March moved a value 1 -> 0 and June
+    # moved it 0 -> 2, only March's entry knows the value to put back is 1.
     param($Runs, $Items)
 
     $ordered = @(@($Runs) | Where-Object { $_ } | Sort-Object When)
@@ -1338,12 +1006,8 @@ function Get-WDCombinedUndoPlan {
     $seen      = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
     $per       = New-Object System.Collections.Generic.List[psobject]
     $dropped   = 0
-    # THE SAME SHAPE Get-WDUndoPlan RETURNS. A description belongs to the option
-    # rather than to the run, so the merge is a union rather than a first-wins:
-    # what would differ between two runs is nothing, since both read it from the
-    # same manifest. It is here because two functions answering the same question
-    # with different shapes is a caller reaching for a field that exists on one
-    # of them - which is how this was found.
+    # The same shape Get-WDUndoPlan returns. A description belongs to the option
+    # rather than the run, so this merge is a union rather than first-wins.
     $descs     = @{}
     foreach ($run in $ordered) {
         $mine = 0
@@ -1379,50 +1043,21 @@ function Get-WDCombinedUndoPlan {
         WantsDefault = $def
         Descs        = $descs
         # Newest first, which is the order a picker reads in - the oldest-first
-        # pass above is about correctness, not about presentation.
+        # pass above is about correctness.
         Runs         = @($per | Sort-Object When -Descending)
     }
 }
 
-# The whole of the generated script that is not data, kept as a file beside this
-# module rather than as a here-string inside it.
-#
-# It was two here-strings, and that made 3,087 lines of ordinary PowerShell - 31
-# functions and 49 GetNewClosure() calls - invisible to every static check this
-# project has. A string literal is a string literal: the parse gate, [6]'s
-# closure rule and the theme-key sweep all stopped at the quotation mark, in the
-# one file whose own notes say the closure rule "has already cost the most".
-# As a file it is parsed and checked like anything else.
-#
-# Nothing about the emitted script changes. The text is inlined verbatim at
-# generate time, so the rollback script is still one self-contained file that
-# imports nothing - which is its whole premise, since it is read on a machine
-# somebody has just changed, possibly with the toolkit already deleted off the
-# stick it came on.
-#
-# Everything above it in the emitted file is data; everything in it is fixed.
-# That split is what makes the script testable at all - the body is the same
-# bytes on every run, so a self test that exercises one exercises them all.
-#
-# DELIBERATELY THE SAME PAGE as the toolkit's Advanced list - heading, rule, a row
-# per option with a tick and a tag, an index of counts down the side. Somebody who
-# has used the toolkit has already learnt this page, and this is the screen they
-# see when something has gone wrong.
-#
-# It is NOT the toolkit's Revert page. That lists recurring effects and removed
-# software across every run, from a machine that still has the toolkit. This is
-# one run, on a machine that may not.
+# A file rather than a here-string, so the static checks can see its 31
+# functions.
 $script:WDUndoSource = $null
 
 function Get-WDUndoWindowSource {
     if ($null -ne $script:WDUndoSource) { return $script:WDUndoSource }
     $path = Join-Path $PSScriptRoot 'WD.UndoWindow.ps1'
     if (-not (Test-Path -LiteralPath $path)) {
-        # Loud rather than silent, and this is the one place in the module where
-        # that matters most: written without it, the rollback script would carry
-        # its journal and neither an executor nor a window, and the one artefact
-        # this project's safety argument rests on would be a stub that reports
-        # success.
+        # Loud rather than silent: written without it, the script would carry
+        # its journal and neither an executor nor a window.
         throw "The rollback window source is missing: $path"
     }
     $script:WDUndoSource = [string](Get-Content -LiteralPath $path -Raw)
@@ -1430,14 +1065,7 @@ function Get-WDUndoWindowSource {
 }
 
 # Double-clicking a .ps1 opens a text editor - Windows' own association, which
-# nothing in a .ps1 can change. So the run folder's "double-click it" was wrong on
-# every machine, and the script ships with a launcher beside it.
-#
-# Same three rules as Run-WinSetupToolkit.cmd: NO BOM (cmd.exe does not strip one,
-# so the first line reads as "<BOM>@echo", fails, and leaves echo on for the whole
-# file), CRLF (labels and parenthesised blocks are unreliable with bare LF), and
-# `reg query HKU\S-1-5-19` for the admin probe (net session needs the Server
-# service, openfiles needs a flag most machines lack).
+# nothing in a .ps1 can change - so the script ships with a launcher beside it.
 $script:WDUndoLauncher = @'
 @echo off
 setlocal
@@ -1465,16 +1093,12 @@ endlocal & exit /b %RC%
 '@
 
 function Export-WDUndoLauncher {
-    <#
-        Writes Undo-WinSetupToolkit.cmd beside the script and answers with its path.
-        Separate from the script's own generation so a run that could not write
-        one still gets the other.
-    #>
     param([Parameter(Mandatory)][string]$Path)
 
     try {
         $text = ($script:WDUndoLauncher -split "`r?`n") -join "`r`n"
-        # No BOM. Not a preference - see the note above.
+        # No BOM: cmd.exe does not strip one, and the first line then reads as a
+        # bad command, which leaves echoing on for the whole run.
         [IO.File]::WriteAllText($Path, $text, (New-Object System.Text.UTF8Encoding $false))
         return $Path
     } catch {
@@ -1484,19 +1108,6 @@ function Export-WDUndoLauncher {
 }
 
 function Get-WDIcoSubset {
-    <#
-        The same .ico with only the frames at or under $MaxSize.
-
-        The toolkit's icon carries eight frames up to 256, and the 128 and 256
-        ones are 130 KB of the 158 - which becomes 173 KB of base64 in a script
-        somebody is meant to be able to read. A window icon is asked for at 16
-        for the title bar and 24 to 48 for the taskbar; nothing here ever draws
-        it at 256, so those two frames are 173 KB buying nothing.
-
-        A directory entry is sixteen bytes and only the last four - the offset -
-        change when frames are dropped, so the entries are copied through and
-        re-pointed rather than rebuilt.
-    #>
     param([byte[]]$Bytes, [int]$MaxSize = 64)
 
     if (-not $Bytes -or $Bytes.Length -lt 22) { return $Bytes }
@@ -1530,19 +1141,6 @@ function Get-WDIcoSubset {
 }
 
 function Get-WDUndoIconData {
-    <#
-        The toolkit's own application icon as base64, for embedding.
-
-        Embedded rather than written beside the script, because the whole
-        premise of that file is that it stands alone - somebody who copies only
-        the .ps1 somewhere else should still get a window with the right mark on
-        it.
-
-        Answers the empty string when the icon cannot be built, which is a real
-        state rather than a failure: the drawing lives in the interface module
-        and a run started from the command line never loads it. The window falls
-        back to the host icon, which is what it had before.
-    #>
     param([string]$Theme = '')
 
     if (-not (Get-Command Get-WDAppIconBytes -ErrorAction SilentlyContinue)) { return '' }
@@ -1557,30 +1155,16 @@ function Get-WDUndoIconData {
 }
 
 function Export-WDUndoScript {
-    <#
-        Turn the journal into a runnable rollback script with a window on the
-        front of it.
-
-        Registry values, service start-types, tasks, features, power settings
-        and parked folders reverse exactly. Uninstalled programs cannot be put
-        back by anything and are listed as such rather than pretended at.
-
-        The script imports nothing and calls nothing from this toolkit, which is
-        deliberate and is the whole reason it exists: it is read on a machine
-        somebody has just changed, possibly badly, possibly with the toolkit
-        already deleted off the stick it came on.
-    #>
     param(
-        # The plan that ran, for option names and categories. Optional - without
-        # it the page groups by raw id, which works and reads badly.
+        # Optional - without it the page groups by raw id, which works and reads
+        # badly.
         $Items
     )
 
-    # Get-WDSession, never $script:Session. Each module has a script scope of
-    # its own, so the variable that meant the live session while this function
-    # lived in WD.Core is $null from here - and the guard below reads as "there
-    # is no session", so the function would answer nothing and every caller
-    # would report the script as simply not written.
+    # Get-WDSession, never $script:Session: each module has its own script
+    # scope, so the variable that meant the live session while this lived in
+    # WD.Core reads $null from here - and the guard below would take that as "no
+    # session".
     $sess = Get-WDSession
     if (-not $sess -or -not (Test-Path $sess.JournalFile)) { return }
 
@@ -1626,14 +1210,8 @@ function Export-WDUndoScript {
     $null = $sb.AppendLine("`$global:WDWantsDefault = $([int]$plan.WantsDefault)")
     $null = $sb.AppendLine('')
 
-    # The toolkit's own application icon, so the window and its taskbar button
-    # wear the mark somebody recognises rather than PowerShell's. Two of them,
-    # because the icon follows the palette and the window has a theme button.
-    #
-    # Embedded rather than written beside the script: this file has to stand
-    # alone. Trimmed to the frames a window is actually asked for - see
-    # Get-WDIcoSubset - and empty on a run with no interface loaded to draw one,
-    # in which case the window simply keeps the host icon.
+    # Two, because the icon follows the palette and the window has a theme
+    # button.
     $null = $sb.AppendLine('# The application icon, one per palette, as base64. Empty if this run had')
     $null = $sb.AppendLine('# no interface loaded to draw one; the window then keeps the host icon.')
     foreach ($pair in @(@('WDIconDark', 'dark'), @('WDIconLight', 'light'))) {
@@ -1642,9 +1220,9 @@ function Export-WDUndoScript {
             $null = $sb.AppendLine("`$global:$($pair[0]) = ''")
             continue
         }
-        # Long lines rather than short ones. Nobody reads base64 either way, and
-        # every line of it is a string literal the parser has to build before
-        # anything at all is on screen.
+        # Long lines rather than short: nobody reads base64 either way, and
+        # every line is a string literal the parser builds before anything is on
+        # screen.
         $null = $sb.AppendLine("`$global:$($pair[0]) = @(")
         for ($p = 0; $p -lt $b64.Length; $p += 1000) {
             $len = [Math]::Min(1000, $b64.Length - $p)
@@ -1654,9 +1232,8 @@ function Export-WDUndoScript {
     }
     $null = $sb.AppendLine('')
 
-    # One line per step, in the order they happened. Readable on purpose: this
-    # is the part somebody checks before running it, and a blob of JSON is not
-    # something anybody checks.
+    # One line per step, in the order they happened. Readable on purpose - this
+    # is the part somebody checks before running it.
     $null = $sb.AppendLine('# Every change that run recorded, with what it was before.')
     $null = $sb.AppendLine('$global:WDSteps = @(')
     foreach ($s in $plan.Steps) {
@@ -1700,14 +1277,8 @@ function Export-WDUndoScript {
     foreach ($o in $plan.Owners) { $null = $sb.AppendLine('    ' + (& $q $o)) }
     $null = $sb.AppendLine(')')
 
-    # WHAT EACH OPTION DID, past-tensed. Without it the page named an option and
-    # counted its changes and never said what it was - "Office telemetry, 4
-    # changes" was all somebody deciding had to go on.
-    #
-    # KEYED BY OPTION AND EMITTED ONCE EACH, not per step: a hundred steps of one
-    # option would repeat one paragraph a hundred times in a file whose premise is
-    # that it can be read. Absent when the journal is read with no plan in hand,
-    # where the rows simply carry no description.
+    # What each option did, past-tensed. Without it the page names an option and
+    # counts its changes and never says what it was.
     $null = $sb.AppendLine('')
     $null = $sb.AppendLine('# What each option did, in the past tense - the same line the Revert page')
     $null = $sb.AppendLine('# shows. Empty if this script was written without the plan in hand.')
@@ -1719,18 +1290,16 @@ function Export-WDUndoScript {
 
     $null = $sb.AppendLine((Get-WDUndoWindowSource))
     $null = $sb.AppendLine('')
-    # Before anything reads the machine or draws a window, and NOT for -ListOnly
-    # or -BuildOnly: the first changes nothing and is the obvious thing to run
-    # while the toolkit is open to see what a run left behind, and the second is
-    # the self test's seam. The interlock exists to stop two things WRITING at
-    # once, and refusing a read would only teach people to work around it.
+    # Not for -ListOnly or -BuildOnly: the interlock exists to stop two things
+    # writing at once, and refusing a read only teaches people to work around
+    # it.
     $null = $sb.AppendLine('if (-not $ListOnly -and -not $BuildOnly) {')
     $null = $sb.AppendLine('    if (-not (Enter-WDUndoSingleInstance)) { exit 4 }')
     $null = $sb.AppendLine('}')
     $null = $sb.AppendLine('if ($Console -or $ListOnly) { exit (Invoke-WDUndoConsole -Only $Only -ListOnly:$ListOnly) }')
-    # Printed rather than emitted. The diagnostic object holds the Window and
-    # every row in it, and letting that reach the pipeline means PowerShell's
-    # formatter walking a live WPF element tree - which does not come back.
+    # Printed rather than emitted: the diagnostic object holds the Window and
+    # every row, and letting that reach the pipeline means the formatter walking
+    # a live WPF tree, which does not come back.
     $null = $sb.AppendLine('if ($BuildOnly) {')
     $null = $sb.AppendLine('    $d = Show-WDUndoWindow -Theme $Theme -BuildOnly')
     $null = $sb.AppendLine('    Write-Host ("options={0} groups={1} rail={2} ticked={3} locked={4}" -f $d.Options, $d.Groups, $d.Rail, $d.Ticked, $d.Locked)')
@@ -1740,8 +1309,8 @@ function Export-WDUndoScript {
     $null = $sb.AppendLine('    Write-Host ("title=" + $d.Title)')
     $null = $sb.AppendLine('    Write-Host ("tally=" + $d.Tally)')
     $null = $sb.AppendLine('    Write-Host ("summary=" + $d.Summary)')
-    # Every grouping laid out for real, because a grouping nothing exercises is
-    # a grouping that throws the first time somebody picks it.
+    # Every grouping laid out for real, because one nothing exercises throws the
+    # first time somebody picks it.
     $null = $sb.AppendLine('    foreach ($g in @(''status'', ''kind'', ''alpha'', ''category'')) {')
     $null = $sb.AppendLine('        $d.State.Group = $g')
     $null = $sb.AppendLine('        & $d.Order')
@@ -1751,21 +1320,16 @@ function Export-WDUndoScript {
     $null = $sb.AppendLine('        $d.State.Sort = $s; & $d.Order')
     $null = $sb.AppendLine('    }')
     $null = $sb.AppendLine('    Write-Host ("sorted=ok")')
-    # The page-wide Select all, pressed for real in both directions. A button one
-    # press from "revert nothing" has to be checked on what it SAYS as well as on
-    # what it does, so the label is reported beside the count either side of it.
+    # A button one press from "revert nothing" is checked on what it says as
+    # well as what it does.
     $null = $sb.AppendLine('    $saSay = { "{0}/{1}" -f [string]$d.Ui.BtnSelectAll.Content, @($d.Rows | Where-Object { $_.Check.IsChecked }).Count }')
     $null = $sb.AppendLine('    $saHit = { $d.Ui.BtnSelectAll.RaiseEvent((New-Object Windows.RoutedEventArgs ([Windows.Controls.Primitives.ButtonBase]::ClickEvent))) }')
     $null = $sb.AppendLine('    $sa0 = & $saSay')
     $null = $sb.AppendLine('    & $saHit; $sa1 = & $saSay')
     $null = $sb.AppendLine('    & $saHit; $sa2 = & $saSay')
     $null = $sb.AppendLine('    Write-Host ("selectall={0} -> {1} -> {2}" -f $sa0, $sa1, $sa2)')
-    # WHAT AN UNTICKED ROW SAYS, driven for real. Every option here arrives
-    # ticked, so a clear box is an edit, and the row marks it the way the
-    # Advanced page marks a row a preset selected and the operator cleared: the
-    # name in Bad and bold, with a line under it saying what that means. Read
-    # off the RESOURCE KEY rather than the brush, because the two palettes give
-    # different colours for the same answer.
+    # Every option arrives ticked, so a clear box is an edit and the row has to
+    # mark it.
     $null = $sb.AppendLine('    $rkOf = {')
     $null = $sb.AppendLine('        param($El, $Dp)')
     $null = $sb.AppendLine('        $v = $El.ReadLocalValue($Dp)')
@@ -1790,9 +1354,9 @@ function Export-WDUndoScript {
     $null = $sb.AppendLine('        Write-Host ("notice=" + $lr.Skip.Text)')
     $null = $sb.AppendLine('        Write-Host ("livecursor={0}" -f $lr.Card.Cursor)')
     $null = $sb.AppendLine('    }')
-    # A row with nothing left to decide is inert: it refuses the click, so it must
-    # not invite one either. The hover handlers are not wired at all on those,
-    # which is the only thing firing the event can tell you.
+    # A row with nothing left to decide refuses the click, so it must not invite
+    # one either - and hover handlers not wired at all is the only thing firing
+    # the event can tell you.
     $null = $sb.AppendLine('    if ($deadR.Count) {')
     $null = $sb.AppendLine('        $dr = $deadR[0]')
     $null = $sb.AppendLine('        $hv = { param($El, $Ev)')
@@ -1806,8 +1370,8 @@ function Export-WDUndoScript {
     $null = $sb.AppendLine('        Write-Host ("deadhover={0} -> {1} cursor={2} struck={3} opacity={4} notice={5}" -f $r0, $r1, $dr.Card.Cursor, [bool]$dr.NameEl.TextDecorations.Count, $dr.Card.Opacity, $dr.Skip.Visibility)')
     $null = $sb.AppendLine('        Write-Host ("deadink=" + (& $rkOf $dr.NameEl $fgDp))')
     $null = $sb.AppendLine('    }')
-    # Clicking anywhere on the row, which the box is a 13px target in the corner
-    # of. Raised on the card, so the whole gesture is what is measured.
+    # Raised on the card, so the whole gesture is what is measured rather than
+    # the 13px box.
     $null = $sb.AppendLine('    if ($liveR.Count) {')
     $null = $sb.AppendLine('        $cr = $liveR[0]')
     $null = $sb.AppendLine('        $ck = { param($El)')
@@ -1827,29 +1391,25 @@ function Export-WDUndoScript {
     $null = $sb.AppendLine('        & $ck2 $dr2.Card')
     $null = $sb.AppendLine('        Write-Host ("deadclick={0} -> {1}" -f $w0, [bool]$dr2.Check.IsChecked)')
     $null = $sb.AppendLine('    }')
-    # Non-verbose, which is the default. The elements exist either way, so the
-    # option can be turned back on without the page being rebuilt - and on a
-    # script written with no plan in hand there is nothing to show, which is a
-    # real state and reported as its own number rather than as a failure.
+    # The elements exist either way, so Verbose can be turned back on without a
+    # rebuild. A script written with no plan in hand has nothing to show, which
+    # is a real state.
     $null = $sb.AppendLine('    $descN = @($d.Rows | Where-Object { $_.DescEl }).Count')
     $null = $sb.AppendLine('    $shown = { @($d.Rows | Where-Object { $_.DescEl -and $_.DescEl.Visibility -eq ''Visible'' }).Count }')
     $null = $sb.AppendLine('    $t0 = & $shown')
     $null = $sb.AppendLine('    $d.State.Terse = $false; & $d.Terse; $t1 = & $shown')
     $null = $sb.AppendLine('    $d.State.Terse = $true;  & $d.Terse; $t2 = & $shown')
     $null = $sb.AppendLine('    Write-Host ("described={0} of {1} elements, visible {2} -> {3} -> {4}" -f $d.Described, $descN, $t0, $t1, $t2)')
-    # Refresh, pressed for real. It reads the machine again and REBUILDS the
-    # rows, so what has to be checked is that the page comes back whole: the same
-    # options, the ticks re-made, the filter panel re-offered, and the heading
-    # saying it was read again. A rebuild that half happened leaves rows in no
-    # column on a page reporting itself finished.
+    # Refresh rebuilds the rows, so what matters is that the page comes back
+    # whole - same options, ticks re-made, filter panel re-offered.
     $null = $sb.AppendLine('    $rfSay = { "{0} rows/{1} tickable/{2} boxes/{3} blocks" -f $d.Rows.Count, @($d.Rows | Where-Object { $_.Check.IsEnabled }).Count, @($d.Boxes).Count, @($d.Blocks).Count }')
     $null = $sb.AppendLine('    $rf0 = & $rfSay')
     $null = $sb.AppendLine('    $d.Ui.BtnRefresh.RaiseEvent((New-Object Windows.RoutedEventArgs ([Windows.Controls.Primitives.ButtonBase]::ClickEvent)))')
     $null = $sb.AppendLine('    Write-Host ("refresh={0} -> {1}" -f $rf0, (& $rfSay))')
     $null = $sb.AppendLine('    Write-Host ("refreshsaid=" + $d.Ui.Sub2.Text)')
     $null = $sb.AppendLine('    Write-Host ("refreshbtn=" + $d.Ui.BtnRefresh.IsEnabled)')
-    # And the rebuilt rows still answer a click, which is what proves the tick
-    # wiring was re-made rather than left on the boxes that were thrown away.
+    # And the rebuilt rows still answer a click, which proves the wiring was
+    # re-made rather than left on the boxes that were thrown away.
     $null = $sb.AppendLine('    $liveR2 = @($d.Rows | Where-Object { $_.Check.IsEnabled })')
     $null = $sb.AppendLine('    if ($liveR2.Count) {')
     $null = $sb.AppendLine('        $r2 = $liveR2[0]')

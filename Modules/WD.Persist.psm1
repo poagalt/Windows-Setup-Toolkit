@@ -1,28 +1,5 @@
-﻿<#
-    WD.Persist - making removals stick across a reboot, and proving they did.
-
-    Two hard problems live here:
-
-    1. Edge reinstalls itself. Uninstalling the browser is the easy part; the
-       EdgeUpdate service, its scheduled tasks and Windows Update servicing all
-       put it back, which is why it "comes back after a restart". The handler
-       below blocks every one of those vectors BEFORE uninstalling, not after.
-
-    2. Appx removals silently reverse. Removing a package for the current user
-       while leaving it provisioned means Windows re-stages it at the next
-       sign-in or feature update. The verification handler checks for exactly
-       that, plus the ContentDeliveryManager re-push path.
-
-    Handlers register into WD.Custom's table via the exported Register-WDHandler,
-    so WD.Custom must be imported before this module.
-#>
-
-# Edge Stable's EdgeUpdate application GUID. Beta/Dev/Canary included so a
+﻿# Edge Stable's EdgeUpdate application GUID. Beta/Dev/Canary are included so a
 # preview channel cannot quietly take Stable's place.
-# There was a $VectorOwners table here, mapping each resurrection vector to the
-# manifest item that closes it, so the report could say "that one is handled by
-# an item you have already ticked". CloseResurrectionPaths closes them itself
-# now, so there is no report to annotate and nothing for the table to answer.
 
 $script:EdgeGuids = @{
     Stable = '{56EB18F8-B008-4CBD-B6D2-8C97FE7E9062}'
@@ -31,33 +8,19 @@ $script:EdgeGuids = @{
     Canary = '{65C35B14-6C1D-4122-AC46-7148CC9D6497}'
 }
 
-# ------------------------------------------------ why Edge would not go ----
-#
-# `setup.exe --uninstall --force-uninstall` exits non-zero and leaves the browser
-# where it was. Its own log says why:
-#
-#     edge_install_util.cc(274)] Stable is not uninstallable for process.
-#
-# Edge asks Windows whether it may be uninstalled at all, and Windows answers out
-# of System32\IntegratedServicesRegionPolicySet.json - Microsoft's Digital
-# Markets Act compliance data. The "Edge is uninstallable." policy has
-# defaultState: disabled plus ~35 EEA regions where it is enabled. Outside those,
-# nobody can remove Edge, which is also why Settings shows no Uninstall button.
-#
-# SO THE UNINSTALL WAS NEVER FAILING - it was being REFUSED, and the handler
-# reported that as an uninstaller which "did not fully remove the browser".
-#
-# Two ways past it. Editing that JSON means seizing a TrustedInstaller-owned file
-# in System32 and rewriting Microsoft's compliance data; this toolkit will not.
-# The other is the home region, an ordinary per-user value with an ordinary undo:
-# set it to an EEA country for the length of the uninstall and put it back.
-# Windows reads it when setup.exe starts, so that is the whole window needed.
+# Edge asks Windows whether it may be uninstalled at all, and Windows answers
+# out of IntegratedServicesRegionPolicySet.json. This policy is disabled by
+# default and enabled only in the EEA, so outside those regions setup.exe exits
+# non-zero and leaves the browser where it was, logging "not uninstallable for
+# process".
+# The lever is the home region, an ordinary per-user value with an ordinary
+# undo. Rewriting Microsoft's compliance data in System32 is the other way past
+# it, and this toolkit will not do that.
 $script:EdgeUninstallPolicyGuid = '{1bca278a-5d11-4acf-ad2f-f9ab6d7f93a6}'
 # Ireland. English-speaking, in the enabled list, and unambiguous in a log.
 $script:EdgeUninstallGeoId = 68
 
 function Get-WDGeoIso2 {
-    <#  GeoID -> two-letter region code, through the Win32 GetGeoInfo API.  #>
     param([int]$GeoId)
     if (-not ('WDGeo.Api' -as [type])) {
         try {
@@ -82,7 +45,7 @@ function Get-WDHomeGeoId {
 }
 
 function Set-WDHomeGeoId {
-    <#  Home location only. Nothing about the display language or formats.  #>
+    # Home location only - nothing about display language or formats.
     param([Parameter(Mandatory)][int]$GeoId)
     $key = 'HKCU:\Control Panel\International\Geo'
     if (-not (Test-Path -LiteralPath $key)) { $null = New-Item -Path $key -Force -ErrorAction SilentlyContinue }
@@ -92,14 +55,6 @@ function Set-WDHomeGeoId {
 }
 
 function Get-WDEdgeUninstallPolicy {
-    <#
-        Does Windows currently permit Edge to be uninstalled on this machine?
-
-        Answers from the region policy file rather than by trying and reading the
-        wreckage. Returns Known=$false when the file is missing or unreadable,
-        which is a real state on older builds and must not be reported as "not
-        allowed" - before KB5032288 there was no such gate at all.
-    #>
     $out = [pscustomobject]@{
         Known   = $false
         Allowed = $true
@@ -118,8 +73,8 @@ function Get-WDEdgeUninstallPolicy {
 
     $pol = @($doc.policies | Where-Object { [string]$_.guid -ieq $script:EdgeUninstallPolicyGuid })
     if (-not $pol.Count) {
-        # Match on the comment as a fallback: the guid is the stable identifier,
-        # but a file that has been reorganized should not read as "no gate".
+        # The guid is the stable identifier, but a file that has been
+        # reorganized should not read as "no gate".
         $pol = @($doc.policies | Where-Object { [string]$_.'$comment' -match 'Edge is uninstallable' })
     }
     if (-not $pol.Count) { return $out }
@@ -132,11 +87,8 @@ function Get-WDEdgeUninstallPolicy {
 }
 
 function Get-WDEdgeInstallerReason {
-    <#
-        The one line in Edge's own log that says what happened. Quoted verbatim
-        in the result rather than paraphrased - "not uninstallable for process"
-        is a specific claim and worth reporting as Edge's words, not ours.
-    #>
+    # Quoted verbatim rather than paraphrased: "not uninstallable for process"
+    # is Edge's claim, not ours.
     $logs = @(
         (Join-Path ([string]$env:TEMP) 'msedge_installer.log')
         (Join-Path ([string]$env:SystemRoot) 'Temp\msedge_installer.log')
@@ -153,15 +105,8 @@ function Get-WDEdgeInstallerReason {
 }
 
 function Get-WDBrowserRegistrations {
-    <#
-        Every browser registered on this machine, with the ProgIds it actually
-        claims. Read, never assumed: Chrome uses static ids (ChromeHTML,
-        ChromePDF) but Firefox, Brave, Vivaldi and Opera append a per-install
-        hash - FirefoxHTML-308046B0AF4A39CB, VivaldiHTM.4F62JW... - so a
-        hardcoded table is wrong on most machines that are not running Chrome.
-
-        Both hives: some browsers register per-user.
-    #>
+    # Read, never assumed: Chrome uses static ProgIds, but Firefox, Brave,
+    # Vivaldi, and Opera append a per-install hash.
     $out = New-Object System.Collections.Generic.List[psobject]
     foreach ($hive in @('HKLM:', 'HKCU:')) {
         $root = Join-Path $hive 'SOFTWARE\Clients\StartMenuInternet'
@@ -194,35 +139,18 @@ function Get-WDBrowserRegistrations {
             })
         }
     }
-    # Unrolled, not ,@(...): every caller here pipes or wraps the result, and the
-    # comma form hands the pipeline one array object - which renders as a single
-    # row whose Name is the whole list. Documented trap, hit again.
+    # Unrolled, not ",@(...)": every caller pipes or wraps this, and the comma
+    # form hands the pipeline one array object that renders as a single row
+    # whose Name is the whole list.
     @($out | Sort-Object Key -Unique)
 }
 
 function Get-WDDefaultBrowserProgId {
-    <#  What http is actually pointed at right now, for this user.  #>
     $p = 'HKCU:\SOFTWARE\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice'
     try { return [string](Get-ItemProperty -LiteralPath $p -Name 'ProgId' -ErrorAction Stop).ProgId } catch { return '' }
 }
 
 function Get-WDHeldAssociations {
-    <#
-        Every protocol and file type currently pointed at one of the given
-        ProgIds, read out of this user's own UserChoice keys.
-
-        "Change default browser" IS NOT A QUESTION ABOUT HTTP. The default holds
-        the web protocols and the file types that open in a browser - .htm,
-        .pdf, .svg, .xht, .webp, varying by browser and build - and moving http
-        alone is the state people describe as "I changed my default browser and
-        PDFs still open in Edge".
-
-        READ, never assumed: ProgIds are per-install on half the browsers in use,
-        so a hardcoded list of what Edge holds is wrong on any machine where
-        somebody has already moved one.
-
-        Returns @{ Url = @(...); File = @(...) }, as Windows spells them.
-    #>
     param([string[]]$ProgIds)
 
     $out = [pscustomobject]@{ Url = @(); File = @() }
@@ -251,21 +179,6 @@ function Get-WDHeldAssociations {
 }
 
 function Get-WDOrphanedAssociations {
-    <#
-        Protocols and file types whose UserChoice still names a ProgId whose
-        program is gone.
-
-        Worse than a wrong default: Windows tries to launch something that is not
-        there, so the type does not open and the error names nothing useful. This
-        is a defect our OWN removals create - Edge left .svg and .xml like it,
-        the mail app left mailto - and nothing caught them, because every check
-        asked "which ProgId holds this" and the ProgId had not changed.
-
-        Deliberately not limited to browsers: an orphan is an orphan whoever made
-        it, which is what lets the browser hand-over pick up mailto.
-
-        Same shape as Get-WDHeldAssociations, so the two can be unioned.
-    #>
     $out = [pscustomobject]@{ Url = @(); File = @() }
     $urls  = New-Object System.Collections.Generic.List[string]
     $files = New-Object System.Collections.Generic.List[string]
@@ -290,30 +203,17 @@ function Get-WDOrphanedAssociations {
 }
 
 function Test-WDProgIdResolves {
-    <#
-        Does this ProgId still name a program that exists on disk?
-
-        Two ways it can fail and both matter: the ProgId's open command is gone
-        (an Appx handler that was uninstalled leaves the key with nothing under
-        it), or the command is there and names an executable that has been
-        deleted (Edge). Only a rooted path is checked - a bare command name is
-        resolved through PATH by the shell and guessing at that would report
-        working associations as broken.
-    #>
     param([string]$ProgId)
     if (-not $ProgId) { return $false }
     $root = "Registry::HKEY_CLASSES_ROOT\$ProgId"
 
     # Windows deletes the whole ProgId key when the program that registered it
-    # is uninstalled. That is how the dead ones are recognised, and it is the
-    # only test a Store app answers: mailto's AppXbx2ce4... key is simply gone,
-    # while the Photos one is still there with its AppUserModelID under it.
+    # is uninstalled. It is also the only test a Store app answers.
     try { if (-not (Test-Path -LiteralPath $root)) { return $false } } catch { return $true }
 
-    # A desktop program registers a command line, and that can name an
-    # executable which has since been deleted - which is what Edge leaves. Only
-    # a rooted path is checked; a bare command name is resolved through PATH by
-    # the shell, and guessing at that would report working types as broken.
+    # Only a rooted path is checked: a bare command name is resolved through
+    # PATH by the shell, and guessing at that would report working types as
+    # broken.
     $cmd = ''
     try {
         $cmdKey = "$root\shell\open\command"
@@ -327,27 +227,19 @@ function Test-WDProgIdResolves {
         return $true
     }
 
-    # No command line. A Store app activates through its AppUserModelID rather
-    # than a command, so the absence of one is normal and says nothing.
-    # Anything else that has a key but no way to open it is left alone too:
-    # a false orphan drags a working file type into a list of broken ones,
-    # which is worse than missing a real one.
+    # A Store app activates through its AppUserModelID rather than a command, so
+    # no command line says nothing. A false orphan drags a working file type
+    # into the broken list.
     $true
 }
 
 function Get-WDAssociationLock {
-    <#
-        Why Windows will not let this be set silently, in the order the locks
-        actually bite. All three are real and they stack. Measured on 25H2.
-
-        Answers a reason string, or '' when nothing is in the way. Deliberately
-        does not try to defeat any of them.
-    #>
+    # Three locks, in the order they bite. All are real and they stack.
     $reasons = New-Object System.Collections.Generic.List[string]
 
-    # 1. UserChoiceLatest. Once HashVersion is 1 Windows reads UserChoiceLatest
-    #    rather than UserChoice, and that algorithm is not public - so even a
-    #    perfect classic hash is ignored. This is the decisive one.
+    # Once HashVersion is 1, Windows reads UserChoiceLatest rather than
+    # UserChoice, and that algorithm is not public - so even a perfect classic
+    # hash is ignored. This is the decisive one.
     try {
         $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
         $k = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemProtectedUserData\$sid\AnyoneRead\AppDefaults"
@@ -357,9 +249,9 @@ function Get-WDAssociationLock {
         }
     } catch { }
 
-    # 2. UCPD, the kernel filter driver added in Feb 2024. It refuses writes to
-    #    the http/https/.pdf keys from a denylist that includes powershell.exe,
-    #    by image name and by the PE OriginalFilename, even as SYSTEM.
+    # UCPD, the kernel filter driver added Feb 2024, refuses writes to the http,
+    # https, and .pdf keys from a denylist that includes powershell.exe -
+    # matched by image name and by PE OriginalFilename, even as SYSTEM.
     try {
         $st = (Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Services\UCPD' -Name 'Start' -ErrorAction Stop).Start
         if ([int]$st -ne 4) {
@@ -371,24 +263,9 @@ function Get-WDAssociationLock {
 }
 
 function Set-WDDefaultBrowserBestEffort {
-    <#
-        Hand http, https and the web file types to a replacement browser.
-
-        THERE IS NO SILENT PATH ON CURRENT WINDOWS and this does not pretend
-        otherwise. Three locks stack: a Deny SetValue ACE on every FileExts
-        UserChoice key, the UCPD kernel filter driver, and UserChoiceLatest -
-        whose algorithm is not public, so a fabricated hash is either refused or
-        silently discarded, and a discarded one falls back to Edge.
-
-        So this does the two things that genuinely help: report precisely WHICH
-        lock is in the way rather than "it failed", and open Default apps at the
-        right browser so the rest is one click.
-
-        The important part is WHEN it runs: before Edge is uninstalled, never
-        after. With Edge gone and nothing holding the associations, every web
-        link produces "You'll need an app to open this" and the repair paths are
-        the same ones that are blocked.
-    #>
+    # There is no silent path on current Windows, and this does not pretend
+    # otherwise: it moves what it can and hands the rest to the operator with
+    # the Settings page already open.
     param($Context, [string]$PreferName)
 
     $browsers = @(Get-WDBrowserRegistrations)
@@ -405,15 +282,9 @@ function Set-WDDefaultBrowserBestEffort {
     $wanted  = [string]$pick.ProgIds['http']
 
     # Everything the outgoing browser holds, not just http - the complaint this
-    # item answers is the half-move, where the browser changes and .pdf and .svg
-    # go on opening in the old one. Read off the machine, then intersected with
-    # what the incoming browser has registered for, since Windows will not point
-    # a type at a program that never claimed it.
-    #
-    # The incoming browser's own ProgIds are EXCLUDED, or everything it already
-    # holds counts as work to do - http came back in "moving" on a machine where
-    # Chrome already owned it, and "already holds everything it can take" became
-    # unreachable.
+    # answers is the half-move where .pdf and .svg go on opening in the old one.
+    # Intersected with what the incoming browser registered for, since Windows
+    # will not point a type at a program that never claimed it.
     $mine = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($v in @($pick.ProgIds.Values)) { if ($v) { $null = $mine.Add([string]$v) } }
 
@@ -425,10 +296,10 @@ function Set-WDDefaultBrowserBestEffort {
     }
     $held  = Get-WDHeldAssociations -ProgIds @($outgoing | Sort-Object -Unique)
 
-    # Anything already pointing at a program that is gone is swept up with it.
-    # Those are strictly worse than a wrong default - the type does not open at
-    # all - and they are not always the outgoing browser's doing: removing the
-    # mail app orphans mailto, which no amount of reading Edge's ProgIds finds.
+    # Anything already pointing at a program that is gone is swept up too. Those
+    # are worse than a wrong default - the type does not open at all - and
+    # removing the mail app orphans mailto, which reading Edge's ProgIds never
+    # finds.
     $orph  = Get-WDOrphanedAssociations
     $takes = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($k in @($pick.ProgIds.Keys)) { $null = $takes.Add([string]$k) }
@@ -436,24 +307,13 @@ function Set-WDDefaultBrowserBestEffort {
     $allHeld = @(@($held.Url) + @($held.File) + @($orph.Url) + @($orph.File) | Sort-Object -Unique)
     $moving  = @($allHeld | Where-Object { $takes.Contains([string]$_) })
     # Types the outgoing browser holds that the incoming one never registered
-    # for. No amount of pressing Set default moves these, so somebody has to
-    # point them by hand - and naming them is the difference between a finished
-    # job and one that looks finished.
-    #
-    # Scoped to what the outgoing BROWSER held, not every orphan on the machine:
-    # a run that removes Media Player and Movies & TV orphans seventy-odd media
-    # types, which would bury the handful this item is about.
+    # for. No amount of pressing Set default moves these, so naming them is the
+    # difference between a finished job and one that looks finished.
     $stranded = @(@($held.Url) + @($held.File) | Where-Object { -not $takes.Contains([string]$_) })
 
-    # "Already the default" is a claim about the WHOLE set, not about http.
-    # Tested on http alone, a machine where Chrome already held it reported
-    # "already the default" and stopped while Edge went on holding .svg, .xml,
-    # and mailto - and the next step uninstalled Edge, leaving those three
-    # pointing at a program that no longer existed. The item that exists to
-    # prevent the half-move performed one.
-    #
-    # The real test is nothing left that the incoming browser COULD take.
-    # $stranded must not hold it open forever, so those are reported instead.
+    # A claim about the whole set, not about http: tested on http alone, a
+    # machine where Chrome already held it stopped while Edge went on holding
+    # .svg and mailto, and the next step uninstalled Edge.
     if ($wanted -and $current -and $current -eq $wanted -and -not $moving.Count) {
         $msg = "$($pick.Name) already holds everything it can take"
         if ($stranded.Count) {
@@ -483,9 +343,8 @@ function Set-WDDefaultBrowserBestEffort {
         }
     }
 
-    # Open Default apps at that browser. registeredAppMachine takes a name from
-    # HKLM\SOFTWARE\RegisteredApplications, which is where per-machine installs
-    # like Chrome and Firefox land.
+    # registeredAppMachine takes a name from
+    # HKLM\SOFTWARE\RegisteredApplications, where per-machine installs land.
     $opened = $false
     try {
         $arg = [uri]::EscapeDataString($pick.Name)
@@ -507,21 +366,14 @@ function Set-WDDefaultBrowserBestEffort {
 }
 
 Register-WDHandler 'SetDefaultBrowser' {
-    <#
-        The standalone item. RemoveEdge calls the same function directly, before
-        it uninstalls, so ordering cannot go wrong there.
-    #>
     param($Action, $Context)
 
-    # The operator's answer first, if they gave one. The picker beside this row
-    # lists every browser already on the machine plus anything this run has
-    # queued, and the answer crosses on run-options.json. Without it this took
-    # the first non-Edge browser it happened to find, and on a machine with two
-    # that is a guess made exactly where somebody cares about the answer.
+    # The operator's answer first. Without it this took the first non-Edge
+    # browser it happened to find.
     $prefer = ''
     try { $prefer = [string](Get-WDRunOption -Root $Context.Session.Root -Name 'defaultBrowser' -Default '') } catch { }
-    # Falling back to whatever is queued for install keeps the command line -
-    # which has no picker and writes no run options - behaving as it always did.
+    # Falling back to whatever is queued keeps the command line - which has no
+    # picker and writes no run options - behaving as it always did.
     if (-not $prefer) {
         try {
             $picked = @(Get-WDChosenBrowsers (Get-WDBrowserChoice -Root $Context.Session.Root))
@@ -531,12 +383,8 @@ Register-WDHandler 'SetDefaultBrowser' {
 
     $r = Set-WDDefaultBrowserBestEffort -Context $Context -PreferName $prefer
     if ($r.Ok) { return New-WDResult -Status AlreadySet -Message $r.Message }
-    # Obstruction in preview too, because that is what apply will report and a
-    # preview exists to say what apply will do. It read Changed, which is the
-    # one thing this step is certain NOT to do on its own: Windows will not let
-    # any program move the associations silently, so the outcome is always a
-    # Settings page and a click. Promising a change and delivering a hand-off
-    # is worse than saying so a minute earlier.
+    # Obstruction in preview too, because that is what apply reports. It read
+    # Changed, which is the one thing this step is certain not to do on its own.
     if ($Context.Preview) {
         return New-WDResult -Status Obstruction -Message $r.Message `
                             -Detail ('Windows will not allow this silently: the User Choice Protection Driver is ' +
@@ -547,12 +395,6 @@ Register-WDHandler 'SetDefaultBrowser' {
     if (-not $r.Pick) {
         return New-WDResult -Status Skipped -Message "Nothing to hand the associations to - $($r.Message)"
     }
-    # The detail names the whole set, not just "the default browser". Set
-    # default in Windows 11 moves every type both browsers have registered for
-    # in one press, which is most of them - and whatever the new browser has NOT
-    # claimed stays where it is however many times that button is pressed. That
-    # last list is the one worth printing: it is the difference between a job
-    # that is finished and one that looks finished.
     $tail = ''
     if (@($r.Moving).Count) {
         $tail += ' That moves ' + @($r.Moving).Count + ' association(s): ' +
@@ -565,14 +407,9 @@ Register-WDHandler 'SetDefaultBrowser' {
                  ((@($r.Stranded | Select-Object -First 20)) -join ', ') +
                  $(if (@($r.Stranded).Count -gt 20) { ', and ' + (@($r.Stranded).Count - 20) + ' more.' } else { '.' })
     }
-    # Obstruction, not Blocked. Blocked means this run tried to remove something
-    # and Windows said no; there is nothing here that was refused. Windows does
-    # not let ANY program move the default browser silently, by design, and the
-    # step has done everything it can - read the whole set of associations, work
-    # out which ones the new browser can take, and open the page at the right
-    # entry. What is left is one click that only a person can make. Filing that
-    # beside a package Windows would not uninstall is how a run with nothing
-    # wrong with it comes to show a column of refusals.
+    # Obstruction, not Blocked: Blocked means this run tried something and
+    # Windows said no, and nothing here was refused. Windows lets no program
+    # move the default browser silently, by design.
     New-WDResult -Status Obstruction -Message $r.Message -Detail (
         'Windows 11 protects the default-browser setting with a kernel driver and a signed hash that no ' +
         'third-party tool can write, so this is the one thing here that genuinely needs your click. ' +
@@ -581,11 +418,6 @@ Register-WDHandler 'SetDefaultBrowser' {
 }
 
 function Block-WDEdgeReinstall {
-    <#
-        Everything that can put Edge back, shut off in one place. Safe to run on
-        its own and safe to re-run; this is also what the verification handler
-        checks against.
-    #>
     param($Context)
 
     $pol = 'HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate'
@@ -650,15 +482,9 @@ function Block-WDEdgeReinstall {
 }
 
 Register-WDHandler 'RemoveEdge' {
-    <#
-        Order matters. Block the reinstall vectors first, then uninstall - the
-        other way round leaves a window where EdgeUpdate notices Edge is gone
-        and immediately re-stages it.
-
-        WebView2 Runtime is deliberately NOT touched: a lot of desktop software
-        embeds it, and removing it breaks apps that have nothing to do with the
-        browser.
-    #>
+    # Order matters: block the reinstall vectors first, then uninstall. The
+    # other way round leaves a window where EdgeUpdate notices Edge is gone and
+    # re-stages it.
     param($Action, $Context)
 
     $edgeDirs = @(
@@ -693,10 +519,9 @@ Register-WDHandler 'RemoveEdge' {
 
     $steps = New-Object System.Collections.Generic.List[string]
 
-    # 0. Hand over the file associations FIRST, while Edge is still here to hold
-    #    them. Doing this afterwards is how a machine ends up with every web link
-    #    answering "You'll need an app to open this" - at that point nothing owns
-    #    http, and the repair paths are the same ones Windows has locked.
+    # 0. Hand over the associations first, while Edge is still here to hold
+    # them. Afterwards, nothing owns http and every web link answers "You'll
+    # need an app to open this".
     $prefer = ''
     try {
         $picked = @(Get-WDChosenBrowsers (Get-WDBrowserChoice -Root $Context.Session.Root))
@@ -723,10 +548,9 @@ Register-WDHandler 'RemoveEdge' {
         Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 600
 
-    # 3. Lift the regional refusal, if that is what is in the way. Recorded in
-    #    the journal as well as restored in the finally: the restore covers the
-    #    ordinary case, the journal covers this process being killed between the
-    #    two - and being left in the wrong country is not a good surprise.
+    # 3. Lift the regional refusal. Journalled as well as restored in the
+    # finally: the finally covers an exception, the journal covers this process
+    # being killed between the two.
     $geoWas = -1
     if ($policy.Known -and -not $policy.Allowed) {
         $geoWas = $policy.GeoId
@@ -745,8 +569,8 @@ Register-WDHandler 'RemoveEdge' {
     }
 
     try {
-        # 4. Run every setup.exe we can find. Version folders move between
-        #    updates, so search rather than assume a path.
+        # 4. Run every setup.exe there is. Version folders move between updates,
+        # so search rather than assume a path.
         $lastExit = $null
         foreach ($dir in $edgeDirs) {
             $setups = @(Get-ChildItem -LiteralPath $dir -Recurse -Filter 'setup.exe' -ErrorAction SilentlyContinue |
@@ -760,8 +584,8 @@ Register-WDHandler 'RemoveEdge' {
             }
         }
 
-        # Exit 532 is the refusal, not a failure. It has no documented meaning;
-        # the log line is the evidence, so quote it.
+        # Exit 532 is the refusal, not a failure. It has no documented meaning,
+        # so the log line is the evidence.
         if ($lastExit -and $lastExit -ne 0) {
             $why = Get-WDEdgeInstallerReason
             if ($why) { Write-WDLog "Edge installer said: $why" -Level Warn -Item $Context.ItemId }
@@ -795,12 +619,7 @@ Register-WDHandler 'RemoveEdge' {
     }
 
     # 6. Sweep the folders. The uninstaller leaves its tree behind on nearly
-    #    every machine, held open by processes that restart themselves - which is
-    #    why Remove-WDStubbornDirectory is a kill-then-delete loop.
-    #
-    #    EdgeWebView IS DELIBERATELY NOT SWEPT: it is the WebView2 Runtime, a
-    #    separate product a lot of desktop software embeds, so deleting it breaks
-    #    those applications rather than the browser.
+    # every machine, held open by processes that restart themselves.
     $sweepRoots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) |
         Where-Object { $_ } | ForEach-Object { Join-Path $_ 'Microsoft' }
     $edgeProcs = @('msedge', 'msedgewebview2', 'MicrosoftEdgeUpdate', 'identity_helper',
@@ -809,14 +628,10 @@ Register-WDHandler 'RemoveEdge' {
     $queued = 0
     foreach ($root in $sweepRoots) {
         if (-not (Test-Path -LiteralPath $root)) { continue }
-        # NOTHING THIS RUN PARKED. Block-WDEdgeReinstall renames EdgeUpdate to
-        # EdgeUpdate.wd-disabled above and journals a rename back - and that name
-        # matches ^Edge without being 'EdgeWebView', so this sweep deleted it,
-        # permanently, leaving a journal entry promising a folder that was gone.
-        #
-        # Excluded by the .wd-disabled SUFFIX rather than that one folder's name:
-        # parking is the general mechanism, and anything this toolkit parks is
-        # something it has already promised it can put back.
+        # Nothing this run parked. Block-WDEdgeReinstall renames EdgeUpdate to
+        # EdgeUpdate.wd-disabled and journals a rename back, and that name
+        # matches ^Edge without being EdgeWebView - so this sweep deleted it and
+        # left a journal entry promising a folder that was gone.
         $doomed = @(Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue |
                     Where-Object { $_.Name -match '^(Edge|Copilot)' -and
                                    $_.Name -ne 'EdgeWebView' -and
@@ -834,8 +649,9 @@ Register-WDHandler 'RemoveEdge' {
                 Write-WDLog ("$($d.Name) could not be removed - $($r.Note). Left: " +
                              (($r.Left | Select-Object -First 3) -join ', ')) -Level Warn -Item $Context.ItemId
             }
-            # Not journalled. Nothing can put a program's files back, and an undo
-            # entry claiming otherwise is a lie the rollback script then repeats.
+            # Not journalled: nothing can put a program's files back, and an
+            # undo entry claiming otherwise is a lie the rollback script
+            # repeats.
             if ($r.Killed.Count) { $steps.Add("stopped $($r.Killed -join ', ')") }
         }
     }
@@ -844,9 +660,9 @@ Register-WDHandler 'RemoveEdge' {
 
     Set-WDRebootNeeded
 
-    # 7. Did it actually work? A refusal and a failure look identical from here
-    #    unless the reason is carried through, and the difference matters: one
-    #    is worth re-running, the other never will be.
+    # 7. Did it work? A refusal and a failure look identical from here unless
+    # the reason is carried through, and one is worth re-running while the other
+    # never will be.
     $stillThere = @($edgeDirs | Where-Object { Test-Path (Join-Path $_ 'msedge.exe') })
     if ($stillThere.Count) {
         $why = Get-WDEdgeInstallerReason
@@ -870,26 +686,6 @@ Register-WDHandler 'RemoveEdge' {
 }
 
 Register-WDHandler 'CloseResurrectionPaths' {
-    <#
-        The last step of any run that removed software, and the one that makes
-        "removed" mean removed.
-
-        This used to be VerifyPersistence: it walked the same five vectors and
-        wrote a report saying which of them were still open. That was the wrong
-        shape for this toolkit. Telling somebody a fortnight in advance that
-        Widgets is coming back is not a feature, it is a defect with good
-        manners - and worse, it was a tick, so the one run that most needed it
-        was the run where somebody had cleared the box.
-
-        So each vector is now closed rather than counted. Every close goes
-        through the ordinary executors, which means each one is backed up,
-        journalled and undone by the rollback script exactly like a manifest
-        action. Nothing here is a special case the revert cannot see.
-
-        The run appends this to the plan itself when it contains an app removal
-        - see Resolve-WDPlan - so it is previewable, cancellable and reported
-        like any other step rather than being invisible work in a finally block.
-    #>
     param($Action, $Context)
 
     $did  = New-Object System.Collections.Generic.List[string]
@@ -897,24 +693,19 @@ Register-WDHandler 'CloseResurrectionPaths' {
     $left = New-Object System.Collections.Generic.List[string]
     $verb = $(if ($Context.Preview) { 'would close' } else { 'closed' })
 
-    # Each vector says what it is doing as it does it. On a real run this is the
-    # only narration of work nobody asked for by name, and "the tool quietly
-    # disabled my Edge updater" is a thing the log has to be able to answer.
+    # Each vector narrates itself: "the tool quietly disabled my Edge updater"
+    # is a thing the log has to be able to answer.
     $say = {
         param([string]$Text)
         Write-WDLog $Text -Level Info -Item $Context.ItemId
     }
 
-    # --- 1. Packages removed per-user but still provisioned ---------------
-    # The big one: a provisioned package is re-staged for every new sign-in and
-    # after every feature update, so a per-user removal on its own has a shelf
-    # life. The appx executor already deprovisions what it removes; this catches
-    # the packages it could not enumerate at the time - an unelevated start, or
-    # a package a vendor uninstaller took out from underneath it.
+    # 1. Packages removed per-user but still provisioned - re-staged at every
+    # new sign-in and after every feature update, so a per-user removal alone
+    # has a shelf life.
     $removedNames = New-Object System.Collections.Generic.List[string]
-    # A run always has a session; the self test previews this handler without
-    # one, and Test-Path on $null is a parameter-binding error rather than a
-    # false, so the emptiness is checked before the path is.
+    # A run always has a session; the self test previews this without one, and
+    # Test-Path on $null is a binding error rather than a false.
     $journal = [string](Get-Prop $Context.Session 'JournalFile' '')
     if ($journal -and (Test-Path -LiteralPath $journal)) {
         foreach ($line in (Get-Content -LiteralPath $journal -ErrorAction SilentlyContinue)) {
@@ -945,9 +736,8 @@ Register-WDHandler 'CloseResurrectionPaths' {
         }
     }
 
-    # --- 2. ContentDeliveryManager re-push --------------------------------
-    # Delegated to the registry executor rather than written here, so it honours
-    # the account scope, backs the key up, and lands in the journal.
+    # 2. ContentDeliveryManager re-push. Delegated to the registry executor so
+    # it honours the account scope, backs the key up, and lands in the journal.
     $cdmValues = @('SilentInstalledAppsEnabled','PreInstalledAppsEnabled',
                    'OemPreInstalledAppsEnabled','ContentDeliveryAllowed')
     $cdmOpen = @($cdmValues | Where-Object {
@@ -968,7 +758,7 @@ Register-WDHandler 'CloseResurrectionPaths' {
         elseif ($r.Status -ne 'NotPresent')       { $left.Add("ContentDeliveryManager: $($r.Message)") }
     } else { $did.Add('ContentDeliveryManager was already shut') }
 
-    # --- 3. Consumer features policy --------------------------------------
+    # 3. Consumer features policy.
     $cc = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' `
                             -Name 'DisableWindowsConsumerFeatures' -ErrorAction SilentlyContinue).DisableWindowsConsumerFeatures
     if ($cc -ne 1) {
@@ -983,10 +773,8 @@ Register-WDHandler 'CloseResurrectionPaths' {
         elseif ($r.Status -ne 'NotPresent')       { $left.Add("consumer features policy: $($r.Message)") }
     } else { $did.Add('bundled app delivery was already blocked') }
 
-    # --- 4. Edge reinstall vectors ----------------------------------------
-    # Only when Edge is actually gone. Disabling the updater on a machine that
-    # still has Edge would leave the operator with an un-updating browser, which
-    # is a worse outcome than the one this is guarding against.
+    # 4. Edge reinstall vectors, and only when Edge is actually gone: an
+    # un-updating browser is a worse outcome than the one this guards against.
     if (-not (Test-Path (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'))) {
         $inst = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate' `
                                   -Name 'InstallDefault' -ErrorAction SilentlyContinue).InstallDefault
@@ -1010,7 +798,7 @@ Register-WDHandler 'CloseResurrectionPaths' {
         } else { $did.Add('Edge cannot reinstall itself') }
     }
 
-    # --- 5. PushToInstall re-adding removed in-box apps -------------------
+    # 5. PushToInstall re-adding removed in-box apps.
     $tasks = @()
     try {
         $tasks = @(Get-ScheduledTask -TaskPath '\Microsoft\Windows\PushToInstall\' -ErrorAction SilentlyContinue |
@@ -1024,10 +812,9 @@ Register-WDHandler 'CloseResurrectionPaths' {
         elseif ($r.Status -ne 'NotPresent')       { $left.Add("PushToInstall: $($r.Message)") }
     } else { $did.Add('PushToInstall was already disabled') }
 
-    # A vector this could not close is the one thing here worth escalating: it
-    # means something the operator removed is coming back and the toolkit knows
-    # it. Partial rather than Blocked when some of it worked, because that is
-    # what the rest of the engine means by those words.
+    # A vector this could not close means something the operator removed is
+    # coming back and the toolkit knows it. Partial rather than Blocked when
+    # some of it worked.
     if ($left.Count) {
         return New-WDResult -Status $(if ($shut.Count) { 'Partial' } else { 'Blocked' }) `
             -Message "$($left.Count) path(s) could not be closed - some of what you removed will come back" `
@@ -1041,23 +828,12 @@ Register-WDHandler 'CloseResurrectionPaths' {
                  -Detail $(if ($did.Count) { ($did -join ' | ') } else { 'every resurrection path was already shut' })
 }
 
-# The guards live in the data root rather than a run folder, so "Delete old run
-# logs" cannot pull the ground out from under a task that is still registered.
+# Guards live in the data root rather than a run folder, so "Delete old run
+# logs" cannot pull the ground from under a registered task.
 function Get-WDGuardPaths {
-    <#
-        Where a guard's files live.
-
-        ENTRY IS A COPY UNDER Root, NOT THE RUNNING TOOLKIT. Pointed at the live
-        location, a SYSTEM task aimed at E:\WinSetupToolkit\... fails its own
-        Test-Path and exits 0 at every boot, silently, for ever - and the update
-        guard went on stamping each new build as handled outside that test, so the
-        one event it exists for was permanently ticked off with the re-apply never
-        having run. The stick goes home in a pocket; the folder gets tidied out of
-        Downloads, moved, renamed.
-
-        PURE: names the paths and creates nothing. Copy-WDToolkitForGuard fills
-        them in, called by both installers before they register anything.
-    #>
+    # Entry is a copy under Root, not the running toolkit: pointed at the live
+    # one, a guard installed from a USB stick fails its own Test-Path at every
+    # boot, silently.
     param($Context, [string]$Root)
     if (-not $Root) { $Root = $Context.Session.Root }
     [pscustomobject]@{
@@ -1075,21 +851,9 @@ function Get-WDGuardPaths {
 }
 
 function Copy-WDToolkitForGuard {
-    <#
-        Put a copy of the toolkit where a SYSTEM task can still find it after the
-        medium has gone. Answers $true only when $Paths.Entry exists afterwards,
-        and NOTHING MAY REGISTER A GUARD UNTIL IT DOES - a task pointing at a file
-        nobody wrote is a failure this mechanism has already had once.
-
-        Everything except .git and profile_saves, rather than the files a guard is
-        known to need: a copy kept in step with the module list breaks the first
-        time somebody adds a file, silently, at somebody else's next sign-in. The
-        saved selections stay behind deliberately - the guard is handed one
-        profile by path and has no business carrying the rest into ProgramData.
-
-        Refreshed rather than reused, so a guard installed from a newer build does
-        not leave an older toolkit re-applying it.
-    #>
+    # Answers $true only when Entry exists afterwards, and nothing may register
+    # a guard until it does - a task pointing at a file nobody wrote is a
+    # failure this has already had once.
     param([Parameter(Mandatory)]$Paths)
 
     $skip = @('.git', '.gitignore', 'profile_saves')
@@ -1118,18 +882,9 @@ function Copy-WDToolkitForGuard {
 $script:NoticeTaskName = 'Windows Setup Toolkit Guard Notice'
 
 function New-WDGuardNoticeRunner {
-    <#
-        Both guards run as SYSTEM, which has no desktop to draw on, so the
-        notification cannot come from the guard itself. This runs at logon in
-        the signed-in user's own context, checks whether a guard has fired since
-        that user was last told, and says so.
-
-        "Already told" is recorded under the user's own LOCALAPPDATA rather than
-        next to the marker: the marker is written by SYSTEM into ProgramData and
-        a standard user cannot be relied on to have write access to it. Per-user
-        state also means every account that signs in gets told once, which is
-        the behavior you want on a shared machine.
-    #>
+    # Both guards run as SYSTEM, which has no desktop, so the notification
+    # cannot come from the guard. This runs at logon in the signed-in user's own
+    # context.
     param($Paths)
     @"
 # Generated by the Windows Setup Toolkit. Tells the signed-in user when a
@@ -1200,7 +955,6 @@ exit 0
 }
 
 function New-WDLogonGuardRunner {
-    <#  Re-applies at every sign-in, then leaves a marker for the notice.  #>
     param($Paths)
     @"
 # Generated by the Windows Setup Toolkit. Re-applies the saved selection at
@@ -1229,58 +983,40 @@ exit 0
 }
 
 function Install-WDGuardNotice {
-    <#  Idempotent: either guard installs it, and it is shared by both.  #>
+    # Idempotent: either guard installs it, and both share it.
     param($Paths)
     Set-Content -LiteralPath $Paths.Notice -Value (New-WDGuardNoticeRunner -Paths $Paths) -Encoding UTF8
     $act = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument (
         "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$($Paths.Notice)`"")
     $trg = New-ScheduledTaskTrigger -AtLogOn
     $trg.Delay = 'PT1M'
-    # A group principal, so it runs for whoever signs in rather than for the
-    # one account that happened to run the toolkit.
+    # A group principal, so it runs for whoever signs in rather than for the one
+    # account that ran the toolkit.
     $pri = New-ScheduledTaskPrincipal -GroupId 'Users' -RunLevel Limited
     $set = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
     $null = Register-ScheduledTask -TaskName $script:NoticeTaskName -Action $act -Trigger $trg `
                                    -Principal $pri -Settings $set -Force -ErrorAction Stop
 }
 
-# The current OS build, as one comparable string. Anything a feature update
-# changes shows up here, and it needs no per-version event log knowledge.
+# The current OS build as one comparable string: anything a feature update
+# changes shows up here, with no per-version event log knowledge.
 function Get-WDBuildStamp {
     $k = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
     $p = Get-ItemProperty -LiteralPath $k -ErrorAction SilentlyContinue
     '{0}.{1}.{2}' -f $p.CurrentBuild, $p.UBR, $p.DisplayVersion
 }
 
-# Both guards re-run "what this run did", so the selection has to be on disk.
 # Extras are dropped: re-installing the guard from inside the guard is noise,
-# and re-running the log cleaner unattended is not something to do behind
-# someone's back.
+# and re-running the log cleaner unattended is not a thing to do behind
+# somebody's back.
 function Save-WDGuardProfile {
-    <#
-        What a guard re-applies later: the run's REMOVALS, and nothing else.
-
-        A guard fires unattended, at sign-in or after a feature update. Saving the
-        whole plan re-ran the Add section there too - winget installs, PowerToys,
-        a replacement browser, the shell tweaks - so somebody who installed
-        Firefox in March and removed it in June would find it back after the next
-        feature update, with no prompt and no obvious cause.
-
-        Removing something that came back is idempotent and is the whole point of
-        a guard. Installing something again is a DECISION, it was made once, and a
-        background task is the last place to re-make it. Same argument for the
-        shell tweaks: re-applying "Explorer opens to This PC" behind somebody who
-        changed their mind is the tool overruling them.
-
-        Extras are dropped for the older reason: re-installing the guard from
-        inside the guard is noise, and re-running the log cleaner unattended is
-        not a thing to do behind anybody's back.
-    #>
+    # The run's removals, and nothing else. Re-running the Add section
+    # unattended would reinstall software somebody deliberately removed months
+    # earlier.
     param($Context, [string]$Path)
-    # Section comes off the plan, which Resolve-WDPlan stamps. Absent - an older
-    # plan, or a caller that passed no plan at all - falls back to the id list
-    # as it was, because a guard that saves nothing is worse than one that saves
-    # too much.
+    # Section comes off the plan. Absent - an older plan, or no plan at all -
+    # falls back to the id list, because a guard that saves nothing is worse
+    # than one that saves too much.
     $section = @{}
     foreach ($p in @($Context.Plan)) {
         $s = [string](Get-Prop $p 'Section' '')
@@ -1296,11 +1032,9 @@ function Save-WDGuardProfile {
     $ids.Count
 }
 
-# The replacement browser offered when Edge removal is selected. The GUI writes
-# the choice here before the run starts, because the engine runs on a background
-# runspace and a file is the only thing that reliably crosses that boundary. One
-# manifest item rather than one per browser, so the item list and every preset
-# count stay the same size whatever the answer is.
+# The GUI writes the choice here before the run starts: the engine is on a
+# background runspace and a file is the only thing that reliably crosses. One
+# item rather than one per browser, so preset counts do not move.
 $script:BrowserCatalog = [ordered]@{
     'Mozilla Firefox' = 'Mozilla.Firefox'
     'Google Chrome'   = 'Google.Chrome'
@@ -1312,9 +1046,8 @@ $script:BrowserCatalog = [ordered]@{
 }
 function Get-WDBrowserCatalog { $script:BrowserCatalog }
 
-# Roughly what each one occupies once installed, in MB. Authored, not measured -
-# nothing on a machine that has never had Firefox knows how big Firefox is - so
-# every figure derived from these is reported as approximate and carries a band.
+# Authored, not measured - nothing on a machine that has never had Firefox knows
+# how big Firefox is - so every figure from these is reported as approximate.
 $script:BrowserSizeMb = @{
     'Mozilla Firefox' = 250; 'Google Chrome' = 400; 'Brave' = 350; 'Vivaldi' = 400
     'Opera'           = 350; 'LibreWolf'     = 250; 'Zen Browser' = 250
@@ -1325,50 +1058,30 @@ function Get-WDBrowserSizeMb {
     300
 }
 
-# ------------------------------------------------------ interface state ---
-#
-# Choices about the interface rather than about a run: the theme, the last preset,
-# any preset redefined outright.
-#
-# LOCALAPPDATA, not ProgramData. These are one person's preferences - and the
-# ProgramData root grants Users create but not modify, so a file written by an
-# elevated run could never be rewritten by an unelevated one, which is exactly
-# what a settings file has to do.
-
 function Get-WDUiStatePath {
     Join-Path (Join-Path $env:LOCALAPPDATA 'WinSetupToolkit') 'ui-state.json'
 }
 
 function Get-WDUiState {
-    <#
-        Always returns a usable object. A missing file is a first run, and a
-        corrupt one is treated the same way rather than taken as an error -
-        losing a theme preference is not worth refusing to start over.
-
-        -Path exists so the self test can round-trip this against a scratch file
-        instead of the real one. Nothing else passes it.
-    #>
     param([string]$Path)
     $blank = [pscustomobject]@{
         theme          = ''
         preset         = ''
         overrides      = [pscustomobject]@{}
         presetDefaults = [pscustomobject]@{}
-        # Which presets have been applied to this machine, and with exactly
-        # which items. Persisted where an override is not: an unsaved edit is
-        # something somebody might not have meant to keep, and a run is a thing
-        # that happened.
+        # Persisted where an override is not: an unsaved edit is something
+        # somebody might not have meant to keep, and a run is a thing that
+        # happened.
         applied        = [pscustomobject]@{}
         storage        = $null
         accounts       = $null
         sort           = ''
-        # Whether an item's details open over the page instead of under the row.
-        # A preference like the theme, and false is the shipped answer - see the
-        # note on $makeDetailChip for why in-line is the default.
+        # A preference like the theme. False is the shipped answer - in-line is
+        # the default.
         detailPopup    = $false
-        # Whether the pages carry their standing descriptions and status words.
-        # Absent means non-verbose, which is the shipped default - see the note
-        # on $state.Terse for why it is stored this way up rather than as 'terse'.
+        # Absent means non-verbose, which is the shipped default. Stored this
+        # way up so a settings file written before the default changed cannot
+        # hold somebody at the old behaviour.
         verbose        = $false
     }
     if (-not $Path) { $Path = Get-WDUiStatePath }
@@ -1389,7 +1102,6 @@ function Get-WDUiState {
 }
 
 function Save-WDUiState {
-    <#  Whole-file write; the object is small and there is one writer.  #>
     param([Parameter(Mandatory)]$State, [string]$Path)
     if (-not $Path) { $Path = Get-WDUiStatePath }
     $path = $Path
@@ -1404,22 +1116,6 @@ function Save-WDUiState {
 }
 
 function Get-WDStorageCache {
-    <#
-        The drive walk from an earlier session, when it is still worth
-        believing. Walking C:\Users, C:\Windows and Program Files takes the
-        better part of a minute on a real machine, and doing that at every
-        launch to redraw a bar that has not visibly moved is rude to the disk
-        it is measuring.
-
-        Two ways to go stale, and both matter. Age, because software gets
-        installed. And the drive itself having moved on: a tenth of what it
-        holds is enough that last week's breakdown is describing a different
-        machine, whichever direction it moved in.
-
-        Anything unreadable or unrecognized answers $null, which means walk it
-        again - the cache is an optimization and must never be the reason a
-        wrong picture is shown.
-    #>
     param($State, [int64]$UsedBytes, [int]$MaxAgeDays = 7)
 
     if (-not $State -or -not $State.PSObject.Properties['storage']) { return $null }
@@ -1454,10 +1150,8 @@ function Get-WDStorageCache {
 }
 
 function New-WDStorageCacheEntry {
-    <#
-        The other half. A walk that was abandoned part way is not written -
-        half a measurement cached for a week is worse than no measurement.
-    #>
+    # A walk abandoned part way is not written: half a measurement cached for a
+    # week is worse than none.
     param($Buckets, [int64]$UsedBytes)
     if (-not $Buckets -or -not $Buckets.Raw) { return $null }
     if ($Buckets.Stopped) { return $null }
@@ -1479,11 +1173,8 @@ function New-WDStorageCacheEntry {
 }
 
 function ConvertTo-WDPresetMap {
-    <#
-        JSON round-trips a hashtable as a PSCustomObject, so the stored
-        preset -> @{Added;Removed} map comes back in the wrong shape for the
-        code that uses it. This converts it once, on the way in.
-    #>
+    # JSON round-trips a hashtable as a PSCustomObject, so the stored preset ->
+    # @{Added;Removed} map comes back in the wrong shape.
     param($Obj)
     $out = @{}
     if (-not $Obj) { return $out }
@@ -1505,13 +1196,7 @@ function Get-WDBrowserChoicePath {
 }
 
 function Set-WDBrowserChoice {
-    <#
-        An empty $Names clears the file, which is how backing out works.
-
-        A list, because one browser being installed is no reason not to install
-        a second. The file keeps the old single-name fields alongside the list
-        so a run started by an older build of this toolkit still reads.
-    #>
+    # An empty $Names clears the file, which is how backing out works.
     param([string]$Root, [string[]]$Names)
     $path = Get-WDBrowserChoicePath -Root $Root
     $want = @($script:BrowserCatalog.Keys | Where-Object { $_ -in @($Names) })
@@ -1539,12 +1224,9 @@ function Get-WDBrowserChoice {
 }
 
 function Get-WDChosenBrowsers {
-    <#
-        The choice as a list of @{Name; Id}, whichever shape the file is in. A
-        file written before this was a list carries only `name`/`id`, and a run
-        left queued across an upgrade of the toolkit should still install what
-        was asked for rather than nothing.
-    #>
+    # Whichever shape the file is in: one written before this was a list carries
+    # only name/id, and a run left queued across an upgrade should still install
+    # what was asked for.
     param($Choice)
     if (-not $Choice) { return @() }
     $names = @(Get-Prop $Choice 'names' @())
@@ -1571,18 +1253,6 @@ function Get-WDRunOptionsPath {
 }
 
 function Set-WDRunOptions {
-    <#
-        The values the GUI collects that an item's own manifest entry cannot
-        carry: how many days to defer each kind of update, and where to write
-        the common issues document.
-
-        A file for the same reason the browser choice is one - the engine runs
-        on a background runspace, and a file is the only thing that reliably
-        crosses that boundary. Written once, from the elevated side, in
-        $startRun; a file at the root of %ProgramData% grants Users create but
-        not modify, so rewriting it on every click throws for anyone who is not
-        an administrator.
-    #>
     param([string]$Root, [hashtable]$Values)
     $path = Get-WDRunOptionsPath -Root $Root
     if (-not $Values -or -not $Values.Count) {
@@ -1597,11 +1267,9 @@ function Set-WDRunOptions {
 }
 
 function Get-WDRunOption {
-    <#
-        One value, with a default. Never throws and never returns $null for a
-        missing file - a handler that runs from the command line has no GUI to
-        have written one, and the manifest default is the right answer there.
-    #>
+    # Never throws and never returns $null for a missing file - a handler run
+    # from the command line has no GUI to have written one, and the manifest
+    # default is right there.
     param([string]$Root, [string]$Name, $Default = $null)
     $path = Get-WDRunOptionsPath -Root $Root
     if (-not (Test-Path -LiteralPath $path)) { return $Default }
@@ -1614,15 +1282,8 @@ function Get-WDRunOption {
 }
 
 Register-WDHandler 'InstallChosenBrowser' {
-    <#
-        Installs whichever browsers were picked. No choice on disk means the
-        offer was declined or withdrawn, which is a Skipped rather than a
-        failure - backing out is a supported answer.
-
-        One winget call per browser rather than one call with several ids, so a
-        vendor whose package is broken today costs its own line in the report
-        instead of taking the others down with it.
-    #>
+    # No choice on disk means the offer was declined or withdrawn, which is
+    # Skipped rather than a failure.
     param($Action, $Context)
 
     $picked = @(Get-WDChosenBrowsers (Get-WDBrowserChoice -Root $Context.Session.Root))
@@ -1649,9 +1310,9 @@ Register-WDHandler 'InstallChosenBrowser' {
         if ($r.Detail) { $detail.Add("$($b.Name): $($r.Detail)") }
     }
 
-    # The generic winget message counts apps; these were picked by name, so the
-    # report says which. Anything that did not install is named on its own,
-    # because "3 of 4" is not something anybody can act on.
+    # These were picked by name, so the report says which. Anything that did not
+    # install is named on its own, because "3 of 4" is not something anybody can
+    # act on.
     $said = New-Object System.Collections.Generic.List[string]
     if ($done.Count) { $said.Add($(if ($Context.Preview) { "Would install $($done -join ', ')" } else { "$($done -join ', ') installed" })) }
     if ($here.Count) { $said.Add("$($here -join ', ') already installed") }
@@ -1665,9 +1326,9 @@ Register-WDHandler 'InstallChosenBrowser' {
     New-WDResult -Status Changed -Message $msg -Detail $dt
 }
 
-# A file, not a -Command one-liner: the quoting needed to nest this lot inside a
-# scheduled task argument is exactly where things like this break. Kept as a
-# function so the self test can generate it and actually run it.
+# A file, not a -Command one-liner: the quoting to nest this inside a scheduled
+# task argument is exactly where this breaks. A function so the self test can
+# generate it and run it.
 function New-WDUpdateGuardRunner {
     param($Paths)
     @"
@@ -1708,11 +1369,6 @@ exit 0
 }
 
 Register-WDHandler 'InstallPersistenceGuard' {
-    <#
-        Optional belt and braces: a logon task that re-applies the saved profile.
-        Useful on machines that take feature updates, which re-provision in-box
-        apps wholesale regardless of policy.
-    #>
     param($Action, $Context)
 
     $g        = Get-WDGuardPaths -Context $Context
@@ -1721,9 +1377,9 @@ Register-WDHandler 'InstallPersistenceGuard' {
     if ($Context.Preview) {
         return New-WDResult -Status Changed -Message 'Would register a logon task that re-applies this selection'
     }
-    # Copied FIRST, and nothing is registered if it fails. $g.Entry names the
-    # copy rather than the running toolkit, so this is what makes the path
-    # resolvable rather than a test of whether it already was.
+    # Copied first, and nothing registered if it fails. Entry names the copy
+    # rather than the running toolkit, so this is what makes the path
+    # resolvable.
     if (-not (Copy-WDToolkitForGuard -Paths $g)) {
         return New-WDResult -Status Failed -Message 'Could not copy the toolkit; guard not installed' `
                             -Detail ('A guard runs as SYSTEM long after this run, so it needs its own copy of ' +
@@ -1755,16 +1411,6 @@ Register-WDHandler 'InstallPersistenceGuard' {
 }
 
 Register-WDHandler 'InstallUpdateGuard' {
-    <#
-        Re-applies the selection after a feature update, and only then.
-
-        Windows re-provisions in-box apps wholesale during a build upgrade, which
-        is the one event that reliably undoes a debloat. There is no portable
-        "feature update finished" trigger - the servicing events differ by
-        version - so this stamps the build at install time and compares on every
-        boot. A machine that has not been upgraded does nothing but read a
-        registry value.
-    #>
     param($Action, $Context)
 
     $g        = Get-WDGuardPaths -Context $Context
@@ -1773,10 +1419,9 @@ Register-WDHandler 'InstallUpdateGuard' {
     if ($Context.Preview) {
         return New-WDResult -Status Changed -Message 'Would register a task that re-applies this selection after a feature update'
     }
-    # Copied first, and nothing registered if it fails - see the persistence
-    # guard. It matters more here: this guard stamps every new build as handled
-    # whether or not the re-apply ran, so one pointing at a toolkit that has
-    # gone would tick off the single event it exists for and never act on it.
+    # Copied first, and it matters more here: this guard stamps every new build
+    # as handled whether or not the re-apply ran, so one pointing at a toolkit
+    # that has gone ticks off the single event it exists for.
     if (-not (Copy-WDToolkitForGuard -Paths $g)) {
         return New-WDResult -Status Failed -Message 'Could not copy the toolkit; guard not installed' `
                             -Detail ('This guard runs as SYSTEM after a feature update, possibly months from ' +
@@ -1793,8 +1438,8 @@ Register-WDHandler 'InstallUpdateGuard' {
 
         $act = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument (
             "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$($g.Runner)`"")
-        # Five minutes in, so a post-update boot has finished its own servicing
-        # work before this starts uninstalling things underneath it.
+        # Five minutes in, so a post-update boot finishes its own servicing
+        # before this starts uninstalling underneath it.
         $trg = New-ScheduledTaskTrigger -AtStartup
         $trg.Delay = 'PT5M'
         $pri = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
