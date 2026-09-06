@@ -26,3 +26,9 @@ dist/
 # "this was broken and here is how", and the research appendix folded in from
 # the notes that used to sit beside it.
 CLAUDE.md
+
+# Agent tooling for editing this repo. Local like CLAUDE.md and for the same
+# reason - it is about working on the toolkit, not about running it. The release
+# names what it ships one path at a time, so this could never have been packaged;
+# ignoring it is what stops `git add -A` committing it.
+.claude/
