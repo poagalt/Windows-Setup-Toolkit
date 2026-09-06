@@ -1,11 +1,4 @@
-﻿<#
-    WD.Custom - handlers for things a declarative manifest cannot express.
-
-    Manifest entries reach these via {"type":"script","handler":"Name"}.
-    Same contract as every other executor: never throw, always return a result.
-#>
-
-$script:Handlers = @{}
+﻿$script:Handlers = @{}
 
 function Register-WDHandler {
     param([string]$Name, [scriptblock]$Body)
@@ -13,7 +6,6 @@ function Register-WDHandler {
 }
 
 function Get-WDHandlerNames {
-    <#  Lets the self test prove every handler a manifest references exists.  #>
     $script:Handlers.Keys | Sort-Object
 }
 
@@ -30,13 +22,9 @@ function Invoke-WDScriptAction {
     }
 }
 
-# ============================================================ Copilot key ===
-#
-# The Copilot key does not emit one scancode. Firmware sends the chord
-# Left Shift + Left Win + F23 (F23 is scancode 0x6E, virtual key 134). That is
-# why the usual HKLM Scancode Map trick cannot fix it: remapping 0x6E leaves
-# the Shift and Win presses intact, so you get a chord instead of a clean
-# Right Ctrl. Two things actually work, tried in order of preference.
+# The Copilot key does not emit one scancode: firmware sends the chord Left
+# Shift + Left Win + F23. That is why a Scancode Map remap cannot fix it -
+# remapping F23 leaves the Shift and Win presses intact.
 
 $script:VK = @{ LWin = 91; Shift = 16; LShift = 160; F23 = 134; RCtrl = 163 }
 
@@ -44,20 +32,20 @@ Register-WDHandler 'CopilotKeyToRightCtrl' {
     param($Action, $Context)
 
     # $machine, not $profile: that is an automatic variable holding the path to
-    # the PowerShell profile script, and shadowing it reads as a bug.
+    # the PowerShell profile script.
     $machine = $Context.Profile
     if ($machine.CopilotKey -eq 'Absent') {
         return New-WDResult -Status NotPresent -Message 'No Copilot key on this keyboard'
     }
 
-    # --- Preferred: the native setting Microsoft added in build 27500 -------
+    # Preferred: the native setting Microsoft added in build 27500.
     if ($machine.Build -ge 27500) {
         $r = Set-WDNativeCopilotKey -Context $Context
         if ($r.Status -in @('Changed','Removed')) { return $r }
         Write-WDLog 'Native Copilot key setting unavailable, falling back to PowerToys.' -Level Info -Item $Context.ItemId
     }
 
-    # --- Fallback that works on every current build: PowerToys -------------
+    # Fallback that works on every current build: PowerToys.
     if (-not (Test-WDPowerToys)) {
         if ($Context.Preview) {
             return New-WDResult -Status Changed -Message 'Would install PowerToys and map Win+Shift+F23 to Right Ctrl'
@@ -79,12 +67,8 @@ Register-WDHandler 'CopilotKeyToRightCtrl' {
 }
 
 function Set-WDNativeCopilotKey {
-    <#
-        Windows 11 build 27500+ exposes Settings > Bluetooth & devices >
-        Keyboard > Copilot key > Right Ctrl. The backing value moved during
-        flighting, so write every known location and verify by reading back.
-        Returning anything other than Changed makes the caller use PowerToys.
-    #>
+    # The backing value moved during the preview cycle, so the write is verified
+    # by reading it back rather than assumed.
     param($Context)
 
     $candidates = @(
@@ -113,20 +97,14 @@ function Set-WDNativeCopilotKey {
 }
 
 function Set-WDPowerToysRemap {
-    <#
-        Writes the chord remap straight into Keyboard Manager's config so the
-        user never has to open the GUI. Existing remaps are merged, not
-        clobbered - people have their own mappings and losing them would be a
-        nasty surprise from a debloat tool.
-    #>
     param($Context)
 
     $ptRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\PowerToys'
     $kbmDir = Join-Path $ptRoot 'Keyboard Manager'
     $cfg    = Join-Path $kbmDir 'default.json'
 
-    # The chord as PowerToys records it. Windows reports the modifier as either
-    # generic Shift or Left Shift depending on the keyboard driver, so map both.
+    # Windows reports the modifier as either generic Shift or Left Shift
+    # depending on the keyboard driver, so map both.
     $wanted = @(
         @{ originalKeys = "$($script:VK.LWin);$($script:VK.LShift);$($script:VK.F23)"; newRemapKeys = "$($script:VK.RCtrl)" },
         @{ originalKeys = "$($script:VK.LWin);$($script:VK.Shift);$($script:VK.F23)";  newRemapKeys = "$($script:VK.RCtrl)" }
@@ -187,14 +165,8 @@ function Set-WDPowerToysRemap {
         Add-WDJournal -ItemId $Context.ItemId -Type 'copilot-key' -Target $cfg -Status 'Changed' `
                       -Undo @{ method = 'file-restore'; file = "$cfg.wdbak"; target = $cfg }
 
-        # PowerToys reads its config only at start, so bounce it if running.
-        #
-        # THE ENGINE IS A SEPARATE PROCESS AND IS THE ONE THAT MATTERS.
-        # KeyboardManagerEngine loads default.json and does the remapping;
-        # PowerToys.exe is only the launcher. Stopping the launcher alone leaves
-        # the engine holding the old config, so the remap is on disk and has no
-        # effect - and the symptom is the Copilot key behaving as before with
-        # everything on disk looking correct.
+        # PowerToys reads its config only at start, and the engine is a separate
+        # process from the tray app - it is the one that has to be bounced.
         $engine  = @(Get-Process -Name 'PowerToys.KeyboardManagerEngine' -ErrorAction SilentlyContinue)
         $running = @(Get-Process -Name 'PowerToys' -ErrorAction SilentlyContinue)
         $exe = ''
@@ -206,10 +178,9 @@ function Set-WDPowerToysRemap {
             if ($exe) { Start-Process -FilePath $exe -ErrorAction SilentlyContinue }
         }
 
-        # Read back what is actually on disk rather than reporting the intent.
-        # PowerToys owns this file and rewrites it in its own format when it
-        # feels like it, so "we wrote it" and "it says what we wrote" are two
-        # different claims and only the second is worth making.
+        # Read back what is on disk rather than reporting the intent: PowerToys
+        # owns this file and rewrites it in its own format when it feels like
+        # it.
         $landed = $false
         try {
             $back = Get-Content -LiteralPath $cfg -Raw | ConvertFrom-Json
@@ -227,9 +198,8 @@ function Set-WDPowerToysRemap {
                          'check that Win+Shift+F23 maps to Right Ctrl.')
         }
 
-        # Still not "the key now acts as Right Ctrl". That is a claim about what
-        # happens when somebody presses it, and nothing here has pressed it -
-        # the honest version names what was changed and what it depends on.
+        # Not "the key now acts as Right Ctrl" - that is a claim about pressing
+        # it, and nothing here has.
         New-WDResult -Status Changed `
             -Message 'Copilot key remapped to Right Ctrl in PowerToys' `
             -Detail "$added mapping(s) written to Keyboard Manager and confirmed in the config. PowerToys must stay installed and running at login for this to keep working."
@@ -238,30 +208,15 @@ function Set-WDPowerToysRemap {
     }
 }
 
-# ============================================================== OneDrive ====
-
 Register-WDHandler 'RemoveOneDrive' {
     param($Action, $Context)
 
     $steps  = New-Object System.Collections.Generic.List[string]
     $failed = New-Object System.Collections.Generic.List[string]
 
-    # ---- Known Folder Move, and this has to happen FIRST -------------------
-    #
-    # OneDrive's "back up your folders" repoints Documents, Pictures, and Desktop
-    # at C:\Users\<me>\OneDrive\<name>. Uninstalling OneDrive does not put them
-    # back - it removes what kept those paths populated, so the redirection names
-    # a folder that is not there and GetFolderPath('MyDocuments') returns an
-    # EMPTY STRING. Every program that saves to Documents asks the shell for that
-    # path, and there is no longer an answer.
-    #
-    # It is also the most alarming way this can go wrong: "my Documents folder is
-    # gone" reads as the debloat tool having deleted it. It did not - the files
-    # are in the OneDrive account and no run touches user data.
-    #
-    # So, before the uninstaller: point any known folder inside OneDrive back at
-    # the local profile, creating it if missing. Journalled, so a rollback
-    # restores the redirection for anyone who wants OneDrive back.
+    # Known Folder Move first: OneDrive repoints Documents, Pictures, and
+    # Desktop into its own folder, and uninstalling without putting them back
+    # strands them.
     $kfmRoot = Join-Path $env:USERPROFILE 'OneDrive'
     $shellKey = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders'
     $kfm = @(
@@ -336,12 +291,10 @@ Register-WDHandler 'RemoveOneDrive' {
                 } catch { $failed.Add('Explorer sidebar entry') }
             }
         }
-        # Startup entry for the current user.
         try {
             Remove-ItemProperty -LiteralPath 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' `
                                 -Name 'OneDrive' -Force -EA SilentlyContinue
         } catch { }
-        # Its own update task.
         Get-ScheduledTask -TaskName 'OneDrive*' -ErrorAction SilentlyContinue |
             Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
         $steps.Add('scheduled tasks removed')
@@ -352,15 +305,9 @@ Register-WDHandler 'RemoveOneDrive' {
     New-WDResult -Status Removed -Message 'OneDrive removed' -Detail (($steps | Sort-Object -Unique) -join ', ')
 }
 
-# ========================================================= vendor scrubs ====
-
 Register-WDHandler 'McAfeeScrub' {
-    <#
-        McAfee's own uninstallers routinely leave drivers, services and a
-        filter driver behind. MCPR is the vendor's supported cleanup tool and
-        is the only reliable way to finish the job - but it is a download, so
-        it is offered rather than assumed.
-    #>
+    # McAfee's own uninstallers leave drivers, services, and a filter driver
+    # behind. MCPR is the vendor's supported cleanup tool.
     param($Action, $Context)
 
     $found = Get-WDInstalledPrograms | Where-Object { $_.DisplayName -like '*McAfee*' -or $_.Publisher -like '*McAfee*' }
@@ -419,19 +366,13 @@ Register-WDHandler 'NortonScrub' {
 }
 
 Register-WDHandler 'VerifyDefender' {
-    <#
-        After third-party AV is removed, Defender should take back over. It
-        sometimes needs a nudge, and silently having no AV is worse than any
-        bloatware, so this is checked rather than assumed.
-    #>
     param($Action, $Context)
 
     try {
         $status = Get-MpComputerStatus -ErrorAction Stop
         if ($status.AntivirusEnabled -and $status.RealTimeProtectionEnabled) {
             # A check that passed. Nothing was done and nothing needed to be,
-            # which is what the grey status says - where Changed claimed this
-            # row was one of the things about to alter the machine.
+            # where Changed claimed this row was about to alter the machine.
             return New-WDResult -Status AlreadySet -Message 'Microsoft Defender is active and protecting this machine'
         }
         if ($Context.Preview) { return New-WDResult -Status Changed -Message 'Would re-enable Defender real-time protection' }
@@ -448,33 +389,9 @@ Register-WDHandler 'VerifyDefender' {
     }
 }
 
-# ScanVendorApps was removed deliberately: it re-listed the discovered-software
-# rows with every safety filter taken off - keep-listed vendor tools,
-# manifest-covered products, and the SystemComponent sub-entries the scan exists
-# to suppress - and wrote them to a text file.
-#
-# The only set the scan genuinely drops is uninstall entries with neither an
-# UninstallString nor a QuietString, since there is nothing to run. If that list
-# is ever wanted it needs a row that says so.
-
 Register-WDHandler 'RemoveInstallShortcuts' {
-    <#
-        "Install without a desktop shortcut", after the fact. There is no
-        portable winget switch for it, so the only honest way to offer the
-        preference is to clear up behind the installers.
-
-        NOT the same as `desktop-shortcuts`, which is tier 3 and takes every
-        shortcut including ones the person made. This removes only what appeared
-        during THIS run.
-
-        Decided on "newer than the run's start" rather than a before-and-after
-        snapshot: a snapshot needs a handler that runs twice with state in
-        between, and the timestamp answers the same question with nothing to keep
-        in sync. The cost is a shortcut made by hand mid-run, which does not
-        really arise.
-
-        order 94, after the installs at 88-93, so the files exist by then.
-    #>
+    # "Install without a desktop shortcut", after the fact: there is no portable
+    # winget switch for it.
     param($Action, $Context)
 
     $since = $null
@@ -508,8 +425,8 @@ Register-WDHandler 'RemoveInstallShortcuts' {
     }
 
     # Recycled, not deleted: this is the one class of file the run creates on
-    # somebody's desktop and getting it wrong should cost a drag out of the bin,
-    # not a reinstall.
+    # somebody's desktop, and getting it wrong should cost a drag out of the
+    # bin.
     $gone = 0
     foreach ($f in $found) {
         if (Remove-WDToRecycleBin -Path $f.FullName) {
@@ -525,7 +442,7 @@ Register-WDHandler 'RemoveInstallShortcuts' {
                  -Detail "$($names -join ', '). Only shortcuts created during this run were touched."
 }
 
-# Startup entries that must survive even though they are not "programs" in the
+# Startup entries that must survive even though they are not programs in the
 # uninstall sense - audio stacks, security UI, input drivers.
 $script:KeepStartup = @(
     'SecurityHealth*', 'Windows Defender*', 'WindowsDefender*', 'MSC*'
@@ -538,13 +455,6 @@ $script:KeepStartup = @(
 )
 
 Register-WDHandler 'DisableStartupEntries' {
-    <#
-        Disables every login item that is not a system dependency.
-
-        Run values are deleted and journalled with their previous data, so the
-        generated rollback script restores them exactly. Startup-folder
-        shortcuts are renamed rather than deleted, for the same reason.
-    #>
     param($Action, $Context)
 
     $protected = Get-WDProtectedPrograms -Profile $Context.Profile
@@ -556,7 +466,7 @@ Register-WDHandler 'DisableStartupEntries' {
         if (Test-WDPatternMatch $name $script:KeepStartup) { return $true }
         if (Test-WDPatternMatch $name $protected)          { return $true }
         foreach ($p in $protected) {
-            # Match on the executable path too - Run value names are often
+            # Match on the executable path too: Run value names are often
             # nothing like the product name in Add/Remove Programs.
             if ($command -and $command -like "*$($p.TrimEnd('*'))*") { return $true }
         }
@@ -651,13 +561,6 @@ Register-WDHandler 'ScanStartup' {
 }
 
 Register-WDHandler 'ClearRunLogs' {
-    <#
-        Deletes previous run folders, keeping the one in progress.
-
-        Worth being blunt about the trade: each folder holds that run's rollback
-        script, journal and registry exports. Removing it makes those changes
-        permanently irreversible from this tool.
-    #>
     param($Action, $Context)
 
     $root = $Context.Session.Root
@@ -695,38 +598,16 @@ Register-WDHandler 'ClearRunLogs' {
 }
 
 Register-WDHandler 'RemoveUninstallLeftovers' {
-    <#
-        What the vendor uninstallers left behind, swept to the Recycle Bin.
-
-        Deliberately not Revo's approach. Revo scans the registry and the file
-        system for anything whose name resembles the product, which finds more
-        and is only safe because a human reviews the list before it acts. There
-        is no human in this loop, so this only touches a folder the program
-        itself declared as its InstallLocation, recorded before its uninstall
-        key was removed, and only when the uninstaller left it behind.
-
-        That gives up the AppData and registry residue. It also means this
-        cannot delete the wrong folder: every path came from the program.
-    #>
     param($Action, $Context)
 
-    # ASSIGNED, NEVER WRAPPED IN @(). Get-WDUninstalledThisRun ends in ,@(...)
-    # so that assigning it does not unroll; @() around its pipeline output is
-    # ONE element holding the whole list. The loop below then ran once with $d
-    # bound to the array, and $d.InstallLocation member-enumerated into every
-    # path space-joined into one string - so with two or more uninstalls this
-    # swept nothing and reported "The uninstallers left nothing behind". With
-    # exactly one it worked, which is why it survived every test it was given.
+    # Assigned, never wrapped in @(). Get-WDUninstalledThisRun ends in ,@(...),
+    # and wrapped, the loop ran once with $d bound to the whole list.
     $done = Get-WDUninstalledThisRun
     if (-not $done.Count) { return New-WDResult -Status NotPresent -Message 'Nothing was uninstalled this run' }
 
-    # Never sweep a shared root. An installer that wrote "C:\Program Files" into
-    # InstallLocation - and some do - would otherwise take everything with it.
-    # The list itself lives in WD.Core as Test-WDSweepableRoot, because the
-    # process kill before an uninstall has to refuse the same paths for the same
-    # reason, and a safety list kept in two places is one list plus a bug waiting
-    # for whoever extends the other copy. It also does the normalizing, so what
-    # comes back is the path to act on rather than the raw property.
+    # Never sweep a shared root: some installers write "C:\Program Files" into
+    # InstallLocation. The list lives in WD.Core, because the process kill needs
+    # the identical answer.
     $found = New-Object System.Collections.Generic.List[psobject]
     foreach ($d in $done) {
         $loc = Test-WDSweepableRoot -Path ([string]$d.InstallLocation)
@@ -776,15 +657,6 @@ Register-WDHandler 'RemoveUninstallLeftovers' {
 }
 
 function Get-WDResidueTokens {
-    <#
-        The words worth searching for out of a program name. Version numbers,
-        architecture markers and the filler that appears in every display name
-        are dropped, because "Software" or "x64" matches half the disk.
-
-        A token has to be five characters or more. Four-letter vendor names lose
-        out, and that is the right trade: this decides what gets shown as
-        suspicious, and a short token matches far too much.
-    #>
     param([string]$Name)
     if (-not $Name) { return @() }
 
@@ -800,34 +672,14 @@ function Get-WDResidueTokens {
 }
 
 Register-WDHandler 'RemoveUninstallResidue' {
-    <#
-        The wider sweep, the way Revo's works: search the usual residue locations
-        by NAME, rather than only the folder the program declared.
-
-        Revo is only safe because a human reviews the list first. There is no
-        human in this loop, so the safety is bought back three other ways:
-
-          - a token must be 5+ characters and not a generic word, so "Software"
-            and "x64" match nothing
-          - a folder holding a RUNNING executable is left alone - a live process
-            is the one unambiguous sign the match was wrong
-          - every removal is reversible: folders to the Recycle Bin, keys
-            exported before deletion, so the rollback restores the lot
-
-        Still the widest net here, which is why it is tier 3 and off by default.
-    #>
     param($Action, $Context)
 
-    # Assigned, never wrapped - see RemoveUninstallLeftovers above. Wrapped, the
-    # loop ran once with $d bound to the whole list, so every finding was
-    # attributed to all the uninstalled names joined together, and $claimed held
-    # one joined non-path - which meant the folders the narrower sweep had
-    # already recycled were reported and recycled a second time.
+    # Assigned, never wrapped - see RemoveUninstallLeftovers above.
     $done = Get-WDUninstalledThisRun
     if (-not $done.Count) { return New-WDResult -Status NotPresent -Message 'Nothing was uninstalled this run' }
 
-    # Only the containers where per-application residue actually accumulates.
-    # Anything one level up would match half the machine.
+    # Only the containers where per-application residue accumulates. Anything
+    # one level up would match half the machine.
     $roots = @(
         $env:ProgramData, $env:LOCALAPPDATA, $env:APPDATA,
         $env:ProgramFiles, ${env:ProgramFiles(x86)},
@@ -897,9 +749,9 @@ Register-WDHandler 'RemoveUninstallResidue' {
                             -Detail 'Each one is listed above. Every folder goes to the Recycle Bin and every key is exported first, so the rollback script puts them all back.'
     }
 
-    # A folder holding a process that is running right now is the one case where
-    # the name match is demonstrably wrong about ownership, and it is also the
-    # case where deleting would break something in front of the operator.
+    # A folder holding a running process is the one case where the name match is
+    # demonstrably wrong about ownership, and also where deleting breaks
+    # something in front of the operator.
     $live = @{}
     foreach ($p in @(Get-Process -ErrorAction SilentlyContinue)) {
         $path = ''
@@ -960,31 +812,6 @@ Register-WDHandler 'RemoveUninstallResidue' {
 }
 
 Register-WDHandler 'SetPowerScheme' {
-    <#
-        One value in the active power scheme, set for both AC and battery.
-
-        POWERCFG, NOT THE REGISTRY, and that is not a preference: the keys under
-        Control\Power\PowerSettings hold each setting's DEFAULT and allowed range,
-        while the value in force belongs to the active scheme under a per-scheme
-        GUID - writing the default does not move it. powercfg also re-applies the
-        scheme, which is what makes the change take effect without a sign-out.
-
-        The action names the subgroup and setting, so one handler covers every
-        power item:
-
-          { "type": "script", "handler": "SetPowerScheme",
-            "sub": "SUB_SLEEP", "setting": "RTCWAKE", "value": 0 }
-
-        Aliases and raw GUIDs are both accepted, and WHICH ONE TO USE HAS TO BE
-        CHECKED against a real machine - there is no SUB_USB alias, and a wrong
-        pairing reports NotPresent, which is indistinguishable from hardware that
-        lacks the setting. Probe with `powercfg /query SCHEME_CURRENT` and
-        `powercfg /aliases` first.
-
-        Previous values are read from the SCHEME before the write, not from the
-        documented default, so somebody who has already tuned their power plan
-        gets their own numbers back.
-    #>
     param($Action, $Context)
 
     $sub = [string](Get-Prop $Action 'sub' '')
@@ -995,9 +822,9 @@ Register-WDHandler 'SetPowerScheme' {
     }
     $want = [int](Get-Prop $Action 'value' 0)
 
-    # What it is now. /query prints the AC and DC index as hex on their own
-    # lines; anything unparseable leaves the undo without a value, and an undo
-    # that would restore a guess is worse than one that says it cannot.
+    # /query prints the AC and DC index as hex on their own lines. Anything
+    # unparseable leaves the undo without a value, which beats restoring a
+    # guess.
     $acWas = $null; $dcWas = $null
     try {
         $q = @(& "$env:SystemRoot\System32\powercfg.exe" /query SCHEME_CURRENT $sub $set 2>&1)
@@ -1024,7 +851,7 @@ Register-WDHandler 'SetPowerScheme' {
         $null = & $exe /setacvalueindex SCHEME_CURRENT $sub $set $want 2>&1
         $null = & $exe /setdcvalueindex SCHEME_CURRENT $sub $set $want 2>&1
         # Without this the scheme holds the new numbers and the machine goes on
-        # behaving the old way until something else re-applies it.
+        # behaving the old way.
         $null = & $exe /setactive SCHEME_CURRENT 2>&1
     } catch {
         return New-WDResult -Status Blocked -Message 'powercfg refused the change' -Detail $_.Exception.Message
@@ -1039,14 +866,9 @@ Register-WDHandler 'SetPowerScheme' {
 }
 
 Register-WDHandler 'SetTaskbarAutoHide' {
-    <#
-        Auto-hide is one bit inside a binary blob, not a value of its own:
-        StuckRects3\Settings byte 8, bit 0x01. So this is a read-modify-write
-        per user hive rather than a manifest registry action.
-
-        The blob is 40 bytes on older builds and 48 on newer ones, and the flag
-        byte has not moved, so the length is checked but not assumed.
-    #>
+    # Auto-hide is one bit inside a blob, not a value: StuckRects3\Settings byte
+    # 8, bit 0x01. The blob is 40 bytes on older builds and 48 on newer, and the
+    # flag byte has not moved.
     param($Action, $Context)
 
     $rel  = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3'
@@ -1068,10 +890,8 @@ Register-WDHandler 'SetTaskbarAutoHide' {
         if ($Context.Preview) { $done.Add("$($root.Name) would auto-hide"); continue }
 
         Backup-WDRegistryKey -Path $path
-        # A copy of the real bytes. This used to record the TEXT "@(48,0,4,...)"
-        # because the emitter interpolated the previous value unquoted, so a
-        # PowerShell literal was the only thing that survived the trip. The
-        # emitter renders values now, which means this can be a value.
+        # A copy of the real bytes. This used to record the text "@(48,0,4,...)"
+        # because the emitter interpolated the previous value unquoted.
         $was = [byte[]]::new($bytes.Length)
         [Array]::Copy($bytes, $was, $bytes.Length)
         $bytes[8] = [byte]($bytes[8] -bor 0x01)
@@ -1094,20 +914,6 @@ Register-WDHandler 'SetTaskbarAutoHide' {
 }
 
 Register-WDHandler 'CleanComponentStore' {
-    <#
-        The superseded copies of every Windows update, plus the temp folders.
-
-        This is the one big space win a debloat run can offer and nothing else
-        here touches it - removing apps barely dents WinSxS. /ResetBase is what
-        makes it worth running and also what makes it opt-in: it discards the
-        backups Windows keeps to uninstall updates, so afterwards no installed
-        update can be rolled back.
-
-        Deliberately not cleanmgr /VERYLOWDISK, which winutil uses. That runs a
-        UI-driven tool with a profile nobody here chose and it can clear the
-        Recycle Bin and Downloads on some presets. DISM's scope is exactly the
-        component store, which is where the space actually is.
-    #>
     param($Action, $Context)
 
     $before = 0
@@ -1120,7 +926,8 @@ Register-WDHandler 'CleanComponentStore' {
 
     $notes = New-Object System.Collections.Generic.List[string]
 
-    # Temp first: it is quick, and it is free space DISM does not need to work in.
+    # Temp first: it is quick, and it is free space DISM does not need to work
+    # in.
     $tempBytes = 0
     foreach ($dir in @($env:TEMP, (Join-Path $env:SystemRoot 'Temp'))) {
         if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { continue }
@@ -1160,15 +967,6 @@ Register-WDHandler 'CleanComponentStore' {
 }
 
 Register-WDHandler 'EnableIrreversibleMode' {
-    <#
-        Turns off every way back for the rest of the run, and empties the
-        Recycle Bin when it finishes.
-
-        Ordered first in the plan on purpose: the flag has to be set before any
-        file action runs, or the early ones still buy a way back that the later
-        ones do not. The bin is emptied by the engine at the end rather than
-        here, so that everything this run recycles is covered.
-    #>
     param($Action, $Context)
 
     if ($Context.Preview) {
@@ -1182,23 +980,14 @@ Register-WDHandler 'EnableIrreversibleMode' {
 }
 
 Register-WDHandler 'RestartExplorer' {
-    <#
-        Appended to every plan by Resolve-WDPlan rather than ticked. Taskbar,
-        context-menu and Explorer settings are written to the registry the
-        moment their item runs, but the shell only reads them at start-up, so
-        without this the operator applies a change, looks at the taskbar, and
-        sees nothing happen.
-    #>
     param($Action, $Context)
     if ($Context.Preview) {
         return New-WDResult -Status Changed -Message 'Would restart Explorer so shell changes take effect now' `
                             -Detail 'Open File Explorer windows close. Nothing else about the desktop changes, and this runs last.'
     }
-    # THIS SESSION'S SHELL, NOT EVERY SESSION'S. Get-Process answers for the
-    # whole machine when it is asked from an elevated process, and this was
-    # `Stop-Process -Name explorer`, which on a machine with somebody else
-    # signed in through fast user switching took their desktop down too. They
-    # did not ask for a run and have no way to connect the two.
+    # This session's shell, not every session's. Get-Process answers for the
+    # whole machine from an elevated process, so Stop-Process -Name explorer
+    # took down the desktop of anybody else signed in.
     $mySession = 0
     try { $mySession = [Diagnostics.Process]::GetCurrentProcess().SessionId } catch { }
     $shells = { @(Get-Process -Name explorer -ErrorAction SilentlyContinue |
@@ -1212,19 +1001,16 @@ Register-WDHandler 'RestartExplorer' {
         foreach ($p in $mine) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
         Start-Sleep -Milliseconds 1200
         # Windows restarts the shell itself on most machines (AutoRestartShell),
-        # so this is normally already back and nothing below runs.
+        # so this is normally already back.
         $back = & $shells
         if (-not $back.Count) {
             Start-Process explorer.exe -ErrorAction SilentlyContinue
             Start-Sleep -Milliseconds 1500
             $back = & $shells
         }
-        # ASKED, NOT ASSUMED. Start-Process with -ErrorAction SilentlyContinue
-        # throws nothing when it fails, so the success below was reported
-        # unconditionally - and on an image with the shell watchdog switched off
-        # that meant claiming "Explorer restarted" to somebody looking at an
-        # empty desktop. Of everything this toolkit can get wrong, saying a
-        # thing worked while the screen is black is the worst shape.
+        # Asked, not assumed: Start-Process with -ErrorAction SilentlyContinue
+        # throws nothing when it fails, so success was reported over an empty
+        # desktop.
         if (-not $back.Count) {
             return New-WDResult -Status Blocked -Message 'Explorer did not come back' `
                                 -Detail ('The shell was closed so this run''s changes would take effect, and it ' +
@@ -1239,36 +1025,6 @@ Register-WDHandler 'RestartExplorer' {
 }
 
 Register-WDHandler 'ClearStaleShortcuts' {
-    <#
-        Shortcuts left pointing at a program this run removed.
-
-        Uninstallers routinely leave their Start entry behind, and Edge leaves
-        one that survives every folder its own uninstaller deletes. It still
-        comes up first when somebody searches the program by name, and clicking
-        it gives a shell error rather than an explanation - so "it is still
-        there" is the reasonable conclusion.
-
-        Appended to any plan that removes something rather than ticked: it is the
-        last part of a removal, not a choice about one.
-
-        WHAT IT WILL NOT TOUCH, because a wrong deletion here takes away
-        something somebody put on their own desktop:
-
-          - an EMPTY target. Store apps activate through an AppUserModelID and
-            have no target at all, so treating empty as stale would clear every
-            Store app out of Start.
-          - a target that is not a ROOTED path. Bare command names are resolved
-            through PATH by the shell.
-          - .url files: "does this exist on disk" is not a question about a URL.
-          - anything whose target still exists.
-          - ANYTHING OUTSIDE A PROGRAM DIRECTORY, which is the one that matters.
-            A missing target does not mean uninstalled, it means not there right
-            now: a game on an external drive, a tool in a synced folder. The
-            first cut swept on "target is gone" alone and its first real find was
-            an emulator shortcut pointing into OneDrive.
-
-        Recycled and journalled, so the rollback puts every one back.
-    #>
     param($Action, $Context)
 
     $dirs = @(
@@ -1278,8 +1034,8 @@ Register-WDHandler 'ClearStaleShortcuts' {
         [Environment]::GetFolderPath('Desktop'),
         (Join-Path $env:PUBLIC 'Desktop')
     )
-    # Every account's own Start menu and desktop, not only the one running this.
-    # A removal is machine-wide and a shortcut left in another profile is the
+    # Every account's Start menu and desktop, not only the one running this: a
+    # removal is machine-wide, and a shortcut left in another profile is the
     # same broken entry for whoever signs in next.
     try {
         foreach ($u in (Get-ChildItem -LiteralPath (Join-Path $env:SystemDrive 'Users') -Directory -ErrorAction Stop)) {
@@ -1289,9 +1045,9 @@ Register-WDHandler 'ClearStaleShortcuts' {
     } catch { }
     $dirs = @($dirs | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Sort-Object -Unique)
 
-    # Where programs live. A dead target under one of these is a program that
-    # has been removed; a dead target anywhere else is a file that happens not
-    # to be there today, and is none of this sweep's business.
+    # Where programs live. A dead target under one of these is a removed
+    # program; a dead target anywhere else is a file that happens not to be
+    # there today.
     $programRoots = @(
         $env:ProgramFiles,
         ${env:ProgramFiles(x86)},
@@ -1380,11 +1136,6 @@ Register-WDHandler 'ClearStaleShortcuts' {
 }
 
 Register-WDHandler 'VerifyShellHealth' {
-    <#
-        Guard for the CoreAI removal. If stripping the shell's AI package took
-        Explorer or the Settings app with it, say so loudly and point at the
-        rollback rather than letting the user find out after a reboot.
-    #>
     param($Action, $Context)
     if ($Context.Preview) { return New-WDResult -Status Skipped -Message 'Health check runs during apply only' }
 
@@ -1409,10 +1160,8 @@ Register-WDHandler 'VerifyShellHealth' {
     New-WDResult -Status AlreadySet -Message 'Shell health check passed'
 }
 
-# ================================================== vendor profile report ===
-
-# Tools that keep hardware working. Every OEM removal list excludes these, and
-# this table is the single place that decides what "load-bearing" means.
+# Tools that keep hardware working. The single place that decides what
+# "load-bearing" means.
 $script:PreservedVendorTools = @{
     hp      = @('HP Power Manager','HP Hotkey','HP Firmware','HP Thermal','HP System Event Utility','HP Programmable Key')
     dell    = @('Dell Power Manager','Dell Command | Update','Dell Optimizer','Dell Thermal')
@@ -1433,18 +1182,11 @@ Register-WDHandler 'ReportVendorProfile' {
         $detail += '. No vendor-specific profile matched, so only the cross-vendor rules will run.'
     }
     # Reads the SMBIOS strings and says what it found. Its own handler note ends
-    # "Changes nothing", and it reported Changed anyway - so a preview listed it
-    # under "will change" beside a hundred and fifty things that genuinely will.
+    # "Changes nothing", and it reported Changed anyway.
     New-WDResult -Status AlreadySet -Message $msg -Detail $detail
 }
 
 Register-WDHandler 'ReportPreservedVendorTools' {
-    <#
-        Reports rather than removes. A debloat tool that silently strips the
-        utility controlling a laptop's fan curve or battery charge limit has
-        broken the machine, so those are excluded by construction and named
-        here instead.
-    #>
     param($Action, $Context)
 
     $vendor = $Context.Profile.Vendor
@@ -1461,19 +1203,17 @@ Register-WDHandler 'ReportPreservedVendorTools' {
     }
 
     if (-not $present.Count) { return New-WDResult -Status NotPresent -Message 'None of the preserved tools are installed' }
-    # What was deliberately NOT touched. Reporting that as a change is the
+    # What was deliberately not touched. Reporting that as a change is the
     # opposite of what the row says.
     New-WDResult -Status AlreadySet -Message "$($present.Count) hardware tool(s) preserved" `
                  -Detail ((($present | Sort-Object -Unique) -join ', ') + ' - kept because they control power, thermals or firmware. Remove manually if you do not want them.')
 }
 
-# ========================================================== power tweaks ====
-
 Register-WDHandler 'SetPowerPlan' {
     param($Action, $Context)
 
     # Laptops keep Balanced: High Performance pins clocks and destroys battery
-    # life for no real-world gain on portable hardware.
+    # life for no real gain on portable hardware.
     $guid = if ($Context.Profile.IsPortable) {
         '381b4222-f694-41f0-9685-ff5bb260df2e'   # Balanced
     } else {
@@ -1512,34 +1252,21 @@ Register-WDHandler 'DisableReservedStorage' {
         Set-WindowsReservedStorageState -State Disabled -ErrorAction Stop
         New-WDResult -Status Changed -Message 'Reserved storage disabled' -Detail 'Feature updates may now need free space staged manually.'
     } catch {
-        # Windows refuses while an update is pending; that is expected, not a failure.
+        # Windows refuses while an update is pending; that is expected, not a
+        # failure.
         New-WDResult -Status Blocked -Message 'Reserved storage could not be changed' `
                      -Detail "$($_.Exception.Message) - usually means a Windows update is pending. Retry after a reboot."
     }
 }
 
-# --------------------------------------------------------- PowerToys ------
-#
-# Config is per-user JSON under %LOCALAPPDATA%\Microsoft\PowerToys: one
-# settings.json with an "enabled" map keyed by module display name, plus one per
-# module for its own properties. PowerToys reads them at start and writes
-# defaults for anything absent, which is what makes writing them BEFORE it is
-# installed work at all.
-#
-# Two rules. MERGE, NEVER REPLACE - a module absent from "enabled" falls back to
-# its own default, so naming only what was asked for leaves the rest alone and
-# somebody's existing config survives. And REFUSE WHAT IT CANNOT PARSE: these
-# files are undocumented and PowerToys is free to migrate them, so an unrecognized
-# shape is reported rather than overwritten.
+# Per-user JSON under %LOCALAPPDATA%\Microsoft\PowerToys: one settings.json with
+# an enabled map keyed by module display name, and one per module holding its
+# own properties. PowerToys writes defaults for anything absent, which is what
+# makes writing these before it is installed work.
 
 function Get-WDPowerToysRoot { Join-Path $env:LOCALAPPDATA 'Microsoft\PowerToys' }
 
 function Set-WDPowerToysJson {
-    <#
-        Reads a PowerToys JSON file, hands it to $Edit, writes it back, and
-        journals enough to undo it. Backs an existing file up first; for one
-        this run creates, the undo is to delete it again.
-    #>
     param([string]$Path, [scriptblock]$Edit, $Context, [pscustomobject]$Seed)
 
     $dir = Split-Path -Parent $Path
@@ -1563,19 +1290,8 @@ function Set-WDPowerToysJson {
                   -Undo @{ method = 'file-restore'; file = $bak; target = $Path }
 }
 
-# ----------------------------------------------------------- storage ------
-#
-# Offered on every machine, not only a full one: a section that only appears once
-# the drive is already full cannot be what stops it filling up.
-#
-# ONE PATH TABLE behind all three - the row's number, the bar's segment, and the
-# bytes the run deletes all come from Get-WDStorageSources. Two path lists that
-# drift would have the picture promising what the run does not deliver.
-
-# Compiled by Test-WDDiskNative on first use, not at import. It is a csc
-# invocation - about 400 ms - and on a normal launch the first thing to want it
-# is the background storage measurement, which has a runspace of its own and a
-# whole drive walk ahead of it. See the native note at the top of WD.Core.psm1.
+# Compiled by Test-WDDiskNative on first use, not at import: it is a csc
+# invocation, and the first thing to want it has a runspace of its own.
 $script:WDDiskSource = @'
 using System;
 using System.Collections.Generic;
@@ -1655,15 +1371,6 @@ public static class WDDisk {
 $script:WDDiskTried = $false
 
 function Test-WDDiskNative {
-    <#
-        Is the fast walker available - compiling it if this is the first ask.
-
-        Tried once per runspace and then remembered either way, so a machine
-        that cannot compile falls back to Get-ChildItem rather than paying for
-        the attempt on every folder. Two runspaces racing is harmless: the
-        loser gets "type already exists", which the catch swallows, and the
-        check below then finds the winner's type.
-    #>
     if ('WDDisk' -as [type]) { return $true }
     if ($script:WDDiskTried)  { return $false }
     $script:WDDiskTried = $true
@@ -1672,7 +1379,6 @@ function Test-WDDiskNative {
 }
 
 function Measure-WDFolder {
-    <#  Bytes under a path, best effort. Locked files are skipped, not fatal.  #>
     param([string]$Path)
     if (-not $Path) { return 0L }
     if (-not (Test-Path -LiteralPath $Path -ErrorAction SilentlyContinue)) { return 0L }
@@ -1684,14 +1390,8 @@ function Measure-WDFolder {
 }
 
 function Measure-WDFolderDetail {
-    <#
-        The same walk, with what it could not read reported rather than folded
-        into the total. "0 bytes" and "0 bytes that I was allowed to see" are
-        different answers, and the second one must not put "nothing to free" on
-        a row - Windows.old is owned by TrustedInstaller and the clean-up seizes
-        it before deleting, so a folder this cannot read is still a folder the
-        run can empty.
-    #>
+    # What could not be read is reported rather than folded into the total: "0
+    # bytes" and "0 bytes I was allowed to see" are different answers.
     param([string]$Path, [switch]$Cancellable)
     $out = [pscustomobject]@{ Bytes = 0L; Files = 0L; Denied = 0; Present = $false; Stopped = $false }
     if (-not $Path) { return $out }
@@ -1719,31 +1419,16 @@ function Format-WDBytes {
 }
 
 function Stop-WDDiskWalk {
-    <#
-        Abandons any walk in flight. Called when the window closes.
-
-        Asks whether the type exists rather than going through
-        Test-WDDiskNative: if nothing has compiled it then no walk has ever
-        started, and compiling it here would be spending 400 ms on a closing
-        window to set a flag with nobody to read it.
-    #>
+    # Opt-in per call, so one closed window cannot quietly turn every later
+    # measurement in the process into a zero.
     param([switch]$Reset)
     if ('WDDisk' -as [type]) { [WDDisk]::Stop = (-not $Reset) }
 }
 
 function Get-WDStorageSources {
-    <#
-        The one table. Each clean-up names the folders it acts on and, for each
-        of them, which descriptive bucket of the drive those bytes were already
-        counted in - the temp folders live inside Windows and inside Users, so
-        drawing them as their own segment without taking them back out of those
-        two would draw the same gigabytes twice.
-
-        'none' means there is no way to size it up front. That is the component
-        store: only DISM knows what is reclaimable there, the analysis takes
-        minutes, and it answers in whatever language Windows is installed in.
-        An honest "not known until it runs" beats parsing that.
-    #>
+    # One table: each clean-up names the folders it acts on and which
+    # descriptive bucket those bytes were already counted in. Two lists would
+    # have the picture promising what the run does not deliver.
     $sys = [string]$env:SystemDrive
     if (-not $sys) { $sys = 'C:' }
     $win = [string]$env:SystemRoot
@@ -1796,14 +1481,8 @@ function Get-WDStorageSources {
 }
 
 function Measure-WDRecycleBin {
-    <#
-        -Root of a drive asks about that drive; -All asks about every one. The
-        two answers are both wanted and they are not interchangeable: the bar
-        draws one drive, and the clean-up empties all of them.
-
-        Returns $null when the shell refuses to answer, which reads as "no
-        size" rather than as zero.
-    #>
+    # Both answers are wanted and they are not interchangeable: the bar draws
+    # one drive, and Clear-WDRecycleBin empties every one.
     param([string]$Root, [switch]$All)
     if (-not (Test-WDDiskNative)) { return $null }
     $arg = $null
@@ -1822,13 +1501,6 @@ function Measure-WDRecycleBin {
 }
 
 function Measure-WDReclaimable {
-    <#
-        Every clean-up, sized, plus the per-bucket total that has to be taken
-        back out of the descriptive buckets so nothing is drawn twice.
-
-        -Cancellable is for the background scan alone. In the foreground a
-        closed window from ten minutes ago must not be able to answer this.
-    #>
     param([switch]$Cancellable)
     $sources = Get-WDStorageSources
     $items   = @{}
@@ -1864,16 +1536,6 @@ function Measure-WDReclaimable {
 }
 
 function Measure-WDDiskBuckets {
-    <#
-        The slow half: three walks of the drive, which is why this runs on a
-        background runspace and its answer is cached between sessions.
-
-        Sum-of-lengths, which is not the same as space on disk. WinSxS is a
-        hardlink farm, so C:\Windows adds up to considerably more than it
-        occupies, and a folder an administrator is not allowed to read adds up
-        to nothing. New-WDStorageSnapshot is where that is reconciled; here the
-        job is only to report what was counted and what was refused.
-    #>
     param([switch]$Cancellable)
     $sys = [string]$env:SystemDrive
     if (-not $sys) { $sys = 'C:' }
@@ -1903,8 +1565,8 @@ function Measure-WDDiskBuckets {
     }
 
     # The three files people are always surprised by. They sit at the root of
-    # the drive, so they land in Other, and naming them is the difference
-    # between Other meaning something and Other meaning nothing.
+    # the drive, so naming them is the difference between Other meaning
+    # something and Other meaning nothing.
     $reserve = [ordered]@{}
     foreach ($n in @('pagefile.sys', 'swapfile.sys', 'hiberfil.sys')) {
         $p = Join-Path ($sys + '\') $n
@@ -1918,23 +1580,6 @@ function Measure-WDDiskBuckets {
 }
 
 function New-WDStorageSnapshot {
-    <#
-        Turns measurements into the segments the bar draws. Pure arithmetic and
-        no I/O, which is what makes it testable without a disk to measure.
-
-        Two rules do the work.
-
-        The reclaimable sizes are never adjusted. They are what the run
-        promises to free, so a scaled version of them would be a different
-        promise. Only the descriptive buckets absorb the difference between
-        what was counted and what the volume says is in use - they are the part
-        of the picture that is allowed to be "about".
-
-        Windows counts higher than it occupies because of hardlinks, and apps
-        counts lower because WindowsApps refuses to be read. So the buckets are
-        scaled down when they overflow the room available and Other takes the
-        remainder when they do not. Either way the bar adds up to the drive.
-    #>
     param(
         [string]$Drive,
         [int64]$TotalBytes,
@@ -1956,8 +1601,7 @@ function New-WDStorageSnapshot {
     $reclaim = 0L
     foreach ($v in $Items.Values) { $reclaim += [int64]$v }
     # Cannot free more than is in use. Only reachable if a measurement went
-    # stale between the walk and the capacity read, but a negative remainder
-    # would render as a bar running backwards.
+    # stale, but a negative remainder renders as a bar running backwards.
     if ($reclaim -gt $used) { $reclaim = $used }
     $room = $used - $reclaim
 
@@ -1995,8 +1639,9 @@ function New-WDStorageSnapshot {
         }
         $segments.Add([pscustomobject]@{ Key = 'other'; Label = $labels['other']; Bytes = [int64]$other })
     } else {
-        # Nothing walked yet. One block for everything in use rather than four
-        # empty ones - a segment drawn at zero reads as "you have no files".
+        # Nothing walked yet: one block for everything in use rather than four
+        # empty ones, because a segment drawn at zero reads as "you have no
+        # files".
         $segments.Add([pscustomobject]@{ Key = 'unknown'; Label = 'In use'; Bytes = [int64]$room })
     }
 
@@ -2012,9 +1657,9 @@ function New-WDStorageSnapshot {
         Segments    = $segments.ToArray()
         Reserve     = $Reserve
         Denied      = $Denied
-        # Two different kinds of "finished", and the interface needs both. Priced
-        # means the clean-up sizes are in, so a row may say "nothing to free";
-        # Complete means the drive has been walked, so the bar may show a split.
+        # Two kinds of finished, and the interface needs both. Priced means a
+        # row may say "nothing to free"; Complete means the bar may show a
+        # split.
         Priced      = [bool]$Priced
         Complete    = $complete
         Scaled      = $scaled
@@ -2022,11 +1667,8 @@ function New-WDStorageSnapshot {
 }
 
 function Get-WDStorageReport {
-    <#
-        The whole picture in one call. -Quick skips the three drive walks and
-        answers with the clean-up sizes alone, which is what the interface shows
-        while the slow half is still running.
-    #>
+    # -Quick skips the three drive walks and answers with the clean-up sizes
+    # alone.
     param([switch]$Quick, $Buckets)
 
     $sys = [string]$env:SystemDrive
@@ -2053,7 +1695,6 @@ function Get-WDStorageReport {
 }
 
 function Get-WDDiskCapacity {
-    <#  Total and free on the system drive. One CIM call, no walking.  #>
     $sys = [string]$env:SystemDrive
     if (-not $sys) { $sys = 'C:' }
     $total = 0L; $free = 0L
@@ -2065,16 +1706,11 @@ function Get-WDDiskCapacity {
 }
 
 function Clear-WDFolderContents {
-    <#
-        Empties a folder without removing the folder itself - Windows recreates
-        several of these and expects them to exist. Whatever is in use is left
-        alone: a cache file open right now is not worth failing a run over.
-    #>
     param([string[]]$Paths, $Context, [string]$What)
 
     # -ErrorAction on Test-Path, because some of these are owned by a service
     # account and answering "does it exist" throws Access denied rather than
-    # returning false. With the module's Stop preference that ends the handler.
+    # returning false.
     $live = @($Paths | Where-Object { $_ -and (Test-Path -LiteralPath $_ -ErrorAction SilentlyContinue) })
     if (-not $live.Count) { return New-WDResult -Status NotPresent -Message "Nothing to clear in $What" }
 
@@ -2104,7 +1740,6 @@ function Clear-WDFolderContents {
 }
 
 function Get-WDStoragePaths {
-    <#  The folders one clean-up acts on, in the order the table lists them.  #>
     param([Parameter(Mandatory)][string]$Id)
     $src = Get-WDStorageSources
     if (-not $src.Contains($Id)) { return @() }
@@ -2118,12 +1753,6 @@ Register-WDHandler 'ClearTempFiles' {
 }
 
 Register-WDHandler 'ClearUpdateCache' {
-    <#
-        The downloaded installers Windows Update keeps after installing them.
-        Windows re-downloads anything it still needs, so this costs bandwidth
-        rather than function - but it also means a partially downloaded update
-        starts again, so the service is stopped first if it is running.
-    #>
     param($Action, $Context)
 
     $dl = @(Get-WDStoragePaths -Id 'disk-update-cache')[0]
@@ -2154,12 +1783,6 @@ Register-WDHandler 'ClearUpdateCache' {
 }
 
 Register-WDHandler 'ClearThumbnailCache' {
-    <#
-        Explorer keeps a database per thumbnail size and per icon size, and
-        never shrinks them. Explorer holds several of them open while it is
-        running, so a partial result here is the normal one rather than a
-        failure - Clear-WDFolderContents already says so.
-    #>
     param($Action, $Context)
     Clear-WDFolderContents -Context $Context -What 'the thumbnail and icon cache' `
                            -Paths (Get-WDStoragePaths -Id 'disk-thumbnails')
@@ -2172,11 +1795,6 @@ Register-WDHandler 'ClearDeliveryOptimization' {
 }
 
 Register-WDHandler 'RemoveWindowsOld' {
-    <#
-        The previous installation kept after an in-place upgrade. Windows
-        deletes it on its own after ten days; until then it is the single
-        largest thing on a drive that has just been upgraded.
-    #>
     param($Action, $Context)
 
     $old = @(Get-WDStoragePaths -Id 'disk-windows-old')[0]
@@ -2207,16 +1825,8 @@ Register-WDHandler 'RemoveWindowsOld' {
 }
 
 Register-WDHandler 'EmptyRecycleBin' {
-    <#
-        Clear-WDRecycleBin empties every drive's bin, so this is sized the same
-        way. Walking C:\$Recycle.Bin - which is what this used to do - both
-        under-reported the total and asked a different question from the one the
-        deletion answers. The shell keeps a running total, so asking costs
-        nothing either way.
-
-        The bar upstairs is about the system drive alone and says so, which is
-        why the two numbers are reported separately when they differ.
-    #>
+    # Clear-WDRecycleBin empties every drive's bin, so this is sized the same
+    # way rather than by walking one.
     param($Action, $Context)
 
     $all = Measure-WDRecycleBin -All
@@ -2243,14 +1853,6 @@ Register-WDHandler 'EmptyRecycleBin' {
 }
 
 function Test-WDPowerToysModuleSet {
-    <#
-        Is this module already in the state the action would put it in?
-
-        Reads the same two files the handler writes. A file that is missing or
-        unreadable answers "no": the worst case is offering something that turns
-        out to be a no-op, which the run reports honestly, and that is far better
-        than hiding an option because a JSON parse failed.
-    #>
     param($Action)
 
     $module = [string](Get-Prop $Action 'module' '')
@@ -2290,25 +1892,14 @@ function Test-WDPowerToysModuleSet {
     $true
 }
 
-# Handler name -> "is this already the case?". An item whose every action answers
-# yes is already done, and the GUI says so rather than offering it again.
-#
-# NO TEST MEANS NO OPINION, which must read as not-satisfied - an empty set of
-# tests vacuously passing would quietly disable every item in the manifest.
-#
-# Deliberately absent: handlers whose work is a JOB rather than a STATE. Clearing
-# a cache, emptying the bin, sweeping leftovers, writing a document - all worth
-# doing again tomorrow, so "already done" is not a thing to say about them. Also
-# SetPowerScheme, which would need a powercfg spawn per action.
-#
-# The rule for anything added: answer from the registry, the file system, or a
-# list the scan already has, in milliseconds. This runs for every action of every
-# item while the window is built.
+# Handler name -> "is this already the case?". An item whose every action
+# answers yes is already done. Only handlers that can answer cheaply and locally
+# belong here: it runs for every action of every item while the window builds.
 $script:StateTests = @{
     'SetPowerToysModule' = ${function:Test-WDPowerToysModuleSet}
 
-    # Both scrubs are "is any of this vendor's software still installed". The
-    # handler's own first line asks the same question of the same list.
+    # Both scrubs ask "is any of this vendor's software still installed", which
+    # is the handler's own first line.
     'McAfeeScrub' = {
         param($Action)
         -not @(Get-WDInstalledPrograms | Where-Object {
@@ -2319,10 +1910,8 @@ $script:StateTests = @{
         -not @(Get-WDInstalledPrograms | Where-Object { $_.DisplayName -match 'Norton|Symantec' }).Count
     }
 
-    # Edge, asked exactly as RemoveEdge asks it: the application directory in
-    # either Program Files, and the Store package. Reported as done only when
-    # the browser is gone AND the reinstall vectors are shut, because the
-    # handler does both and half of it is not done.
+    # Asked exactly as RemoveEdge asks it. Done only when the browser is gone
+    # and the reinstall vectors are shut, because half that job is not the job.
     'RemoveEdge' = {
         param($Action)
         foreach ($d in @((Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application'),
@@ -2340,9 +1929,8 @@ $script:StateTests = @{
         $true
     }
 
-    # The web associations. Done when http and https point at something that is
-    # not Edge - which is the whole of what this option is for, and is readable
-    # without touching anything Windows protects.
+    # Done when http and https point at something that is not Edge, which is
+    # readable without touching anything Windows protects.
     'SetDefaultBrowser' = {
         param($Action)
         foreach ($p in @('http', 'https')) {
@@ -2370,8 +1958,8 @@ $script:StateTests = @{
         -not (Test-Path -LiteralPath (Join-Path $env:SystemDrive 'Windows.old') -ErrorAction SilentlyContinue)
     }
 
-    # hiberfil.sys is gone and the master switch is off. Asked of the registry
-    # rather than by spawning powercfg, which this cannot afford to do.
+    # Asked of the registry rather than by spawning powercfg, which this cannot
+    # afford.
     'DisableHibernation' = {
         param($Action)
         $v = $null
@@ -2413,8 +2001,7 @@ $script:StateTests = @{
         $seen
     }
 
-    # The overlay value AND the icon it points at, which is the same pair the
-    # handler tests before reporting AlreadySet. A value pointing at a file
+    # The overlay value and the icon it points at: a value pointing at a file
     # somebody has since deleted is an overlay pointing at nothing.
     'SetShortcutArrow' = {
         param($Action)
@@ -2428,9 +2015,9 @@ $script:StateTests = @{
         $v -eq "$ico,0"
     }
 
-    # Either layer counts as done: the native setting where the build has it,
-    # or the PowerToys chord remap where it does not. The item's whole point is
-    # that the key behaves as Right Ctrl, not which of the two got it there.
+    # Either layer counts as done - the native setting, or the PowerToys chord
+    # remap. The point is that the key behaves as Right Ctrl, not which got it
+    # there.
     'CopilotKeyToRightCtrl' = {
         param($Action)
         foreach ($c in @(
@@ -2448,44 +2035,17 @@ $script:StateTests = @{
 }
 
 function Test-WDActionSatisfied {
-    <#
-        Is there anything left for this one action to do on this machine?
-
-        $true only when this can answer AND the answer is yes. No test means no
-        opinion, which must read as "not satisfied" - otherwise an item silently
-        disables itself because nobody wrote a check for it.
-
-        Three kinds of answer:
-
-          by VALUE    registry, service - does the setting already hold what the
-                      action would write.
-          by ABSENCE  appx, appxPolicy, uninstall, task, file, shortcut,
-                      registryKey - the action removes something and there is
-                      nothing to remove. Needs the startup scan's inventory;
-                      without one it answers no, the careful direction.
-          by HANDLER  a script action, through $script:StateTests.
-
-        The absence arm is why "Copilot app and taskbar entry", "Cortana
-        leftovers", and every other package-plus-policy item never reported
-        itself done: the registry actions all answered yes, the appx action
-        answered no because nothing answered it, and one no is enough.
-        Get-WDItemPresence cannot cover for it - it has no opinion the moment an
-        item carries a registry action, which is exactly these.
-    #>
     param($Action, $Inventory)
 
     switch ([string](Get-Prop $Action 'type' '')) {
         'registry' { try { return [bool](Test-WDRegistryActionSatisfied -Action $Action) } catch { return $false } }
-        # Services are the second-commonest thing a run turns off, and unlike
-        # tasks and Windows features they can be asked about for nothing:
-        # ServiceController already carries StartType. DISM costs seconds, which
-        # is why features and capabilities are not here - a probe that runs for
-        # every action of every item while the window is being built has to be
-        # free or it does not belong.
+        # ServiceController already carries StartType, so a service costs
+        # nothing to ask about. DISM costs seconds, which is why features and
+        # capabilities are not asked.
         'service'  { try { return [bool](Test-WDServiceActionSatisfied -Action $Action) } catch { return $false } }
         'registryKey' {
-            # Deleting a key that is not there is nothing to do. Cheap enough to
-            # answer without an inventory.
+            # Deleting a key that is not there is nothing to do, and cheap
+            # enough to answer without an inventory.
             $paths = @(Get-Prop $Action 'paths' @())
             if (-not $paths.Count) { return $false }
             foreach ($p in $paths) {
@@ -2539,8 +2099,7 @@ function Test-WDActionSatisfied {
             }
             # A task the run disables rather than deletes is still registered
             # afterwards, so "gone" is the wrong test and Enabled is the right
-            # one. The inventory carries both because the walk that builds it
-            # reads them together.
+            # one.
             'task' {
                 $pats = @(Get-Prop $Action 'tasks' @())
                 if (-not $pats.Count) { return $false }
@@ -2564,33 +2123,10 @@ function Test-WDActionSatisfied {
 }
 
 function Get-WDStateTestNames {
-    <#
-        Which handlers can say whether they are already done. Exposed so the
-        self test can check every one of them is a handler that exists, and
-        report how many of the manifest's handlers deliberately answer nothing.
-
-        Unrolled, not ",@(...)". Every caller wraps this in @() to count it, and
-        the comma operator makes that one element holding an array - the trap
-        this file has already paid for twice.
-    #>
     @($script:StateTests.Keys)
 }
 
 function Test-WDItemSatisfied {
-    <#
-        Is there anything left for this whole item to do?
-
-        Every action has to answer yes, and an action whose guards fail on this
-        machine is not asked - it will never run here, so it can neither be
-        outstanding nor make the item look outstanding. Ten items in the
-        manifest carry a guarded action and every one of them was permanently
-        unsatisfiable because of it: "Lock screen Spotlight ads" has an
-        Enterprise-only pair of policy writes, so on Home and Pro the item asked
-        about two values that would never be written and answered no, for ever.
-
-        An item with no actions answers $false. There is nothing to be done and
-        nothing to have been done, and "already applied" is a claim.
-    #>
     param($Item, $Inventory, $Profile)
 
     $acts = @(Get-Prop $Item 'actions' @())
@@ -2606,12 +2142,6 @@ function Test-WDItemSatisfied {
 }
 
 Register-WDHandler 'SetPowerToysModule' {
-    <#
-        Switches a PowerToys module on or off, and optionally sets one of its
-        hotkeys, writing the config directly. Works whether PowerToys is
-        installed yet or not - which is the point: the choice is made in this
-        GUI, and the install item that precedes it in the run does the rest.
-    #>
     param($Action, $Context)
 
     $module = [string](Get-Prop $Action 'module' '')
@@ -2690,20 +2220,9 @@ Register-WDHandler 'SetPowerToysModule' {
 }
 
 Register-WDHandler 'SetNoSoundScheme' {
-    <#
-        "No Sounds" is not one value. The scheme name lives at the default of
-        AppEvents\Schemes, and every event under AppEvents\Schemes\Apps carries
-        its own .Current pointing at a .wav - and Windows plays what .Current
-        says, not what the scheme name says. Writing only the name changes the
-        label in the Sound control panel and nothing else.
-
-        So it walks them, which is fifty-odd values per account, and that is why
-        it is a handler rather than a manifest action: fifty journal entries per
-        account for one tick would drown the report. Instead the whole AppEvents
-        branch is exported once per hive and undone as a single .reg import,
-        which also restores custom sounds exactly - a per-value undo could only
-        restore what it happened to overwrite.
-    #>
+    # "No Sounds" is not one value: the scheme name lives at the default of
+    # AppEvents\Schemes, and every event under AppEvents\Schemes\Apps carries
+    # its own.
     param($Action, $Context)
 
     $roots = @(Select-WDAccountHives -Hives (Get-WDUserHives) -Default $Context.DefaultHive `
@@ -2754,20 +2273,6 @@ Register-WDHandler 'SetNoSoundScheme' {
 }
 
 Register-WDHandler 'ClearActivityTraces' {
-    <#
-        The lists Windows keeps of what you have opened, run and searched for.
-        One item rather than a dozen, because nobody wants to decide about
-        TypedPaths separately from RunMRU, and because half of them are only
-        meaningful together - clearing RecentDocs while leaving the jump lists
-        alone clears the menu and not the thing behind it.
-
-        Two kinds of target with two different reversibility stories, and the
-        risk note says so rather than the code pretending they are the same:
-        registry keys are exported before deletion and the rollback script
-        imports them back; the jump-list files are per-application binary caches
-        with no backup, because restoring one to a different Windows build is
-        not something to promise.
-    #>
     param($Action, $Context)
 
     $roots = @(Select-WDAccountHives -Hives (Get-WDUserHives) -Default $Context.DefaultHive `
@@ -2776,7 +2281,8 @@ Register-WDHandler 'ClearActivityTraces' {
         return New-WDResult -Status Skipped -Message 'No accounts are selected for per-user settings'
     }
 
-    # Whole keys, deleted and recreated empty where Windows expects them to exist.
+    # Whole keys, deleted and recreated empty where Windows expects them to
+    # exist.
     $keys = @(
         'SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\RunMRU'
         'SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\TypedPaths'
@@ -2823,10 +2329,9 @@ Register-WDHandler 'ClearActivityTraces' {
         }
     }
 
-    # Jump lists: the recent and pinned lists behind every taskbar and Start
-    # icon. Per-application binaries with no meaningful per-file undo, so they
-    # go to the Recycle Bin when the run is reversible and are hard-deleted when
-    # the operator has asked for a permanent run.
+    # Jump lists: per-application binaries with no meaningful per-file undo, so
+    # they go to the Recycle Bin when the run is reversible and are hard-deleted
+    # when it is not.
     $files = 0
     $jump = @(
         (Join-Path ([string]$env:APPDATA) 'Microsoft\Windows\Recent\AutomaticDestinations')
@@ -2854,20 +2359,9 @@ Register-WDHandler 'ClearActivityTraces' {
                  -Detail 'Explorer rebuilds these as you work. Sign out and back in to see the taskbar jump lists empty.'
 }
 
-# ================================================== the shortcut arrow ======
-#
-# Explorer draws the overlay from whatever `Shell Icons\29` points at, so the fix
-# is to point it at a blank one. Every published version of this names an index
-# in imageres.dll (usually 197) and none is safe to copy: measured on 25H2, 197
-# is NEARLY blank rather than blank, and the index moves between builds. So the
-# icon is WRITTEN rather than found - deterministic, and checkable by reading the
-# file back.
-#
-# Set through Invoke-WDRegistryAction, so it is backed up and journalled like any
-# manifest action; deleting that one value is the whole undo.
+# Explorer draws the overlay from whatever Shell Icons\29 points at, so the fix
+# is a transparent icon rather than a value Windows understands as "off".
 function New-WDBlankIcon {
-    <#  A 16x16 32bpp fully transparent .ico, written byte by byte. Returns the
-        path, or empty on failure.  #>
     param([Parameter(Mandatory)][string]$Path)
     try {
         $dir = Split-Path -Parent $Path
@@ -2915,8 +2409,8 @@ Register-WDHandler 'SetShortcutArrow' {
     if (-not $root) { $root = Join-Path $env:ProgramData 'WinSetupToolkit' }
     $ico = Join-Path $root 'blank-arrow.ico'
 
-    # The one value this writes, built once so the preview and the apply cannot
-    # disagree about what "already done" means.
+    # Built once, so the preview and the apply cannot disagree about what
+    # "already done" means.
     $act = [pscustomobject]@{
         type = 'registry'; scope = 'machine'
         values = @([pscustomobject]@{
@@ -2924,10 +2418,9 @@ Register-WDHandler 'SetShortcutArrow' {
             name = '29'; kind = 'String'; value = "$ico,0"
         })
     }
-    # Idempotent, and it never said so: run twice, and the second preview still
-    # promised to point the overlay at an icon it is already pointing at. The
-    # icon file has to be there as well as the value - deleting it and leaving
-    # the value behind is a shortcut overlay pointing at nothing.
+    # Idempotent, and it never said so: run twice, the second preview still
+    # promised to point the overlay at an icon it already points at. The icon
+    # file has to be there as well as the value.
     $done = (Test-Path -LiteralPath $ico) -and (Test-WDRegistryActionSatisfied -Action $act)
     if ($done) {
         return New-WDResult -Status AlreadySet -Message 'The shortcut overlay already points at the blank icon' `
@@ -2945,8 +2438,7 @@ Register-WDHandler 'SetShortcutArrow' {
     if ([string]$res.Status -notin @('Changed','Removed')) { return $res }
 
     # Explorer caches the overlay, so the value alone changes nothing until the
-    # cache is dropped. The run restarts Explorer at the end regardless, which
-    # is the other half of this.
+    # cache is dropped.
     $cleared = 0
     foreach ($p in @(Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Explorer')) {
         if (-not (Test-Path -LiteralPath $p)) { continue }
@@ -2958,16 +2450,8 @@ Register-WDHandler 'SetShortcutArrow' {
                  -Detail "Icon cache entries cleared: $cleared. Explorer restarts at the end of this run, which is when it takes effect."
 }
 
-# ================================================ update deferral periods ===
-#
 # The GUI collects the figure and it crosses on run-options.json, as the browser
-# choice does; the manifest number is the fallback for every caller with no GUI.
-# The shipped 365 and 7 are not anybody's choice - a year is simply the longest
-# Windows accepts, and a week is a guess at how long others take to find the bad
-# ones.
-#
-# Through Invoke-WDRegistryAction rather than Set-ItemProperty, so it is backed
-# up and journalled exactly as the plain registry action it replaced was.
+# choice does.
 $script:WDDeferKinds = @{
     'feature' = @{ Flag = 'DeferFeatureUpdates'; Days = 'DeferFeatureUpdatesPeriodInDays'; Max = 365; Option = 'deferFeatureDays' }
     'quality' = @{ Flag = 'DeferQualityUpdates'; Days = 'DeferQualityUpdatesPeriodInDays'; Max = 30;  Option = 'deferQualityDays' }
@@ -2987,9 +2471,9 @@ Register-WDHandler 'SetUpdateDeferral' {
     try { $root = [string]$Context.Session.Root } catch { }
     $chosen = Get-WDRunOption -Root $root -Name ([string]$spec.Option) -Default $null
     if ($null -ne $chosen) { $days = [int]$chosen }
-    # Clamped rather than trusted. The file is editable, and Windows silently
-    # ignores a period outside its own range - which looks exactly like the
-    # policy not having been written at all.
+    # Clamped rather than trusted: the file is editable, and Windows silently
+    # ignores a period outside its range, which looks exactly like the policy
+    # never being written.
     if ($days -lt 0) { $days = 0 }
     if ($days -gt [int]$spec.Max) { $days = [int]$spec.Max }
 
@@ -3012,17 +2496,6 @@ Register-WDHandler 'SetUpdateDeferral' {
     $res
 }
 
-# ================================================ common issues document ====
-#
-# The file somebody opens a fortnight later when something is wrong and does not
-# yet know this run is the answer. Shaped by that moment:
-#
-#   - lookup phrases first, deliberately generic. Nobody types "a Store app
-#     cannot find my camera"; they type "camera not working". Comprehensive beats
-#     tidy - an unsearched phrase costs a line, a missing one costs the point.
-#   - each phrase names its option AND how to undo that one option, because the
-#     next thing wanted after "this is the cause" is "make it stop".
-#   - searched, never read top to bottom, so no narrative and no summary.
 Register-WDHandler 'WriteCommonIssues' {
     param($Action, $Context)
 
@@ -3031,12 +2504,8 @@ Register-WDHandler 'WriteCommonIssues' {
     # Its own row would be in the list and has nothing to go wrong with.
     $items = @($items | Where-Object { $_ -and [string]$_.Id -ne [string]$Context.ItemId })
 
-    # The journal, read once and grouped by item. This is where the PREVIOUS
-    # values live, and they are the difference between "set it to 0" and "set
-    # it back to 1" - which is the difference between naming a setting and
-    # telling somebody how to undo it. Best effort: no journal is a preview or
-    # a run that changed nothing, and the routes below say so honestly rather
-    # than inventing a value.
+    # The journal is where the previous values live, and they are the difference
+    # between "set it to 0" and "set it back to 1".
     $undoBy = @{}
     try {
         $jf = [string](Get-Prop $Context.Session 'JournalFile' '')
@@ -3064,28 +2533,21 @@ Register-WDHandler 'WriteCommonIssues' {
         $rows.Add([pscustomobject]@{
             Name    = [string](Get-Prop $it 'Name' $id)
             Id      = $id
-            # Authored seeds first, then every other way each one gets typed.
-            # Somebody searching "cant access account info" has to land here
-            # just as surely as somebody searching the phrase that was written.
+            # Authored seeds first, then every other way each gets typed:
+            # somebody searching "cant access account info" has to land here
+            # too.
             Phrases = @(Expand-WDSymptoms -Phrases $seedPhrases)
-            # Kept separately for the word index below, which must be built
-            # from these and not from the expansion. Every generated variant is
-            # made of the same words plus filler the generator supplied - so
-            # indexing them adds "application", "program" and "unable" as
-            # though somebody had chosen them, and puts "doesn" in an
-            # alphabetical list of things that might be wrong with a computer.
+            # Kept separately for the word index, which must be built from these
+            # and not from the expansion - every generated variant is made of
+            # the same words plus filler the generator supplied.
             Seeds   = $seedPhrases
             Routes  = @(Get-WDItemRevertRoutes -Item $it -JournalEntries $mine)
         })
     }
 
     # Into the run directory, always, under the name the session declares. It
-    # used to ask a run option where to put it, and the operator chose a folder
-    # beside the tick box - which meant the one file written for somebody to
-    # find later could end up anywhere, and nothing else in the toolkit could
-    # find it to copy or to point at. Every apply now leaves a folder on the
-    # desktop holding this and the rollback script together, which is the same
-    # want answered once for every file rather than once for this one.
+    # used to ask a run option where to put it, which meant nothing else in the
+    # toolkit could find what it had written.
     $path = ''
     try { $path = [string]$Context.Session.IssuesFile } catch { }
     if (-not $path) {
@@ -3097,8 +2559,7 @@ Register-WDHandler 'WriteCommonIssues' {
     $dir = Split-Path -Parent $path
 
     if ($Context.Preview) {
-        # The desktop copy - see the same block in WriteRollbackScript for why
-        # the run directory is the wrong answer to give somebody here.
+        # The desktop copy - see the same block in WriteRollbackScript.
         $where = $null
         try { $where = Get-WDDesktopRunFolder -Session $Context.Session } catch { }
         if ($where -and $where.Ok) {
@@ -3132,10 +2593,7 @@ Register-WDHandler 'WriteCommonIssues' {
     & $w ''
 
     # A word index, for the reader whose problem is one word rather than a
-    # phrase. Searching "camera" without it lands on whichever option happens
-    # to be first and gives no hint that three others mention it too. Only
-    # words that span two or more options are worth a line: a word belonging to
-    # one option leads straight there on its own.
+    # phrase. Only words spanning two or more options earn a line.
     $wordMap = @{}
     $stop = New-WDStringSet @('the','and','not','for','with','from','this','that','have','has','are','was',
                               'cannot','cant','can','does','doesnt','dont','wont','isnt','will','all','any',
@@ -3148,9 +2606,8 @@ Register-WDHandler 'WriteCommonIssues' {
                               'switched','enable','allowed','nothing','ages','slower','suddenly')
     foreach ($r in $rows) {
         $mine = New-WDStringSet @()
-        # Seeds, never the expansion - see the note where Seeds is set.
-        # Apostrophes are dropped rather than split on, or "doesn't" arrives
-        # here as the two tokens "doesn" and "t".
+        # Seeds, never the expansion. Apostrophes are dropped rather than split
+        # on, or "doesn't" arrives as the two tokens "doesn" and "t".
         foreach ($p in @($r.Seeds)) {
             foreach ($tok in ([regex]::Split((([string]$p).ToLower() -replace "'", ''), '[^a-z0-9]+'))) {
                 if ($tok.Length -lt 4) { continue }
@@ -3219,24 +2676,18 @@ Register-WDHandler 'WriteCommonIssues' {
     New-WDResult -Status Changed -Message "Lookup file written for $($rows.Count) option(s)" -Detail $path
 }
 
-# The rollback script, as a ROW rather than as something that simply happens.
-# Written unconditionally it was invisible: the one artefact this application's
-# safety argument rests on had no row, no preview line, and no way to confirm it
-# was coming before Apply was pressed.
-#
-# order 9995, after the common issues document, so the journal it reads is
-# complete. Nothing to undo, and nothing to preview beyond its own existence.
+# A row rather than something that simply happens: written unconditionally it
+# was invisible, with no preview line and no way to confirm it was coming before
+# Apply.
 Register-WDHandler 'WriteRollbackScript' {
     param($Action, $Context)
 
     $path = $null
     try { $path = Join-Path $Context.Session.RunDir 'Undo-WinSetupToolkit.ps1' } catch { }
     if ($Context.Preview) {
-        # The desktop copy, not the run directory. Both exist and both are real,
-        # but the run directory is under %ProgramData% - a folder Explorer hides
-        # by default, on a path nobody will remember - and this item's own
-        # description promises "the run folder left on your desktop". A preview
-        # that names the other one is the card contradicting the option above it.
+        # The desktop copy, not the run directory: that is under %ProgramData%,
+        # which Explorer hides, and this item's own description promises the
+        # desktop.
         $where = $null
         try { $where = Get-WDDesktopRunFolder -Session $Context.Session } catch { }
         if ($where -and $where.Ok) {
@@ -3244,15 +2695,13 @@ Register-WDHandler 'WriteRollbackScript' {
                                 -Detail (Join-Path ([string]$where.Path) 'Undo-WinSetupToolkit.ps1')
         }
         # Said, rather than quietly falling back to a path that contradicts the
-        # description. Somebody reading "your desktop" and getting ProgramData
-        # deserves to be told which of the two happened and why.
+        # description.
         return New-WDResult -Status Changed -Message 'Would write the rollback script, but not to the desktop' `
                             -Detail "$(if ($where) { [string]$where.Why } else { 'The desktop folder could not be resolved.' }) It would go to $path"
     }
     try {
-        # The plan, so the window can group by option name and category rather
-        # than by raw id. Nobody can make a decision about a row labelled
-        # "perm-account-info".
+        # The plan, so the window can group by option name and category. Nobody
+        # can decide about a row labelled "perm-account-info".
         $null = Export-WDUndoScript -Items (Get-Prop $Context 'Plan' $null)
     } catch {
         return New-WDResult -Status Failed -Message 'Could not write the rollback script' -Detail $_.Exception.Message

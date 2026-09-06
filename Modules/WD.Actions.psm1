@@ -1,47 +1,14 @@
-﻿<#
-    WD.Actions - one executor per action type.
-
-    Contract every executor honours:
-      * Never throw. Return a WD.Result instead.
-      * Preview mode performs every lookup but no mutation, so the preview
-        report is accurate rather than a guess.
-
-    Status vocabulary, which is deliberately strict:
-      NotPresent  the target was not found. Presumed absent - though in
-                  principle the search could have missed it.
-      Skipped     found or not, WE chose not to attempt it: a guard excluded
-                  it, a precondition was unmet, or it needs an edition this
-                  machine is not running.
-      Blocked     the target WAS found and something outside us refused the
-                  change. Needing elevation, TrustedInstaller ownership and
-                  NonRemovable in-box packages all land here, whether or not
-                  the operator can do anything about it.
-      Failed      attempted, and it errored.
-#>
-
-# Deliberately no StrictMode here: manifest objects come from JSON with many
-# optional fields, and Get-Prop - in WD.Core - is the disciplined way to read
-# them. It lived here until every module turned out to call it, WD.Core
-# included, which made the foundation depend on the executors.
-
-function Test-WDElevationError {
-    <#
-        Distinguishes "Windows refused us" from "this genuinely broke". Running
-        unelevated, or against a TrustedInstaller-owned object, is a Blocked
-        outcome - reporting it as Failed would drown the real problems.
-    #>
+﻿function Test-WDElevationError {
     param([string]$Message)
     if (-not $Message) { return $false }
-    # 'unauthorized operation' is the one that kept being missed. The registry
-    # provider raises UnauthorizedAccessException with the message "Attempted to
-    # perform an unauthorized operation." - which does not contain the type name
-    # this used to look for, so an ACL refusal on an elevated run was reported as
-    # Failed. Failed means the toolkit broke; this means Windows said no.
+    # 'unauthorized operation' is the one that kept being missed: the registry
+    # provider raises UnauthorizedAccessException with a message that does not
+    # contain the type name.
     $Message -match 'requires elevation|Access is denied|0x800702E4|0x80070005|privilege is not held|UnauthorizedAccess|unauthorized operation|is not allowed'
 }
 
 function Invoke-WDProcess {
-    <#  Start-Process with a hard timeout, so a hung uninstaller cannot wedge the run.  #>
+    # A hard timeout, so a hung uninstaller cannot wedge the run.
     param(
         [Parameter(Mandatory)][string]$FilePath,
         [string[]]$ArgumentList = @(),
@@ -76,23 +43,16 @@ function Invoke-WDProcess {
     }
 }
 
-# ---------------------------------------------------------------- appx -----
-
 $script:ProvisionedWarned = $false
 
-# Enumerating provisioned packages is a DISM call, and it was being made once
-# per wildcard pattern - about 180 times in a full run, each one several hundred
-# milliseconds of servicing-stack work, all returning the same list. It is now
-# read once and invalidated whenever something is actually deprovisioned, which
-# is the only thing that can change it. An explicit invalidation rather than a
-# clock: staleness here should be a decision, not a timer that happens to expire
-# in the middle of a run.
+# Enumerating provisioned packages is a DISM call, and it was made once per
+# wildcard pattern - about 180 times a run, all returning the same list.
 $script:ProvisionedCache = $null
 
 function Get-WDProvisionedPackages {
     if ($null -eq $script:ProvisionedCache) {
         # Deliberately not caught: the caller distinguishes "not elevated" from
-        # "none present" and would lose that if this swallowed the error.
+        # "none present" and would lose that.
         $script:ProvisionedCache = @(Get-AppxProvisionedPackage -Online -ErrorAction Stop)
     }
     $script:ProvisionedCache
@@ -100,8 +60,8 @@ function Get-WDProvisionedPackages {
 
 function Clear-WDProvisionedCache { $script:ProvisionedCache = $null }
 
-# The same shape for Windows capabilities: one DISM enumeration per capability
-# pattern became one per run.
+# The same shape for capabilities: one DISM enumeration per pattern became one
+# per run.
 $script:CapabilityCache = $null
 
 function Get-WDCapabilityList {
@@ -118,8 +78,8 @@ function Invoke-WDAppxAction {
 
     $names   = @(Get-Prop $Action 'names' @())
     $preview = $Context.Preview
-    # Same opt-out as the uninstaller: an item can refuse to have anything
-    # closed on its behalf with "closeRunning": false.
+    # An item can refuse to have anything closed on its behalf with
+    # "closeRunning": false.
     $kill    = [bool](Get-Prop $Action 'closeRunning' $true)
     $removed = New-Object System.Collections.Generic.List[string]
     $blocked = New-Object System.Collections.Generic.List[string]
@@ -130,7 +90,6 @@ function Invoke-WDAppxAction {
 
     foreach ($pattern in $names) {
 
-        # --- installed packages, every user ------------------------------
         $pkgs = @()
         try {
             $pkgs = @(Get-AppxPackage -AllUsers -Name $pattern -ErrorAction SilentlyContinue)
@@ -142,10 +101,8 @@ function Invoke-WDAppxAction {
         foreach ($pkg in $pkgs) {
             $found = $true
             # NonRemovable is set by the deployment stack on in-box components
-            # that Windows will never uninstall - CBS packages serviced by
-            # Windows Update, and shell hosts. Tracked separately only so the
-            # message can explain itself; the outcome is still Blocked, because
-            # the package was found and an external force refused the removal.
+            # Windows will never uninstall. No privilege or policy removes
+            # these.
             if ($pkg.NonRemovable -eq $true) {
                 $inbox.Add($pkg.Name)
                 continue
@@ -164,7 +121,8 @@ function Invoke-WDAppxAction {
                     $blocked.Add($pkg.Name)
                 } else {
                     $done = $false
-                    # Retry without -AllUsers; some packages only yield per-user.
+                    # Retry without -AllUsers; some packages only yield
+                    # per-user.
                     try {
                         Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop
                         $removed.Add($pkg.Name)
@@ -173,16 +131,14 @@ function Invoke-WDAppxAction {
                         $done = $true
                     } catch { $msg = $_.Exception.Message }
 
-                    # 0x80073D02 = the app is running. Swept by the package's own
-                    # WindowsApps folder, which names exactly this app's
-                    # processes. Retried only if something was actually closed -
-                    # otherwise the second call fails identically, twice.
+                    # 0x80073D02 = the app is running. Swept by the package's
+                    # own WindowsApps folder, and retried only if something was
+                    # actually closed.
                     if (-not $done -and $kill) {
                         $under = [string](Test-WDSweepableRoot -Path $pkg.InstallLocation)
-                        # ASSIGNED, NEVER WRAPPED. Stop-WDBlockers ends in
-                        # ,@(...) so assigning it does not unroll; @() around it
-                        # is one element holding the array, so Count read 1 with
-                        # nothing closed and this retried every single refusal.
+                        # Assigned, never wrapped: Stop-WDBlockers ends in
+                        # ,@(...), so @() around it is one element holding the
+                        # array and Count reads 1 either way.
                         $shut  = Stop-WDBlockers -Path $under -Because "$($pkg.Name) could be removed"
                         if ($shut.Count) {
                             try {
@@ -200,7 +156,6 @@ function Invoke-WDAppxAction {
             }
         }
 
-        # --- provisioned packages (stops it returning for new users) ------
         try {
             $prov = @(Get-WDProvisionedPackages | Where-Object { $_.DisplayName -like $pattern })
             foreach ($p in $prov) {
@@ -219,10 +174,9 @@ function Invoke-WDAppxAction {
         } catch {
             $msg = $_.Exception.Message
             if (Test-WDElevationError $msg) {
-                # Enumerating provisioned packages needs elevation, and it fails
-                # for every appx item alike. Recording it per item made absent
-                # apps report "needs administrator rights", which is both noisy
-                # and wrong. Warn once for the run instead.
+                # Enumerating provisioned packages needs elevation and fails for
+                # every appx item alike, so recording it per item made absent
+                # apps report "needs administrator rights".
                 if (-not $script:ProvisionedWarned) {
                     $script:ProvisionedWarned = $true
                     Write-WDLog 'Not elevated: provisioned packages cannot be enumerated, so removals will not be deprovisioned. Re-run elevated to make them permanent.' -Level Warn
@@ -239,15 +193,9 @@ function Invoke-WDAppxAction {
     $inbox   = @($inbox   | Sort-Object -Unique)
     $errors  = @($errors  | Sort-Object -Unique)
 
-    # ASK REALITY BEFORE REPORTING A REFUSAL. A refusal is a statement about one
-    # call, not about the outcome: the same package is reachable by several
-    # routes, so an API that said no can be followed by the thing being gone
-    # anyway. OneDriveSync reported "Protected by Windows" against a machine with
-    # no OneDrive left on it. That sends somebody after a problem that does not
-    # exist and teaches them Blocked cannot be believed.
-    #
-    # NonRemovable packages are excluded from the re-check: still present, still
-    # refused, still worth a row.
+    # Ask reality before reporting a refusal: a refusal is a statement about one
+    # call, not about the outcome, and the same package is reachable by several
+    # routes.
     if (-not $preview -and $blocked.Count) {
         $stillThere = $false
         foreach ($pattern in $names) {
@@ -276,9 +224,9 @@ function Invoke-WDAppxAction {
         return New-WDResult -Status Removed -Message "$($removed.Count) package(s)" -Detail $detail -Recovered $recovered
     }
     if ($inbox.Count -and -not $blocked.Count) {
-        # Found, and Windows refuses to remove it. That is Blocked by definition,
-        # even though there is nothing the operator can do about it - the detail
-        # says so rather than the status pretending it was never attempted.
+        # Found, and Windows refuses to remove it. Blocked by definition, even
+        # though there is nothing the operator can do - the detail says so
+        # rather than the status pretending nothing was tried.
         return New-WDResult -Status Blocked `
             -Message "$($inbox.Count) in-box component(s) Windows refuses to remove" `
             -Detail (($inbox -join ', ') +
@@ -289,9 +237,8 @@ function Invoke-WDAppxAction {
             -Detail ("in-box, cannot be removed: $($inbox -join ', ') | $($blocked -join ', ')")
     }
     if ($blocked.Count) {
-        # Two very different causes, so say which. Elevation is fixable by
-        # re-running as admin; NonRemovable is not fixable at all, because
-        # Windows owns the package and refuses even a full administrator.
+        # Two very different causes: elevation is fixable by re-running as
+        # admin, NonRemovable is not fixable at all.
         $needsAdmin = @($blocked | Where-Object { $_ -match 'needs elevation' }).Count
         $msg = if ($needsAdmin -eq $blocked.Count) { 'Needs administrator rights' }
                elseif ($needsAdmin)                { 'Partly protected by Windows, partly needs administrator rights' }
@@ -304,18 +251,13 @@ function Invoke-WDAppxAction {
     New-WDResult -Status NotPresent -Message 'Nothing to remove'
 }
 
-# --------------------------------------------------------- appx policy -----
-
 function Invoke-WDAppxPolicyAction {
-    <#
-        Windows 11 25H2 shipped a supported way to deprovision in-box apps.
-        It only exists on Enterprise and Education, so this action is additive:
-        it strengthens the appx removal where available and is a no-op elsewhere.
-    #>
+    # 25H2 shipped a supported way to deprovision in-box apps, on Enterprise and
+    # Education only, so this action is additive rather than a replacement.
     param($Action, $Context)
 
     # $machine, not $profile: that is an automatic variable holding the path to
-    # the PowerShell profile script, and shadowing it reads as a bug.
+    # the PowerShell profile script.
     $machine = $Context.Profile
     if (-not $machine.IsEnterprise) {
         return New-WDResult -Status Skipped -Message 'Policy needs Enterprise/Education; appx removal already covers this'
@@ -345,19 +287,7 @@ function Invoke-WDAppxPolicyAction {
     }
 }
 
-# ------------------------------------------------------------ winget -------
-
 function Invoke-WDWingetInstall {
-    <#
-        The one place this toolkit puts something on rather than takes it off:
-        the replacement browser offered when Edge is removed. Kept in the winget
-        executor behind "mode": "install" so it goes through the same presence
-        probe, the same timeouts, and the same journal as everything else.
-
-        NotPresent here means "nothing to do" in the install sense - it is
-        already installed. That is the success bucket, which is where a run that
-        found its work already done belongs.
-    #>
     param($Action, $Context, [string[]]$Ids)
 
     $done   = New-Object System.Collections.Generic.List[string]
@@ -372,18 +302,14 @@ function Invoke-WDWingetInstall {
         if ($probe.ExitCode -eq 0 -and $probe.Output -match [regex]::Escape($id)) { $had.Add($id); continue }
         if ($Context.Preview) { $done.Add($id); continue }
 
-        # Some installers do nothing useful with their default arguments - the
-        # Visual Studio build tools land as an empty shell unless the workload
-        # is named - so an item can supply the installer's own command line.
-        # --silent is dropped alongside it: winget refuses the pair, and the
-        # override has to carry its own quiet switches anyway.
-        # $argv, not $args: that is an automatic variable holding this function's
-        # unbound arguments, and this function has a param block.
+        # Some installers do nothing useful with their defaults - the VS build
+        # tools land as an empty shell unless the workload is named - so an item
+        # can supply the installer's own command line.
         $over = [string](Get-Prop $Action 'override' '')
         $argv = @('install', '--id', $id, '--exact')
         if ($over) { $argv += @('--override', $over) } else { $argv += '--silent' }
         $argv += @('--accept-source-agreements', '--accept-package-agreements', '--disable-interactivity')
-        # Big toolchains legitimately outrun the default; the item says so.
+        # Big toolchains legitimately outrun the default.
         $secs = [int](Get-Prop $Action 'timeoutSeconds' 900)
         if ($secs -le 0) { $secs = 900 }
 
@@ -407,9 +333,8 @@ function Invoke-WDWingetInstall {
         return New-WDResult -Status Failed -Message 'winget install failed' -Detail ($errors -join '; ')
     }
     if ($done.Count) {
-        # A preview reaches this with the same list, so the tense has to follow
-        # it - "installed" on the preview page is a straight lie about what has
-        # already happened.
+        # A preview reaches this with the same list, so the tense has to follow:
+        # "installed" on a preview page is a straight lie.
         $msg = if ($Context.Preview) { "Would install $($done.Count) app(s) via winget" }
                else                  { "$($done.Count) app(s) installed via winget" }
         return New-WDResult -Status Changed -Message $msg -Detail ($done -join ', ')
@@ -436,8 +361,8 @@ function Invoke-WDWingetAction {
     $found   = $false
 
     foreach ($id in $ids) {
-        # `winget list` is the cheap presence test and avoids a pointless
-        # uninstall attempt (and its interactive prompts) for absent apps.
+        # winget list is the cheap presence test, and avoids a pointless
+        # uninstall attempt and its prompts for absent apps.
         $probe = Invoke-WDProcess -FilePath 'winget.exe' `
                                   -ArgumentList @('list', '--id', $id, '--exact',
                                                   '--accept-source-agreements',
@@ -472,25 +397,12 @@ function Invoke-WDWingetAction {
     New-WDResult -Status NotPresent -Message 'Nothing to remove'
 }
 
-# ------------------------------------------------------- classic MSI/EXE ---
-
 function Clear-WDProgramCache {
-    <#
-        Drops the installed-programs sweep so the next caller reads the hives
-        again.
-
-        The cache expires on its own after 45 seconds, which is right for a run
-        asking about twenty items in a row and wrong for the Refresh button: that
-        one exists precisely because somebody has just installed or removed
-        something, and "wait three quarters of a minute and press it again" is not
-        an answer.
-    #>
     $script:ProgramCache       = $null
     $script:ProgramCacheExpiry = [datetime]::MinValue
 }
 
 function Get-WDInstalledPrograms {
-    <#  Cached sweep of both uninstall hives plus per-user.  #>
     if ($script:ProgramCache -and (Get-Date) -lt $script:ProgramCacheExpiry) { return $script:ProgramCache }
 
     $roots = @(
@@ -510,16 +422,15 @@ function Get-WDInstalledPrograms {
                 QuietString     = [string](Get-Prop $p 'QuietUninstallString' '')
                 DisplayIcon     = [string](Get-Prop $p 'DisplayIcon' '')
                 InstallLocation = [string](Get-Prop $p 'InstallLocation' '')
-                # Windows hides these from Add/Remove Programs: they are the
-                # sub-features and bundle records of a product that has its own
-                # visible entry. Kept on the record rather than filtered here,
-                # because a curated manifest item is still allowed to name one.
+                # Windows hides these from Add/Remove Programs: they are
+                # sub-features and bundle records of a product with its own
+                # visible entry. Kept on the record so a manifest item can still
+                # name one.
                 SystemComponent = [int](Get-Prop $p 'SystemComponent' 0)
                 ParentName      = [string](Get-Prop $p 'ParentDisplayName' '')
-                # What the installer claimed it would occupy, in KB. Roughly two
-                # thirds of entries carry it and the rest report 0, so it is a
-                # floor on what uninstalling frees rather than a measurement -
-                # anything shown from it has to say "about".
+                # What the installer claimed, in KB. About two thirds of entries
+                # carry it, so it is a floor on what uninstalling frees rather
+                # than a measurement.
                 Bytes           = ([int64](Get-Prop $p 'EstimatedSize' 0)) * 1024
                 KeyName         = $sub.PSChildName
             })
@@ -531,11 +442,6 @@ function Get-WDInstalledPrograms {
 }
 
 function Resolve-WDSilentUninstall {
-    <#
-        Work out how to run an uninstaller without a UI. QuietUninstallString
-        is authoritative when the vendor provided it; otherwise infer from the
-        installer technology, which is what the switches below identify.
-    #>
     param($Program, [string]$SilentArgsOverride)
 
     if ($Program.QuietString) { return $Program.QuietString }
@@ -550,8 +456,8 @@ function Resolve-WDSilentUninstall {
     }
     if ($SilentArgsOverride) { return "$u $SilentArgsOverride" }
 
-    # Heuristics by installer family. Wrong guesses show a UI rather than
-    # breaking anything, and the result is reported as Blocked on timeout.
+    # Heuristics by installer family. A wrong guess shows a UI rather than
+    # breaking anything, and reports as Blocked on timeout.
     if ($u -match 'unins\d*\.exe')          { return "$u /VERYSILENT /SUPPRESSMSGBOXES /NORESTART" }  # Inno
     if ($u -match 'Uninstall\.exe')         { return "$u /S" }                                        # NSIS
     if ($u -match 'setup\.exe|InstallShield'){ return "$u /S /v/qn" }                                 # InstallShield
@@ -565,12 +471,9 @@ function Invoke-WDUninstallAction {
     $exclude   = @(Get-Prop $Action 'exclude' @())
     $silentArg = Get-Prop $Action 'silentArgs' $null
     $timeout   = [int](Get-Prop $Action 'timeoutSeconds' 600)
-    # Close what is holding the program open before asking its uninstaller to
-    # remove it. On by default, because the alternative is the failure this was
-    # written for: an uninstaller that exits non-zero because the application is
-    # running, reported as "exit 1" with nothing saying why. An item can opt out
-    # with "closeRunning": false where killing the process is worse than a failed
-    # uninstall.
+    # Close what is holding the program open first: an uninstaller that exits
+    # non-zero because the application is running reports exit 1 and says
+    # nothing about why.
     $kill      = [bool](Get-Prop $Action 'closeRunning' $true)
     $killNamed = @(Get-Prop $Action 'processes' @())
 
@@ -600,14 +503,9 @@ function Invoke-WDUninstallAction {
     foreach ($t in $targets) {
         if ($Context.Preview) { $removed.Add($t.DisplayName); continue }
 
-        # Two sources, because neither is enough alone. BY PATH covers the
-        # ordinary case and needs no authoring. BY NAME ("processes": [...]) is
-        # for a launcher living somewhere else entirely - Riot Client sits in
-        # C:\Riot Games\Riot Client, not in Valorant's folder, and no amount of
-        # sweeping the target's directory finds it.
-        #
-        # InstallLocation may be a bare shared root, so the path is checked
-        # before use; a refusal there leaves the named half still working.
+        # Two sources, because neither is enough. By path covers the ordinary
+        # case and needs no authoring; by name is for a launcher living
+        # elsewhere - Riot Client sits outside Valorant's folder.
         $root = ''
         if ($kill) {
             $root = [string](Test-WDSweepableRoot -Path $t.InstallLocation)
@@ -617,44 +515,32 @@ function Invoke-WDUninstallAction {
 
         $cmd = Resolve-WDSilentUninstall -Program $t -SilentArgsOverride $silentArg
         if (-not $cmd) {
-            # Not a failure. The program ships an interactive uninstaller and
-            # there is no switch that makes it run quietly, so there is nothing
-            # the toolkit can do here and nothing that went wrong. Blocked says
-            # "refused, and here is what to do about it"; Failed says the
-            # toolkit broke, which sends people looking for a bug.
+            # Not a failure: the program ships an interactive uninstaller and no
+            # switch makes it quiet, so nothing went wrong and there is nothing
+            # the toolkit can do.
             $blocked.Add("$($t.DisplayName): no silent uninstaller, so it has to be removed by hand from Installed apps")
             continue
         }
 
-        # Split the resolved command into executable + arguments. $argLine rather
-        # than $args, which is an automatic variable holding this function's own
-        # unbound arguments - and this one is a string, not an array.
+        # $argLine rather than $args, which is an automatic variable holding
+        # this function's own unbound arguments.
         $exe = $cmd; $argLine = ''
         if ($cmd -match '^\s*"([^"]+)"\s*(.*)$') { $exe = $Matches[1]; $argLine = $Matches[2] }
         elseif ($cmd -match '^\s*(\S+\.exe)\s*(.*)$') { $exe = $Matches[1]; $argLine = $Matches[2] }
 
         $res = Invoke-WDProcess -FilePath $exe -ArgumentList @($argLine) -TimeoutSeconds $timeout
 
-        # Second sweep, after a refusal: catches a launcher that restarted
-        # itself, or a helper the uninstaller started.
-        #
-        # RETRIED ONLY IF THIS SWEEP CLOSED SOMETHING NEW. Otherwise the second
-        # attempt fails identically, costs the whole runtime again, and on an
-        # uninstaller that shows UI puts up a second dialog. A TIMEOUT IS NEVER
-        # RETRIED - the first may still be working, and a second uninstaller over
-        # the top of it is how a half-removed program happens.
+        # Second sweep after a refusal, for a launcher that restarted itself or
+        # a helper the uninstaller started.
         if ($kill -and -not $res.TimedOut -and $res.ExitCode -notin @(0, 3010, 1605)) {
-            # ASSIGNED, NEVER WRAPPED IN @(). Stop-WDBlockers ends in ,@(...), so
-            # @() around it gives Count 1 whether it closed anything or not - and
-            # every uninstaller that exited non-zero then ran a SECOND time. All
-            # three costs the guard above exists to prevent.
+            # Assigned, never wrapped in @(): with the comma form every
+            # uninstaller that exited non-zero ran a second time - the doubled
+            # runtime and a second dialog on any that shows UI.
             $again = Stop-WDBlockers -Path $root -AlsoNamed $killNamed `
                          -Because "$($t.DisplayName) could be uninstalled on a second attempt"
             if ($again.Count) {
-                # Say so while it happens. A second run of an uninstaller can
-                # take minutes, and from the outside a step that has already
-                # been going for one and is silently starting again looks like
-                # a step that has hung.
+                # Say so while it happens: a second run can take minutes, and
+                # from outside it looks like the first one hanging.
                 Write-WDLog ("$($t.DisplayName) refused the first attempt, so " +
                              "$($again -join ', ') " +
                              $(if ($again.Count -eq 1) { 'was' } else { 'were' }) +
@@ -672,9 +558,9 @@ function Invoke-WDUninstallAction {
             if ($res.ExitCode -eq 3010) { Set-WDRebootNeeded }
             Add-WDJournal -ItemId $Context.ItemId -Type 'uninstall' -Target $t.DisplayName `
                           -Status 'Removed' -Undo @{ method = 'reinstall'; name = $t.DisplayName }
-            # The uninstall key goes with the program, and InstallLocation with
+            # The uninstall key goes with the program and InstallLocation with
             # it, so the leftover sweep cannot look this up afterwards. Recorded
-            # here, while the program still exists, or not at all.
+            # here or not at all.
             Register-WDUninstalled -Name $t.DisplayName -InstallLocation $t.InstallLocation
         } elseif ($res.TimedOut) {
             $failed.Add("$($t.DisplayName): uninstaller did not exit (may need manual removal)")
@@ -692,36 +578,21 @@ function Invoke-WDUninstallAction {
         $rest = @($failed) + @($blocked)
         return New-WDResult -Status Partial -Message "$($removed.Count) removed, $($rest.Count) needs attention" -Detail (($removed -join ', ') + ' | ' + ($rest -join '; '))
     }
-    # Nothing removed. An interactive-only uninstaller is a refusal with a clear
-    # next step, not a fault, so it must not be filed beside a broken run.
+    # An interactive-only uninstaller is a refusal with a clear next step, not a
+    # fault, so it must not be filed beside a broken run.
     if ($blocked.Count -and -not $failed.Count) {
         return New-WDResult -Status Blocked -Message 'Needs to be uninstalled by hand' -Detail ($blocked -join '; ')
     }
     New-WDResult -Status Failed -Message 'Uninstall failed' -Detail ((@($failed) + @($blocked)) -join '; ')
 }
 
-# ---------------------------------------------------------- registry -------
-
 $script:RegProbeCache = $null
 
 function Clear-WDRegistryProbeCache {
-    <#  Dropped whenever something might have written to the registry.  #>
     $script:RegProbeCache = $null
 }
 
 function Get-WDRegistryKeyValues {
-    <#
-        Every value under one key, read once and kept.
-
-        The "already set" probe runs for every value of every opt-in item while
-        the window is being built - several hundred reads, and it was paying a
-        Test-Path plus a per-value Get-ItemProperty for each one. Items share
-        keys heavily (a dozen Explorer tweaks all live under Advanced), so one
-        read per key answers most of them.
-
-        $null means the key does not exist, and that is cached too - a missing
-        key was costing a Test-Path every time somebody asked about it.
-    #>
     param([string]$Full)
 
     if ($null -eq $script:RegProbeCache) {
@@ -737,23 +608,9 @@ function Get-WDRegistryKeyValues {
 }
 
 function Test-WDRegistryValueSet {
-    <#
-        One value, one hive: is it already what the action would write?
-
-        THE TYPE HAS TO AGREE AS WELL AS THE VALUE. A policy stored as REG_SZ "1"
-        where the action wants REG_DWORD 1 compares equal after a cast and is a
-        different value to Windows - whatever reads it looks for a DWORD and finds
-        none. Answering "already set" there skips the write that fixes it.
-
-        A cast test rather than GetValueKind, because the value is already in
-        hand and this runs for every value of every opt-in item while the window
-        is built.
-
-        ExpandString always answers false: Get-ItemProperty returns it expanded,
-        so "%SystemRoot%\x" never equals "C:\Windows\x". Safe direction (it
-        rewrites a correct value) and not worth a second read of every string
-        value on the machine to sharpen.
-    #>
+    # Checks the type as well as the value: a policy stored as REG_SZ "1" where
+    # the action wants REG_DWORD 1 compares equal after a cast and is a
+    # different value to Windows.
     param([string]$Full, [string]$Name, $Data, [string]$Kind, [bool]$Delete)
 
     $existing = Get-WDRegistryKeyValues -Full $Full
@@ -789,18 +646,6 @@ function Test-WDRegistryValueSet {
 }
 
 function Test-WDServiceActionSatisfied {
-    <#
-        Is every service this action names already where it would put it?
-
-        Reads the same two fields Invoke-WDServiceAction compares - StartType,
-        and Status when the action also stops the service. A probe asking a
-        different question from the executor answers about a different machine.
-
-        A pattern matching NOTHING answers false, which is the careful direction:
-        the tag this feeds says "already applied", and claiming that because the
-        service was never here is a different statement and not a true one.
-        Genuinely absent targets are Get-WDItemPresence's job.
-    #>
     param($Action)
 
     $names = @(Get-Prop $Action 'names' @())
@@ -822,27 +667,14 @@ function Test-WDServiceActionSatisfied {
 }
 
 function Test-WDRegistryActionSatisfied {
-    <#
-        Is every value this action would write already written?
-
-        Mirrors Invoke-WDRegistryAction's path resolution deliberately - a test
-        that resolves paths differently from the executor answers a different
-        question and is worse than no test at all.
-
-        For 'allusers' this asks about the accounts that exist on the machine
-        now. The executor also writes the default profile hive so accounts made
-        later inherit the setting, and that cannot be checked from here; an item
-        reported as already set may still have that one write left to do.
-    #>
     param($Action)
 
     $values = @(Get-Prop $Action 'values' @())
     if (-not $values.Count) { return $false }
     $scope = [string](Get-Prop $Action 'scope' 'machine')
 
-    # Cached: this runs for every value of every opt-in item while the window is
-    # being built, and enumerating HKU each time cost two seconds of startup.
-    # Hives do not appear and disappear mid-session.
+    # Cached: this runs for every value of every opt-in item while the window
+    # builds, and enumerating HKU each time cost two seconds of startup.
     if ($scope -ieq 'allusers' -and -not $script:HiveCache) { $script:HiveCache = @(Get-WDUserHives) }
     $roots = switch ($scope.ToLower()) {
         'user'     { @([pscustomobject]@{ Path = 'HKCU:' }) }
@@ -873,26 +705,17 @@ function Invoke-WDRegistryAction {
     $scope   = [string](Get-Prop $Action 'scope' 'machine')
     $values  = @(Get-Prop $Action 'values' @())
     $written = 0; $errors = New-Object System.Collections.Generic.List[string]
-    # Values already exactly what this would write. Counted, never written,
-    # reported as AlreadySet. The preview path was once
-    # `if ($Context.Preview) { $written++; continue }` - every value a change
-    # without ever being read, so previewing a just-applied selection promised
-    # 121 changes over a machine where all 121 were already true.
-    #
-    # ASKED IN APPLY TOO, and that half is load-bearing: if the two asked
-    # different questions, a page of grey rows would turn green the moment
-    # somebody pressed the button.
+    # Counted, never written, reported as AlreadySet. The preview path was once
+    # "if preview { $written++; continue }" - every value a change without ever
+    # being read.
     $already = 0
 
-    # Build the list of hive roots this action applies to.
     $roots = @()
     switch ($scope.ToLower()) {
         'machine'  { $roots = @([pscustomobject]@{ Name = 'HKLM'; Path = 'HKLM:' }) }
         'user'     { $roots = @([pscustomobject]@{ Name = 'HKCU'; Path = 'HKCU:' }) }
-        # The one scope with a choice in it: which accounts' hives get written.
-        # HKLM has no per-account version and never will, so nothing else here
-        # takes an Accounts list. A null list means every account, which is what
-        # the command line and the re-apply guards pass.
+        # The one scope with a choice in it. HKLM has no per-account version, so
+        # nothing else takes an Accounts list. A null list means every account.
         'allusers' {
             $roots = @(Select-WDAccountHives -Hives (Get-WDUserHives) -Default $Context.DefaultHive `
                                              -Accounts (Get-WDContextAccounts $Context))
@@ -909,16 +732,15 @@ function Invoke-WDRegistryAction {
             $del  = [bool](Get-Prop $v 'delete' $false)
             if (-not $rel) { continue }
 
-            # 'machine'/'user' entries carry a full path; per-hive entries are relative.
+            # 'machine'/'user' entries carry a full path; per-hive entries are
+            # relative.
             $full = $rel
             if ($scope -ieq 'allusers') { $full = Join-Path $root.Path $rel }
 
             try {
-                # Read before deciding, in both modes. Test-WDRegistryValueSet
-                # is the same function that grays an "already set" row on the
-                # Advanced page, deliberately: a preview that answered this
-                # question differently from the page above it would be a third
-                # opinion nobody asked for.
+                # Read before deciding, in both modes: if preview and apply
+                # asked different questions, a page of gray rows would turn
+                # green the moment somebody pressed the button.
                 if (Test-WDRegistryValueSet -Full $full -Name $name -Data $data -Kind $kind -Delete $del) {
                     $already++
                     continue
@@ -927,20 +749,14 @@ function Invoke-WDRegistryAction {
 
                 Backup-WDRegistryKey -Path $full
 
-                # This key is about to change, so anything the probe cache says
+                # This key is about to change, so what the probe cache says
                 # about it stops being true here rather than at the end of the
-                # run. Cheap: it is one dictionary clear, and the cache exists
-                # to make the window build fast, not to make a run fast.
+                # run.
                 Clear-WDRegistryProbeCache
 
-                # THE VALUE, NOT A RENDERING OF IT. Quoting the string here put
+                # The value, not a rendering of it. Quoting the string here put
                 # a PowerShell literal in the journal for the emitter to
-                # interpolate unquoted - so an apostrophe broke the rollback
-                # script's parse, a MultiString became "System.String[]", and
-                # Get-WDUndoStatus compared "'Allow'" against Allow and reported
-                # every string value outstanding after a rollback that had
-                # already restored it. Rendering belongs to the emitter; `raw`
-                # tells it this entry holds a value.
+                # interpolate unquoted, so an apostrophe broke the rollback.
                 $prev = '__ABSENT__'
                 if (Test-Path -LiteralPath $full) {
                     $existing = Get-ItemProperty -LiteralPath $full -Name $name -ErrorAction SilentlyContinue
@@ -961,8 +777,9 @@ function Invoke-WDRegistryAction {
                 Add-WDJournal -ItemId $Context.ItemId -Type 'registry' -Target "$full\$name" -Status 'Changed' `
                               -Undo @{ method = 'registry'; path = $full; name = $name; previous = $prev; kind = $kind; raw = $true }
             } catch {
-                # Policy keys under TrustedInstaller ownership refuse writes even
-                # to an administrator. Seizing the key and retrying is reliable.
+                # Policy keys under TrustedInstaller ownership refuse writes
+                # even to an administrator, and seizing the key is reliable
+                # here.
                 $retried = $false
                 if ((Get-Prop $Context 'AllowOwnership' $false) -and (Test-WDElevationError $_.Exception.Message)) {
                     $own = Grant-WDRegistryOwnership -Path $full
@@ -984,15 +801,14 @@ function Invoke-WDRegistryAction {
     }
 
     if ($written -and -not $errors.Count) {
-        # What was skipped is said, because "3 value(s) set" on an action that
-        # holds twelve reads as though nine went missing.
+        # What was skipped is said, because "3 value(s) set" on an action
+        # holding twelve reads as though nine went missing.
         $rest = $(if ($already) { ", $already already set" } else { '' })
         return New-WDResult -Status Changed -Message "$written value(s) set$rest"
     }
 
-    # Some landed and some were refused. That is Partial, not Changed - it said
-    # "2 set, 2 refused" in its own message while reporting success, so the item
-    # never reached the run report's not-clean count and nobody saw it.
+    # Some landed and some were refused: that is Partial, not Changed. It said
+    # "2 set, 2 refused" while reporting success, so nobody saw it.
     if ($written) {
         return New-WDResult -Status Partial -Message "$written set, $($errors.Count) refused" -Detail ($errors -join '; ')
     }
@@ -1006,7 +822,7 @@ function Invoke-WDRegistryAction {
         }
         return New-WDResult -Status Failed -Message 'Registry write failed' -Detail ($errors -join '; ')
     }
-    # Nothing to write because it is all already written. Distinct from
+    # Nothing to write because it is all written already. Distinct from
     # NotPresent, which is about a target that is not here at all.
     if ($already) {
         return New-WDResult -Status AlreadySet -Message "$already value(s) already set"
@@ -1015,7 +831,6 @@ function Invoke-WDRegistryAction {
 }
 
 function Invoke-WDRegistryKeyAction {
-    <#  Delete whole keys - used for Explorer namespace CLSIDs and similar.  #>
     param($Action, $Context)
 
     $paths   = @(Get-Prop $Action 'paths' @())
@@ -1040,8 +855,6 @@ function Invoke-WDRegistryKeyAction {
     New-WDResult -Status NotPresent -Message 'Keys not present'
 }
 
-# ----------------------------------------------------------- services ------
-
 function Invoke-WDServiceAction {
     param($Action, $Context)
 
@@ -1052,13 +865,11 @@ function Invoke-WDServiceAction {
     $kill    = [bool](Get-Prop $Action 'closeRunning' $true)
     $changed = New-Object System.Collections.Generic.List[string]
     $blocked = New-Object System.Collections.Generic.List[string]
-    # Services already at the startup type this would set, and not running.
-    # Apply has always skipped these - the `$prev -eq $target` line below - and
-    # said nothing about it; preview counted every one of them as a change.
+    # Apply always skipped these and said nothing; preview counted every one as
+    # a change.
     $already = New-Object System.Collections.Generic.List[string]
-    # Services on WD.Core's critical list, which nothing in a manifest may
-    # override. Its own bucket rather than $blocked, because Blocked means
-    # Windows was asked and said no, and here the toolkit did not ask.
+    # Its own bucket rather than $blocked: Blocked means Windows was asked and
+    # said no, and here the toolkit did not ask.
     $refused = New-Object System.Collections.Generic.List[string]
     $found   = $false
 
@@ -1066,10 +877,9 @@ function Invoke-WDServiceAction {
         $svcs = @(Get-Service -Name $pattern -ErrorAction SilentlyContinue)
         foreach ($svc in $svcs) {
             $found = $true
-            # THE ONE THING NO OPTION GETS TO DO. Asked on the RESOLVED name, so
-            # a manifest wildcard cannot reach one sideways. Refused in preview
-            # as well as apply - a preview promising what the apply will refuse
-            # is the defect AlreadySet exists to fix.
+            # The one thing no option gets to do. Asked on the resolved name, so
+            # a manifest wildcard cannot reach one sideways, and refused in
+            # preview as well as apply.
             if (Test-WDCriticalService -Name $svc.Name) {
                 $refused.Add($svc.Name)
                 Write-WDLog ("Refused to change $($svc.Name): it is on the toolkit's critical-service " +
@@ -1079,11 +889,8 @@ function Invoke-WDServiceAction {
                 continue
             }
             if ($Context.Preview) {
-                # ServiceController already carries StartType, and the CIM query
-                # the apply path uses costs tens of ms per service - enough
-                # service actions to make that seconds of a preview. An
-                # unreadable StartType is $null, compares unequal, and reports as
-                # a change: the safe direction.
+                # ServiceController already carries StartType, where the CIM
+                # query the apply path uses costs tens of ms per service.
                 $cur = $null
                 try { $cur = [string]$svc.StartType } catch { }
                 if ($cur -eq $target -and $svc.Status -ne 'Running') { $already.Add($svc.Name) }
@@ -1093,7 +900,7 @@ function Invoke-WDServiceAction {
 
             $prev = 'Automatic'
             # Cleared each time round, or a service whose query fails inherits
-            # the previous service's process id and gets it killed.
+            # the previous service's process id and gets that killed.
             $wmi  = $null
             try {
                 $wmi = Get-CimInstance Win32_Service -Filter "Name='$($svc.Name)'" -ErrorAction SilentlyContinue
@@ -1115,12 +922,7 @@ function Invoke-WDServiceAction {
 
                     # Disabled only takes effect at the next boot, so until then
                     # the thing somebody ticked a row to stop is still running.
-                    #
-                    # NEVER A SHARED HOST. Most services on the machine live in
-                    # one svchost.exe, so killing it to stop one takes the others
-                    # with it. Checked on PathName, and the CIM record is re-read
-                    # per service - inheriting the previous one's pid would kill
-                    # something else entirely.
+                    # A service sharing svchost.exe is never killed.
                     if ($kill) {
                         try { $svc.Refresh() } catch { }
                         if ($svc.Status -eq 'Running' -and $wmi -and
@@ -1138,19 +940,18 @@ function Invoke-WDServiceAction {
                 Add-WDJournal -ItemId $Context.ItemId -Type 'service' -Target $svc.Name -Status 'Changed' `
                               -Undo @{ method = 'service'; name = $svc.Name; previous = $prev }
             } catch {
-                # Several telemetry services are ACL-locked to TrustedInstaller.
-                # sc.exe config sometimes succeeds where Set-Service does not.
+                # Several telemetry services are ACL-locked to TrustedInstaller,
+                # and sc.exe config sometimes succeeds where Set-Service does
+                # not.
                 $sc = Invoke-WDProcess -FilePath 'sc.exe' -ArgumentList @('config', $svc.Name, "start=$(if($target -eq 'Disabled'){'disabled'}elseif($target -eq 'Manual'){'demand'}else{'auto'})") -TimeoutSeconds 30
                 if ($sc.ExitCode -eq 0) {
                     $changed.Add($svc.Name)
                     Add-WDJournal -ItemId $Context.ItemId -Type 'service' -Target $svc.Name -Status 'Changed' `
                                   -Undo @{ method = 'service'; name = $svc.Name; previous = $prev }
                 } elseif (Get-Prop $Context 'AllowOwnership' $false) {
-                    # Last resort: the service's configuration lives in a registry
-                    # key owned by TrustedInstaller. Seizing it and retrying is
-                    # the standard fix, and it genuinely works here - unlike on
-                    # non-removable Appx packages, which are refused by the
-                    # deployment stack rather than by an ACL.
+                    # Last resort: the service's configuration lives in a
+                    # TrustedInstaller-owned key, and seizing it works here -
+                    # unlike on a NonRemovable package.
                     $key = "HKLM:\SYSTEM\CurrentControlSet\Services\$($svc.Name)"
                     $own = Grant-WDRegistryOwnership -Path $key
                     if ($own.Success) {
@@ -1183,8 +984,7 @@ function Invoke-WDServiceAction {
     }
     if ($blocked.Count) { return New-WDResult -Status Blocked -Message 'Protected by Windows' -Detail ($blocked -join ', ') }
     # Skipped rather than Blocked, for the reason a NonRemovable package is:
-    # Blocked should mean "refused, and you might be able to do something about
-    # it", and there is nothing to do about this one by design.
+    # there is nothing to do about this one by design.
     if ($refused.Count) {
         return New-WDResult -Status Skipped `
                             -Message "$($refused.Count) service(s) kept - critical to Windows" `
@@ -1193,13 +993,10 @@ function Invoke-WDServiceAction {
                                      'leaves the machine unable to reach a desktop, be patched, or defend itself.')
     }
     if (-not $found)    { return New-WDResult -Status NotPresent -Message 'Service not present' }
-    # The service is here and is already set the way this asks for. That was
-    # NotPresent with a message contradicting its own status, which nothing
-    # reads and no count could tell apart from a service that is not installed.
+    # Here and already set the way this asks. That was NotPresent with a message
+    # contradicting its own status.
     New-WDResult -Status AlreadySet -Message "$($already.Count) service(s) already $target" -Detail ($already -join ', ')
 }
-
-# ------------------------------------------------------ scheduled tasks ----
 
 function Invoke-WDTaskAction {
     param($Action, $Context)
@@ -1208,8 +1005,8 @@ function Invoke-WDTaskAction {
     $delete  = [bool](Get-Prop $Action 'delete' $false)
     $changed = New-Object System.Collections.Generic.List[string]
     $blocked = New-Object System.Collections.Generic.List[string]
-    # Tasks that are already disabled. This branch existed and simply skipped;
-    # counting it is what lets the row say nothing to do rather than not present.
+    # Counting these is what lets the row say "nothing to do" rather than "not
+    # present".
     $already = New-Object System.Collections.Generic.List[string]
     $found   = $false
 
@@ -1275,19 +1072,10 @@ function Invoke-WDTaskAction {
     New-WDResult -Status AlreadySet -Message "$($already.Count) task(s) already disabled" -Detail ($already -join ', ')
 }
 
-# --------------------------------------------- optional features / caps ----
-
 function Invoke-WDFeatureAction {
-    <#
-        Both directions. "mode": "enable" turns a feature on instead of off,
-        which is how the optional-feature install rows work - .NET 3.5, Sandbox,
-        Hyper-V, WSL. The direction is recorded in the journal rather than left
-        for the rollback to infer from the feature's state, because by then the
-        state is whatever this run made it.
-
-        -All on the way up, because Sandbox and WSL both sit under a parent
-        feature and enabling the leaf on its own fails with a bare 0x800f080c.
-    #>
+    # Both directions: "mode": "enable" turns a feature on. Enabling passes
+    # -All, because Sandbox and WSL sit under a parent feature and enabling the
+    # leaf alone fails with a bare 0x800f080c.
     param($Action, $Context)
 
     $names   = @(Get-Prop $Action 'names' @())
@@ -1338,7 +1126,7 @@ function Invoke-WDFeatureAction {
 }
 
 function Invoke-WDCapabilityAction {
-    <#  "mode": "install" is the enabling direction, as on features above.  #>
+    # "mode": "install" is the enabling direction, as on features above.
     param($Action, $Context)
 
     $names   = @(Get-Prop $Action 'names' @())
@@ -1389,24 +1177,20 @@ function Invoke-WDCapabilityAction {
     New-WDResult -Status NotPresent -Message 'Nothing to remove'
 }
 
-# -------------------------------------------------------- files/shortcuts --
-
 function Invoke-WDFileAction {
     param($Action, $Context)
 
     $paths   = @(Get-Prop $Action 'paths' @())
-    # Opt-in per action. A hard delete cannot be journalled back, so anything
-    # that removes a folder the operator might want again asks for the bin.
+    # Opt-in per action: a hard delete cannot be journalled back, so anything
+    # removing a folder the operator might want again asks for the bin.
     $recycle = [bool](Get-Prop $Action 'recycle' $false)
     # Same opt-out as everywhere else that closes something.
     $kill    = [bool](Get-Prop $Action 'closeRunning' $true)
     $deleted = 0; $errors = New-Object System.Collections.Generic.List[string]
 
-    # One attempt, so the retry after closing what held the folder open is the
-    # same code as the first try rather than a second copy of it - three delete
-    # routes and two chances at each is exactly where a copy drifts. Answers
-    # with the error text or $null; the counting stays outside, because a
-    # scriptblock invoked with & writes its own scope.
+    # One scriptblock, so the retry after closing what held the folder open is
+    # the same code as the first try - three delete routes and two chances at
+    # each is where a copy drifts.
     $tryDelete = {
         param($Item)
         try {
@@ -1415,9 +1199,8 @@ function Invoke-WDFileAction {
                 Remove-Item -LiteralPath $Item.FullName -Recurse -Force -ErrorAction Stop
                 Add-WDJournal -ItemId $Context.ItemId -Type 'file' -Target $Item.FullName -Status 'Removed' -Undo $null
             } elseif ($recycle) {
-                # Refuse rather than quietly hard-delete: the whole point of
-                # asking for the bin is that this is reversible, and
-                # SHFileOperation reports success either way.
+                # Refuse rather than quietly hard-delete: FOF_ALLOWUNDO is a
+                # request, and SHFileOperation reports success either way.
                 if (-not (Test-WDRecycleAvailable -Path $Item.FullName)) {
                     return "$($Item.FullName) : no Recycle Bin on that volume, left in place"
                 }
@@ -1445,17 +1228,15 @@ function Invoke-WDFileAction {
 
             $err = & $tryDelete $h
 
-            # "In use or protected" is the one refusal here that something can
-            # be done about, so it is asked a second time with whatever was
-            # running out of the folder closed. Directories only, and only ones
-            # specific enough to belong to one program: a locked single file is
-            # usually a DLL loaded by a process living elsewhere, and the only
-            # way to find that from a path is to guess at names, which is not a
-            # thing to do with Stop-Process.
+            # "In use or protected" is the one refusal something can be done
+            # about. Directories only: a locked single file is usually a DLL
+            # loaded from elsewhere, and finding that from a path means guessing
+            # at names.
             if ($err -and $kill -and $h.PSIsContainer) {
                 $under = [string](Test-WDSweepableRoot -Path $h.FullName)
                 if ($under) {
-                    # Assigned, never wrapped - see the appx and uninstall paths.
+                    # Assigned, never wrapped - see the appx and uninstall
+                    # paths.
                     $shut = Stop-WDBlockers -Path $under -Because "$($h.FullName) could be deleted"
                     if ($shut.Count) { $err = & $tryDelete $h }
                 }
@@ -1471,18 +1252,7 @@ function Invoke-WDFileAction {
 }
 
 function Invoke-WDShortcutAction {
-    <#  Sweeps shortcut locations for planted links.
-
-        `names` are BaseName wildcards; `exclude` patterns win over them.
-        `locations` narrows the sweep to 'desktop' and/or 'startmenu' and
-        defaults to both, which is what every earlier manifest entry expects.
-        `recurse` defaults on for the same reason -- but a sweep that takes
-        everything ("names": ["*"]) should switch it off, because a folder of
-        shortcuts on somebody's desktop is something they organized, not
-        something an installer planted. `recycle` mirrors the file action:
-        journalled to the bin so a rollback can put the links back, refused
-        when the volume has no bin, and a plain delete under irreversible
-        mode.  #>
+    # names are BaseName wildcards; exclude patterns win over them.
     param($Action, $Context)
 
     $names   = @(Get-Prop $Action 'names' @())
@@ -1513,9 +1283,9 @@ function Invoke-WDShortcutAction {
     foreach ($d in $dirs) {
         $hits = @()
         try {
-            # -File plus a Where rather than -Include: -Include silently
-            # matches nothing without -Recurse, so a non-recursive sweep
-            # written that way looks like an empty desktop.
+            # -File plus a Where rather than -Include: -Include silently matches
+            # nothing without -Recurse, so a non-recursive sweep written that
+            # way looks like an empty desktop.
             $hits = @(Get-ChildItem -LiteralPath $d -Recurse:$recurse -File -Force -ErrorAction SilentlyContinue |
                       Where-Object { $_.Extension -eq '.lnk' -or $_.Extension -eq '.url' })
         } catch { }
@@ -1532,8 +1302,7 @@ function Invoke-WDShortcutAction {
             try {
                 if ($recycle -and -not (Test-WDIrreversible)) {
                     # Refuse rather than quietly hard-delete, exactly as the
-                    # file action does: SHFileOperation reports success
-                    # whether or not the volume had a bin to catch it.
+                    # file action does.
                     if (-not (Test-WDRecycleAvailable -Path $h.FullName)) {
                         $errors.Add("$($h.FullName) : no Recycle Bin on that volume, left in place")
                         continue
@@ -1559,32 +1328,11 @@ function Invoke-WDShortcutAction {
     New-WDResult -Status NotPresent -Message 'No matching shortcuts'
 }
 
-# ===================================================== symptom synonyms ====
-#
-# The manifest carries SEED phrases; this generates the rest. Nobody types the
-# phrase that was authored - "app cannot see my name" is written down, and what
-# gets typed is "app can't see my name", "cant access account info". One missing
-# spelling and the document answers nothing for that person.
-#
-# Generated rather than authored so an item added tomorrow gets the same
-# treatment and there is nothing to forget.
-#
-# Four families, most useful first:
-#
-#   TAILS     phrase ends in a state word, so the rest is a subject that can be
-#             recast: "account info blocked" -> "cannot access account info".
-#   LEADS     phrase starts with one: "no tips" -> "tips missing". Without this,
-#             82 of 276 items produced no variants at all.
-#   VERBS     a verb pair in the middle: "cannot see" -> "does not see".
-#   SPELLING  every contraction both ways plus the apostrophe-free form.
-#             Cheapest and probably most valuable - "cant" and "doesnt" are what
-#             people type.
-#
-# Lower case throughout, and nothing over seventy characters: past that it is a
-# sentence, and nobody searches with a sentence.
+# The manifest carries seed phrases; this generates the rest, because nobody
+# types the phrase that was authored.
 
-# The state word a phrase ends in, and what its subject can be recast as.
-# {0} is the phrase with the tail removed.
+# The state word a phrase ends in, and what its subject can be recast as. {0} is
+# the phrase with the tail removed.
 $script:WDSymptomTails = [ordered]@{
     'not working' = @('{0} broken', '{0} stopped working', '{0} does not work',
                       '{0} not working anymore', '{0} no longer works', '{0} has stopped working')
@@ -1619,34 +1367,26 @@ $script:WDSymptomTails = [ordered]@{
     'bad'         = @('{0} is bad', '{0} poor', '{0} is terrible')
 }
 
-# The state word a phrase STARTS with. "no printers" and "no tips" are as
-# common a shape as "printer missing", and without this eighty-two items in the
-# manifest produced no variants at all - every one of them phrased as the
-# absence somebody notices rather than as a thing that broke.
+# The state word a phrase starts with. Without this, eighty-two items produced
+# no variants at all - every one phrased as the absence somebody notices.
 $script:WDSymptomLeads = [ordered]@{
     'no'      = @('{0} missing', '{0} gone', 'where is {0}', 'cannot find {0}', '{0} not there', '{0} disappeared')
     'missing' = @('no {0}', '{0} is missing', 'where is {0}')
     'lost'    = @('no {0}', '{0} missing', '{0} gone')
 }
 
-# A lead word that is really the start of a longer phrase, not a subject.
-# "no longer works" would otherwise be recast as "longer works missing".
+# A lead word that starts a longer phrase rather than a subject: "no longer
+# works" would be recast as "longer works missing".
 $script:WDSymptomNotSubjects = @('longer', 'more', 'idea', 'way')
 
-# A subject cannot end in one of these. Two ways it goes wrong, and the first
-# is the one that turned up in the manifest: "downloads not blocked" leaves the
-# subject "downloads not", and every recast of it is a double negative -
-# "downloads not not allowed", "cannot access downloads not". The phrase means
-# the opposite of the tail it appears to end with, so there is nothing to
-# recast. The second is a dangling preposition or article, which reads as a
-# sentence somebody did not finish.
+# A subject cannot end in one of these: "downloads not blocked" leaves the
+# subject "downloads not", and every recast of it is a double negative.
 $script:WDSymptomDanglers = @(
     'not', 'no', 'never', 'is', 'are', 'was', 'were', 'be', 'been',
     'isnt', 'arent', 'wasnt', 'dont', 'doesnt', 'cant', 'cannot', 'wont',
     'in', 'on', 'of', 'to', 'for', 'with', 'and', 'or', 'the', 'a', 'an',
     'my', 'your', 'its', 'it', 'that', 'this', 'at', 'by', 'from')
 
-# A verb pair anywhere in the phrase, and the other ways it gets typed.
 # Longest key first: 'cannot sign in' has to be tried before 'cannot'.
 $script:WDSymptomVerbs = [ordered]@{
     'cannot sign in' = @('cannot log in', 'cannot login', 'will not sign in', 'unable to sign in')
@@ -1662,9 +1402,8 @@ $script:WDSymptomVerbs = [ordered]@{
     'not showing'    = @('does not show', 'no longer shows', 'not displaying')
     'never asks'     = @('does not ask', 'stopped asking', 'no longer asks')
     'missing from'   = @('not in', 'gone from', 'no longer in')
-    # Spelled out per verb rather than as a bare 'no longer' -> 'does not'.
-    # That shorter rule turned "no longer works" into "does not works", because
-    # the verb has to lose its s and a substitution cannot know that.
+    # Spelled out per verb rather than a bare 'no longer' -> 'does not', which
+    # turned "no longer works" into "does not works".
     'no longer works' = @('does not work', 'stopped working', 'not working')
     'no longer opens' = @('does not open', 'will not open')
     'no longer shows' = @('does not show', 'stopped showing')
@@ -1672,8 +1411,8 @@ $script:WDSymptomVerbs = [ordered]@{
     'will not'       = @('does not', 'wont', "won't", 'refuses to')
 }
 
-# Spelling, both ways, and the apostrophe-free form of each. Whole words only,
-# so 'cant' inside 'cantilever' is left alone.
+# Both ways, plus the apostrophe-free form. Whole words only, so 'cant' inside
+# 'cantilever' is left alone.
 $script:WDSymptomSpellings = [ordered]@{
     'cannot'    = @("can't", 'cant', 'can not', 'unable to')
     "can't"     = @('cannot', 'cant')
@@ -1694,39 +1433,28 @@ $script:WDSymptomSpellings = [ordered]@{
 }
 
 function New-WDPhraseVariants {
-    <#
-        Other ways one authored phrase gets typed. Internal to the expansion
-        below; nothing else should reach for it.
-
-        Order matters and is by usefulness, because the caller caps the result:
-        a recast subject finds somebody the authored phrase would have missed
-        entirely, where a contraction only finds them if they were already
-        close. Both are worth having and only one is worth having first.
-    #>
     param([string]$Phrase)
 
     $out = New-Object System.Collections.Generic.List[string]
     $p = ([string]$Phrase).Trim().ToLower()
     if (-not $p) { return $out }
 
-    # --- tails: the phrase ends in a state word, so the rest is the subject --
+    # tails: the phrase ends in a state word, so the rest is the subject
     foreach ($tail in $script:WDSymptomTails.Keys) {
         if (-not $p.EndsWith(" $tail")) { continue }
         $subject = $p.Substring(0, $p.Length - $tail.Length - 1).Trim()
         # A subject of one or two characters is not a subject - "is missing"
-        # recast as "no is" is noise, and noise in a lookup file is the thing
-        # that makes somebody stop trusting it.
+        # recast as "no is" is noise.
         if ($subject.Length -lt 3) { break }
         $last = ($subject -split ' ')[-1]
         if ($script:WDSymptomDanglers -contains $last) { break }
         foreach ($form in $script:WDSymptomTails[$tail]) { $out.Add(($form -f $subject)) }
-        # One tail only. "not working" and "not work" both match the same
-        # phrase and the second recast would be built from a subject that
-        # still has "ing" hanging off it.
+        # One tail only: "not working" and "not work" both match, and the second
+        # recast would be built from a subject with "ing" still hanging off it.
         break
     }
 
-    # --- leads: the phrase starts with the state word -----------------------
+    # leads: the phrase starts with the state word
     foreach ($lead in $script:WDSymptomLeads.Keys) {
         if (-not $p.StartsWith("$lead ")) { continue }
         $subject = $p.Substring($lead.Length + 1).Trim()
@@ -1738,7 +1466,7 @@ function New-WDPhraseVariants {
         break
     }
 
-    # --- verbs: a pair somewhere in the middle ------------------------------
+    # verbs: a pair somewhere in the middle
     foreach ($verb in $script:WDSymptomVerbs.Keys) {
         if ($p -notmatch "\b$([regex]::Escape($verb))\b") { continue }
         foreach ($alt in $script:WDSymptomVerbs[$verb]) {
@@ -1747,11 +1475,7 @@ function New-WDPhraseVariants {
         break
     }
 
-    # --- spelling, over the phrase and over everything produced so far ------
-    #
-    # Over the variants too, deliberately. "account info blocked" becomes
-    # "cannot access account info" up there, and the person looking for it is
-    # every bit as likely to type "cant access account info".
+    # spelling, over the phrase and over everything produced so far
     $spellingSeed = New-Object System.Collections.Generic.List[string]
     $spellingSeed.Add($p)
     foreach ($v in $out) { $spellingSeed.Add($v) }
@@ -1765,17 +1489,15 @@ function New-WDPhraseVariants {
                 $row.Add(($base -replace "\b$([regex]::Escape($word))\b", $alt))
             }
             $rows.Add($row.ToArray())
-            # One spelling family per phrase. Crossing two of them produces
-            # combinations nobody types and buries the ones they do.
+            # One spelling family per phrase: crossing two produces combinations
+            # nobody types and buries the ones they do.
             break
         }
     }
 
-    # Interleaved, not base by base, because the caller caps the list. Taken in
+    # Interleaved, not base by base, because the caller caps the list - in
     # order, every spelling of the authored phrase lands before the first
-    # spelling of any recast one - so "app doesn't have my name" fell off the
-    # end behind four ways of writing "app cannot see my name", which is the
-    # wrong four to keep. One alternative from each row, then the next.
+    # spelling of any recast one.
     $widest = 0
     foreach ($row in $rows) { if ($row.Count -gt $widest) { $widest = $row.Count } }
     for ($i = 0; $i -lt $widest; $i++) {
@@ -1788,17 +1510,6 @@ function New-WDPhraseVariants {
 }
 
 function Expand-WDSymptoms {
-    <#
-        An item's authored lookup phrases, plus every other way they get typed.
-
-        Authored phrases come first and are never dropped - they are what
-        somebody wrote down on purpose, and a generator that reorders them is
-        a generator that has an opinion it has not earned.
-
-        Emitted unrolled with no leading comma. Every caller wraps in @(), so
-        the comma form would hand them one element holding the whole array -
-        the trap this repo has hit from both directions.
-    #>
     param([string[]]$Phrases, [int]$PerPhrase = 12)
 
     $out  = New-Object System.Collections.Generic.List[string]
@@ -1807,8 +1518,8 @@ function Expand-WDSymptoms {
     $add = {
         param([string]$Text)
         $t = ([string]$Text).Trim()
-        # The same floor and ceiling the self test holds the authored phrases
-        # to. Under four characters is not a search; over seventy is a sentence.
+        # The same floor and ceiling the self test holds authored phrases to:
+        # under four characters is not a search, over seventy is a sentence.
         if ($t.Length -lt 4 -or $t.Length -gt 70) { return }
         if (-not $seen.Add($t)) { return }
         $out.Add($t)
@@ -1827,12 +1538,8 @@ function Expand-WDSymptoms {
     $out.ToArray()
 }
 
-# One plain sentence per script handler, naming the place it acts on. Authored
-# because a handler name is a function name: "A step in code rather than one
-# setting: ClearDeliveryOptimization" told a reader nothing.
-#
-# Beside the renderer rather than the handlers, so adding a line is one edit in
-# the file that reads it. The self test fails a registered handler with no note.
+# Authored, because a handler name is a function name and tells a reader
+# nothing.
 $script:WDHandlerNotes = @{
     'CleanComponentStore'     = 'Runs DISM /StartComponentCleanup, which discards the superseded copies of Windows components kept under C:\Windows\WinSxS. The same thing Disk Cleanup calls Windows Update Cleanup.'
     'ClearActivityTraces'     = 'Clears the recent-items lists Windows keeps: jump lists, Quick Access, the Run box history, and the Registry Editor last key and favourites.'
@@ -1877,33 +1584,23 @@ $script:WDHandlerNotes = @{
     'VerifyShellHealth'       = 'Checks that Explorer, the Start menu, and the search host are running after the run. Changes nothing.'
 }
 
-# Handlers that ride along behind another action rather than BEING the item.
+# Handlers that ride along behind another action rather than being the item.
 # They change nothing, so an item whose other actions have gone inert has
-# nothing left to do and Test-WDItemApplies drops it.
-#
-# Not every handler that changes nothing belongs here, and that is the point.
-# VerifyDefender changes nothing either and is deliberately NOT listed, because
-# it IS its item - "Confirm Defender took back over" is a row somebody can want
-# on its own. A list rather than inferred from the prose above: rewording an
-# operator-facing sentence must not silently change what gets listed.
+# nothing left to do.
 $script:WDPassiveHandlers = @('VerifyShellHealth')
 
 function Get-WDHandlerNote {
-    <#  One plain sentence about a script handler, or empty for one nobody has
-        written yet - which the self test refuses.  #>
     param([string]$Name)
     if ($script:WDHandlerNotes.ContainsKey($Name)) { return [string]$script:WDHandlerNotes[$Name] }
     ''
 }
 
 function Test-WDPassiveHandler {
-    <#  Whether a script handler only looks and reports.  #>
     param([string]$Name)
     [bool]($Name -and $script:WDPassiveHandlers -contains $Name)
 }
 
 function Get-WDHandlerNoteNames {
-    <#  Lets the self test compare this table against the registered handlers. #>
     ,@($script:WDHandlerNotes.Keys)
 }
 
@@ -1917,11 +1614,6 @@ $script:WDActionConsoles = @{
 }
 
 function Get-WDItemConsoles {
-    <#
-        The consoles an item's changes can be reached through by hand, each
-        with the words that would give it away in prose somebody has already
-        written. Deduplicated by label.
-    #>
     param([Parameter(Mandatory)]$Item)
 
     $seen = New-WDStringSet @()
@@ -1937,33 +1629,10 @@ function Get-WDItemConsoles {
 }
 
 function Get-WDItemMechanics {
-    <#
-        What an item does to the machine, in plain lines, derived from its own
-        actions.
-
-        GENERATED, not authored: these are the same fields the executors read, so
-        the description cannot drift from what happens. An authored "this writes
-        X" is a second copy of a fact, and the copy goes wrong the first time
-        somebody edits the action and not the prose.
-
-        Three fields come off the item itself, because reading the actions cannot
-        produce them:
-
-          settingsPath  where to change the same thing by hand, and only where a
-                        page genuinely exists. Authored for the few dozen items
-                        where it is both true and stable.
-          symptoms      what somebody would say weeks later if this turned out to
-                        be the cause. Written for the failure moment; riskNote is
-                        written for the decision moment.
-          mechanics     an override for script handlers whose name says nothing.
-    #>
     param(
         [Parameter(Mandatory)]$Item,
-        # Read each registry value and say whether it is already what this would
-        # write. Off by default, and that is not laziness: the written record is
-        # produced AFTER the run, where every value is set because the run set
-        # it, so "already set" there would be true and useless. The dialog is
-        # read BEFORE, where it is the question being asked.
+        # Off by default, and not laziness: the written record is produced after
+        # the run, where every value is set because the run set it.
         [switch]$ShowState
     )
 
@@ -1973,7 +1642,6 @@ function Get-WDItemMechanics {
         'ExpandString' = 'text'; 'Binary' = 'bytes'; 'MultiString' = 'list'
     }
 
-    # Where one value stands, across every hive the executor would write it to.
     # Resolved the same way Invoke-WDRegistryAction resolves it, or this answers
     # a different question than the run will.
     $stateOf = {
@@ -2002,8 +1670,8 @@ function Get-WDItemMechanics {
         $n = @($roots).Count
         if ($set -eq $n) { return '   [already set]' }
         if ($set -eq 0)  { return '   [will be set]' }
-        # Only one scope can produce this, and saying which accounts is the
-        # whole of what makes it actionable.
+        # Only one scope can produce this, and saying which accounts is what
+        # makes it actionable.
         "   [already set for $set of $n account(s), will be set for the rest]"
     }
 
@@ -2013,8 +1681,7 @@ function Get-WDItemMechanics {
             'registry' {
                 # allusers is the only scope in the manifest that is not
                 # machine-wide, and it is the one thing somebody checking a
-                # value by hand has to be told: what they are looking at is
-                # their copy of it, not the only one.
+                # value by hand has to be told.
                 $scope = [string](Get-Prop $a 'scope' 'machine')
                 $tail  = ''
                 if ($scope -eq 'allusers') { $tail = '   [written to every account, and to the profile new accounts are copied from]' }
@@ -2037,11 +1704,9 @@ function Get-WDItemMechanics {
                 foreach ($p in @(Get-Prop $a 'paths' @())) { $lines.Add("Registry: deletes the whole key $p") }
             }
             'appx' {
-                # One line for the whole action, not one per name. The tail is
-                # fourteen words and identical every time, so an item naming
-                # six Copilot packages printed it six times - ninety words of
-                # repetition around six package names, in a list somebody is
-                # reading to find out what happened to their machine.
+                # One line for the whole action, not one per name: the tail is
+                # identical every time, so an item naming six packages printed
+                # it six times.
                 $names = @(Get-Prop $a 'names' @())
                 if ($names.Count -eq 1) {
                     $lines.Add("Store package: removes $($names[0]) for every account, and deprovisions it so a Windows update cannot stage it again")
@@ -2060,11 +1725,10 @@ function Get-WDItemMechanics {
                 foreach ($n in @(Get-Prop $a 'names' @())) {
                     $stop = ''
                     if ([bool](Get-Prop $a 'stop' $false)) { $stop = ', and stops it now' }
-                    # ServiceController carries StartType and is already cheap.
-                    # Tasks and Windows features are deliberately not probed:
-                    # Get-ScheduledTask with a path costs about a second and DISM
-                    # costs several, and this runs while somebody is waiting on
-                    # a dialog they clicked.
+                    # ServiceController carries StartType and is cheap. Tasks
+                    # and features are deliberately not probed -
+                    # Get-ScheduledTask with a path costs about a second and
+                    # DISM more.
                     $state = ''
                     if ($ShowState) {
                         $svcs = @(Get-Service -Name $n -ErrorAction SilentlyContinue)
@@ -2116,11 +1780,8 @@ function Get-WDItemMechanics {
             }
             'uninstall' {
                 # 'match' rather than 'names' on every OEM and antivirus entry:
-                # the point of those items is that nobody knows in advance which
-                # of a dozen brands is on the machine, so they are patterns
-                # against the uninstall hive with an exclusion list beside them.
-                # Rendering only 'names' left thirty-odd items describing
-                # nothing at all, which the self test now refuses.
+                # nobody knows in advance which of a dozen brands is on the
+                # machine.
                 foreach ($n in @(Get-Prop $a 'names' @())) { $lines.Add("Runs the program's own uninstaller for $n, silently") }
                 $pat = @(Get-Prop $a 'match' @())
                 if ($pat.Count) {
@@ -2137,9 +1798,8 @@ function Get-WDItemMechanics {
                 }
             }
             'script' {
-                # The handler NAME says nothing to anybody reading this - it is
-                # a function name. What goes in is the authored sentence about
-                # what it touches and where that lives.
+                # The handler name is a function name and says nothing to a
+                # reader, so the authored sentence goes in instead.
                 $h = [string](Get-Prop $a 'handler' '')
                 if ($h) {
                     $note = Get-WDHandlerNote -Name $h
@@ -2156,44 +1816,21 @@ function Get-WDItemMechanics {
     [pscustomobject]@{
         Id       = [string](Get-Prop $Item 'id' '')
         Name     = [string](Get-Prop $Item 'name' (Get-Prop $Item 'id' ''))
-        # Stamped by Resolve-WDPlan and absent on a bare manifest item, which is
-        # why it falls back rather than being assumed. The written record groups
-        # by it, so a hundred and fifty options read as a dozen headings.
+        # Stamped by Resolve-WDPlan and absent on a bare manifest item, so it
+        # falls back rather than being assumed.
         Category = [string](Get-Prop $Item 'category' 'Other')
         Lines    = $lines.ToArray()
         Settings = [string](Get-Prop $Item 'settingsPath' '')
         Symptoms = @(Get-Prop $Item 'symptoms' @())
         RiskNote = [string](Get-Prop $Item 'riskNote' '')
         Revert   = (Get-WDItemRevertibility -Item $Item)
-        # Consoles this item's changes are reachable through by hand, for the
-        # one-line pointer. Full steps are Get-WDItemRevertRoutes' job.
-        #
-        # Carries Keys as well as a label, so a caller can tell whether the
-        # item's own settingsPath already named this console - several do, and
-        # appending it again is the sentence saying itself twice.
+        # For the one-line pointer only. Full steps are Get-WDItemRevertRoutes'
+        # job.
         Consoles = (Get-WDItemConsoles -Item $Item)
     }
 }
 
 function Get-WDItemRevertibility {
-    <#
-        Whether undoing the run puts this item back, and it is three-valued
-        because the honest answer is.
-
-        Fully:     every action is journalled with its previous value and the
-                   rollback script restores it exactly - registry, services,
-                   scheduled tasks, Windows features and capabilities.
-        Partially: something can be put back, but not to the state it was in.
-                   An uninstalled app is a reinstall hint, not an undo; a
-                   recycled file comes out of the bin.
-        No:        nothing can restore it. A file deleted outright, and anything
-                   the manifest says so about.
-
-        A `revert` field on the item overrides the answer, for the handful of
-        script handlers where reading the action types cannot produce it. A
-        script handler with no override is "partially" rather than "fully",
-        because an unknown is not a promise.
-    #>
     param([Parameter(Mandatory)]$Item)
 
     $said = [string](Get-Prop $Item 'revert' '')
@@ -2218,7 +1855,6 @@ function Get-WDItemRevertibility {
 }
 
 function Format-WDHivePath {
-    <#  A registry path as regedit shows it, from the PowerShell form.  #>
     param([string]$Path)
     $p = [string]$Path
     $p = $p -replace '^HKLM:\\?',  'HKEY_LOCAL_MACHINE\'
@@ -2229,24 +1865,6 @@ function Format-WDHivePath {
 }
 
 function Get-WDItemRevertRoutes {
-    <#
-        Every way one option can be put back, as followable steps, narrowest
-        first.
-
-        THE PREVIOUS VALUES COME FROM THE JOURNAL, not the manifest. The manifest
-        knows what was written and cannot know what was there before, so a
-        document built from it alone says "set it to 0" and never "set it back
-        to 1". By the time the lookup document is written (order 9990) the
-        journal holds every entry the run made.
-
-        With no journal - a preview, or the self test - the registry route is
-        still emitted, because knowing WHERE the value lives is most of it, and it
-        says the previous value is in the rollback script rather than inventing
-        one.
-
-        The two blunt instruments go last and are always offered: somebody who
-        wanted the whole run gone would not be reading one option's entry.
-    #>
     param($Item, $JournalEntries = @())
 
     $routes = New-Object System.Collections.Generic.List[psobject]
@@ -2263,16 +1881,13 @@ function Get-WDItemRevertRoutes {
         @($entries | Where-Object { $_ -and $_.undo -and [string]$_.undo.method -eq $Method })
     }
 
-    # ---- 1. the authored one-liner, whatever it is -------------------------
-    #
-    # Not titled "In Settings": settingsPath is a grab-bag by design. Some of
-    # them are a Settings path, some name a console, and some say there is
-    # nothing to undo because the item only wrote a file. A title claiming all
-    # of those are Settings is wrong on most of them.
+    # 1. The authored one-liner, whatever it is. Not titled "In Settings":
+    # settingsPath is a grab-bag, and some entries name a console or say there
+    # is nothing to undo.
     $settings = [string](Get-Prop $Item 'settingsPath' '')
     if ($settings) { & $addRoute 'The short answer' @($settings) }
 
-    # ---- 2. the Registry Editor --------------------------------------------
+    # 2. The Registry Editor.
     $regActions = @(@(Get-Prop $Item 'actions' @()) |
                     Where-Object { [string](Get-Prop $_ 'type' '') -eq 'registry' })
     if ($regActions.Count) {
@@ -2282,10 +1897,9 @@ function Get-WDItemRevertRoutes {
 
         $regUndo = & $byMethod 'registry'
         if (@($regUndo).Count) {
-            # Grouped by what the value is and what it was, not by hive. An
+            # Grouped by what the value is and what it was, not by hive: an
             # allusers write on a machine with four accounts is the same
-            # instruction four times over with a different SID in front of it,
-            # and a list like that is one somebody gives up on.
+            # instruction four times with a different SID in front.
             $groups = @{}
             foreach ($e in $regUndo) {
                 $path = Format-WDHivePath ([string]$e.undo.path)
@@ -2307,8 +1921,7 @@ function Get-WDItemRevertRoutes {
                     $extra = "  (the same value was also written under $($shown.Count - 1) other account hive$(if ($shown.Count -gt 2) { 's' }) below HKEY_USERS - repeat this there if you want it back for those accounts too)"
                 }
                 # '__ABSENT__' is what the executor records when the value did
-                # not exist. Deleting it is the undo, and saying "set it back
-                # to __ABSENT__" would be a line nobody can act on.
+                # not exist, so deleting it is the undo.
                 $what = $(if ($g.Prev -eq '__ABSENT__') {
                               "right-click $($g.Name) and choose Delete - it did not exist before this run"
                           } else {
@@ -2332,7 +1945,7 @@ function Get-WDItemRevertRoutes {
         & $addRoute 'In the Registry Editor' $steps
     }
 
-    # ---- 3. the Services console -------------------------------------------
+    # 3. The Services console.
     $svcActions = @(@(Get-Prop $Item 'actions' @()) |
                     Where-Object { [string](Get-Prop $_ 'type' '') -eq 'service' })
     if ($svcActions.Count) {
@@ -2354,7 +1967,7 @@ function Get-WDItemRevertRoutes {
         & $addRoute 'In the Services console' $steps
     }
 
-    # ---- 4. Task Scheduler --------------------------------------------------
+    # 4. Task Scheduler.
     $taskActions = @(@(Get-Prop $Item 'actions' @()) |
                      Where-Object { [string](Get-Prop $_ 'type' '') -eq 'task' })
     if ($taskActions.Count) {
@@ -2378,7 +1991,7 @@ function Get-WDItemRevertRoutes {
         & $addRoute 'In Task Scheduler' $steps
     }
 
-    # ---- 5. Windows features and optional features --------------------------
+    # 5. Windows features and optional features.
     $featActions = @(@(Get-Prop $Item 'actions' @()) |
                      Where-Object { [string](Get-Prop $_ 'type' '') -eq 'feature' })
     if ($featActions.Count) {
@@ -2408,7 +2021,7 @@ function Get-WDItemRevertRoutes {
         & $addRoute 'In Settings, Optional features' $steps
     }
 
-    # ---- 6. putting software back -------------------------------------------
+    # 6. Putting software back.
     $appx = @(@(Get-Prop $Item 'actions' @()) |
               Where-Object { [string](Get-Prop $_ 'type' '') -in @('appx', 'appxPolicy') })
     if ($appx.Count) {
@@ -2424,7 +2037,7 @@ function Get-WDItemRevertRoutes {
             'Its settings are usually gone with it. Anything it kept lives under your user folder and may still be there.')
     }
 
-    # ---- 7. the two blunt instruments, always -------------------------------
+    # 7. The two blunt instruments, always.
     & $addRoute 'By undoing this one option from the toolkit' @(
         'Open Windows Setup Toolkit and press Revert past changes.',
         'Untick everything except this option, then press Revert. That restores only what this option changed.')
