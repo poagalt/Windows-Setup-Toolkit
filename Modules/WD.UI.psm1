@@ -2991,7 +2991,9 @@ function Show-WDWindow {
             SkipItem = $false
             # The background runspace has its own session, so its run folder and
             # reboot flag are not the ones this thread can see.
-            RunDir = $null; Reboot = $false; NotesFile = $null; RestartCount = 0; KeepDir = $null
+            # AppDir is the copy beside the toolkit - the one that leaves with
+            # the stick, where KeepDir stays on this machine's desktop.
+            RunDir = $null; Reboot = $false; NotesFile = $null; RestartCount = 0; KeepDir = $null; AppDir = $null
             # Whether the rollback script actually got written. It is an option
             # with a row now, so the closing notice has to ask.
             HasUndo = $false
@@ -12594,6 +12596,12 @@ function Show-WDWindow {
         } else {
             $out.Add("The log and a list of every change are in $([string]$state.Sync.RunDir).")
         }
+        # Kept in step with Get-WDWrapUpLines by hand, because this is a second
+        # copy of that prose rather than a call to it.
+        $appDir = [string]$state.Sync.AppDir
+        if ($appDir) {
+            $out.Add("The same files were also written beside the toolkit itself, in 'Run logs\$(Split-Path -Leaf $appDir)'. If you are running this from a USB stick, that copy goes home with the stick - so a run done on somebody else's machine can still be read after you have left it.")
+        }
         $out.Add('If something stops working days or weeks from now, open "Common issues lookup and reversion instructions" from that folder and press ctrl+F for whatever is wrong - "no sound", "camera not working", "updates broken". It names the option responsible and how to undo that one option.')
         if ($undo) {
             $out.Add('To undo the whole run instead: run Undo-WinSetupToolkit.ps1 as an administrator, or open this toolkit and use Revert past changes.')
@@ -13104,6 +13112,7 @@ function Show-WDWindow {
         $state.Sync.Cancel = $false; $state.Sync.Done = $false; $state.Sync.Error = $null
         $state.Sync.SkipItem = $false; $state.Sync.RunDir = $null; $state.Sync.Reboot = $false
         $state.Sync.NotesFile = $null; $state.Sync.RestartCount = 0; $state.Sync.KeepDir = $null
+        $state.Sync.AppDir = $null
         $state.Sync.HasUndo = $false
         $state.Sync.RestorePoint = ''
         $state.Counts = @{ Removed=0; Changed=0; AlreadySet=0; NotPresent=0; Skipped=0; Obstruction=0; Partial=0; Blocked=0; Failed=0 }
@@ -13182,6 +13191,7 @@ function Show-WDWindow {
         $state.Sync.Done = $true
         $state.Sync.RunDir       = [string]$info.RunDir
         $state.Sync.KeepDir      = [string]$info.KeepDir
+        $state.Sync.AppDir       = [string]$info.AppDir
         $state.Sync.HasUndo      = [bool]$info.HasUndo
         $state.Sync.RestorePoint = [string]$info.RestorePoint
         $state.Sync.RestartCount = [int]$info.RestartCount
@@ -13465,7 +13475,10 @@ function Show-WDWindow {
                     # raised.
                     try {
                         $keep = Export-WDRunFolder -Session $session
-                        if ($keep) { $Sync.KeepDir = [string]$keep.Path }
+                        if ($keep) {
+                            $Sync.KeepDir = [string]$keep.Path
+                            $Sync.AppDir  = [string]$keep.AppPath
+                        }
                     } catch { }
                 }
                 # Counted off the results rather than the plan, so an item that

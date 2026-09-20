@@ -2245,15 +2245,27 @@ if ($SelfTest) {
         # nothing.
         $deskDir = Join-Path ([IO.Path]::GetTempPath()) "wd-desk-$([Guid]::NewGuid().ToString('N'))"
         $null = New-Item -ItemType Directory -Path $deskDir -Force
+        # And a scratch toolkit folder for the second copy, for the same reason:
+        # pointed at the real one this would write a Run logs folder into the
+        # checkout every time the self test ran.
+        $appRootDir = Join-Path ([IO.Path]::GetTempPath()) "wd-app-$([Guid]::NewGuid().ToString('N'))"
+        $null = New-Item -ItemType Directory -Path $appRootDir -Force
         $undoProbe = Join-Path $issDir 'Undo-WinSetupToolkit.ps1'
         Set-Content -LiteralPath $undoProbe -Value '# rollback' -Encoding UTF8
+        # The three diagnostics are the reason the copy exists at all, so they
+        # are written here rather than left absent and silently skipped.
+        foreach ($diag in @('trace.jsonl', 'environment.json', 'journal.jsonl')) {
+            Set-Content -LiteralPath (Join-Path $issDir $diag) -Value '{}' -Encoding UTF8
+        }
         $fakeSession = [pscustomobject]@{
             Id = 'selftest'; Root = $issDir; RunDir = $issDir
             UndoFile = $undoProbe; NotesFile = $notesProbe; IssuesFile = $issFile
             LogFile = (Join-Path $issDir 'debloat.log'); ReportFile = (Join-Path $issDir 'report.json')
+            TraceFile = (Join-Path $issDir 'trace.jsonl'); EnvFile = (Join-Path $issDir 'environment.json')
+            JournalFile = (Join-Path $issDir 'journal.jsonl')
             Preview = $false; Started = (Get-Date)
         }
-        $keepRes = Export-WDRunFolder -Session $fakeSession -Desktop $deskDir
+        $keepRes = Export-WDRunFolder -Session $fakeSession -Desktop $deskDir -AppRoot $appRootDir
         if (-not $keepRes -or -not (Test-Path -LiteralPath $keepRes.Path)) {
             Write-Host '  KEEP   the run folder was not created on the desktop' -ForegroundColor Red; $failures++
         } else {
@@ -2266,8 +2278,13 @@ if ($SelfTest) {
             if (-not $peek.Ok -or [string]$peek.Path -ne [string]$keepRes.Path) {
                 Write-Host "  KEEP   the preview would name '$($peek.Path)' and the run made '$($keepRes.Path)'" -ForegroundColor Red; $failures++
             }
+            # The three diagnostics keep their own names, because
+            # Show-WDRunTrace.ps1 opens a folder and looks for trace.jsonl by
+            # name. Renaming them for readability is what made the exported
+            # folder unreadable by the one tool that reads runs.
             foreach ($want in @('Undo-WinSetupToolkit.ps1', 'What this run did.md',
-                                'Common issues lookup and reversion instructions.txt', 'Read me first.txt')) {
+                                'Common issues lookup and reversion instructions.txt', 'Read me first.txt',
+                                'trace.jsonl', 'environment.json', 'journal.jsonl')) {
                 if (-not (Test-Path -LiteralPath (Join-Path $keepRes.Path $want))) {
                     Write-Host "  KEEP   '$want' is missing from the run folder" -ForegroundColor Red; $failures++
                 }
@@ -2279,6 +2296,44 @@ if ($SelfTest) {
                 }
             }
             Write-Host "  run folder   : $(@($keepRes.Files).Count) file(s) copied plus the read-me"
+        }
+        # The second copy, beside the toolkit. This is the one that leaves with
+        # the stick, so it is checked for the same contents rather than trusted
+        # to be the same because one function writes both.
+        if (-not $keepRes -or -not $keepRes.AppPath -or -not (Test-Path -LiteralPath $keepRes.AppPath)) {
+            Write-Host '  KEEP   no copy was made beside the toolkit' -ForegroundColor Red; $failures++
+        } else {
+            $appLeaf = Split-Path -Leaf $keepRes.AppPath
+            # One stick collects these from every machine it is carried to, so
+            # the machine has to be in the name.
+            if ($appLeaf -notlike "$env:COMPUTERNAME - Windows Setup Toolkit apply *") {
+                Write-Host "  KEEP   the copy beside the toolkit is called '$appLeaf'" -ForegroundColor Red; $failures++
+            }
+            if ((Split-Path -Leaf (Split-Path -Parent $keepRes.AppPath)) -ne 'Run logs') {
+                Write-Host "  KEEP   the copy beside the toolkit is not under 'Run logs'" -ForegroundColor Red; $failures++
+            }
+            # Same contents as the desktop copy: two copies of a run that hold
+            # different files is the defect this replaced.
+            $deskNames = @(Get-ChildItem -LiteralPath $keepRes.Path -File | ForEach-Object { $_.Name } | Sort-Object)
+            $appNames  = @(Get-ChildItem -LiteralPath $keepRes.AppPath -File | ForEach-Object { $_.Name } | Sort-Object)
+            if (($deskNames -join '|') -ne ($appNames -join '|')) {
+                Write-Host "  KEEP   the two copies differ: desktop has $($deskNames.Count), the toolkit copy has $($appNames.Count)" -ForegroundColor Red; $failures++
+            }
+            # The preview has to name the same path the run made, as it already
+            # must for the desktop.
+            $appPeek = Get-WDAppRunFolder -Session $fakeSession -Root $appRootDir
+            if (-not $appPeek.Ok -or [string]$appPeek.Path -ne [string]$keepRes.AppPath) {
+                Write-Host "  KEEP   the preview would name '$($appPeek.Path)' and the run made '$($keepRes.AppPath)'" -ForegroundColor Red; $failures++
+            }
+            Write-Host "  toolkit copy : $(@($keepRes.AppFiles).Count) file(s) in $appLeaf"
+        }
+        # A guard runs from a copy of the toolkit under the data root, where the
+        # run folder already is. A copy inside that copy is noise.
+        $insideRoot = Join-Path $issDir 'toolkit'
+        $null = New-Item -ItemType Directory -Path $insideRoot -Force
+        $guardPeek = Get-WDAppRunFolder -Session $fakeSession -Root $insideRoot
+        if ($guardPeek.Ok) {
+            Write-Host '  KEEP   a toolkit copy under the data root still asked for its own run folder' -ForegroundColor Red; $failures++
         }
         # The run with no interface: what SetupComplete.cmd leaves behind for
         # whoever signs in first.
@@ -2357,12 +2412,20 @@ if ($SelfTest) {
         # A preview leaves nothing: a folder of rollback instructions for a run
         # that changed nothing is worse than no folder.
         $fakeSession.Preview = $true
-        if (Export-WDRunFolder -Session $fakeSession -Desktop $deskDir) {
+        if (Export-WDRunFolder -Session $fakeSession -Desktop $deskDir -AppRoot $appRootDir) {
             Write-Host '  KEEP   a simulation left a run folder behind' -ForegroundColor Red; $failures++
+        }
+        # Asked of the toolkit copy too, since it is a second write and a
+        # preview that leaves one on the stick is the same defect.
+        if (Test-Path -LiteralPath (Join-Path $appRootDir 'Run logs')) {
+            $stale = @(Get-ChildItem -LiteralPath (Join-Path $appRootDir 'Run logs') -Directory)
+            if ($stale.Count -ne 1) {
+                Write-Host "  KEEP   'Run logs' holds $($stale.Count) folder(s) after one apply and one simulation" -ForegroundColor Red; $failures++
+            }
         }
         # [IO.Directory]::Delete, not Remove-Item -Recurse: the cmdlet
         # enumerates and deletes in two passes and leaves the folder behind.
-        foreach ($d in @($deskDir, $issDir)) {
+        foreach ($d in @($deskDir, $issDir, $appRootDir)) {
             try { [IO.Directory]::Delete($d, $true) } catch { }
             if (Test-Path -LiteralPath $d) {
                 Write-Host "  KEEP   the scratch folder $d could not be removed" -ForegroundColor Yellow
@@ -3137,6 +3200,7 @@ if ($Console) {
     if (-not $Preview -and $SetupRun) {
         $null = Export-WDSetupResult -Session $session -Report $report -Label $Preset `
                                      -KeepDir $(if ($keep) { [string]$keep.Path } else { '' }) `
+                                     -AppDir $(if ($keep) { [string]$keep.AppPath } else { '' }) `
                                      -RestartCount $needRestart -RestorePoint $restorePointState
         # Last of all, and allowed to fail: everything above is the promise,
         # this is the convenience on top of it.
@@ -3150,7 +3214,10 @@ if ($Console) {
     Write-Host ''
     Write-Host "  Log, report and rollback script: $($session.RunDir)" -ForegroundColor Gray
     if (-not $Preview) { Write-Host "  What each change was, and where to change it back: $($session.NotesFile)" -ForegroundColor Gray }
-    if ($keep) { Write-Host "  A copy of all of it is on the desktop: $($keep.Path)" -ForegroundColor Gray }
+    if ($keep -and $keep.Path) { Write-Host "  A copy of all of it is on the desktop: $($keep.Path)" -ForegroundColor Gray }
+    # The copy that leaves with the stick, which is the one whoever ran this
+    # still has tomorrow.
+    if ($keep -and $keep.AppPath) { Write-Host "  And beside the toolkit itself: $($keep.AppPath)" -ForegroundColor Gray }
     if ($session.RebootNeeded) { Write-Host '  A restart is required to finish.' -ForegroundColor Yellow }
 
     exit $(if ($report.counts.failed -gt 0) { 2 } else { 0 })
