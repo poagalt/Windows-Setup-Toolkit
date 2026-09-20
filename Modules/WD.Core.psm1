@@ -1665,6 +1665,7 @@ function Export-WDRunNotes {
 function Get-WDWrapUpLines {
     param(
         [string]$KeepDir = '',
+        [string]$AppDir = '',
         [string]$RunDir = '',
         [bool]$HasUndo = $false,
         [string]$RestorePoint = '',
@@ -1690,6 +1691,12 @@ function Get-WDWrapUpLines {
     } else {
         $out.Add("The log and a list of every change are in $RunDir.")
     }
+    # Said separately from the desktop copy because it answers a different
+    # question: that one is what the machine keeps, this is what leaves with
+    # whoever ran the tool.
+    if ($AppDir) {
+        $out.Add("The same files were also written beside the toolkit itself, in 'Run logs\$(Split-Path -Leaf $AppDir)'. If you are running this from a USB stick, that copy goes home with the stick - so a run done on somebody else's machine can still be read after you have left it.")
+    }
     $out.Add('If something stops working days or weeks from now, open "Common issues lookup and reversion instructions" from that folder and press ctrl+F for whatever is wrong - "no sound", "camera not working", "updates broken". It names the option responsible and how to undo that one option.')
     if ($HasUndo) {
         $out.Add('To undo the whole run instead: run Undo-WinSetupToolkit.ps1 as an administrator, or open this toolkit and use Revert past changes.')
@@ -1709,6 +1716,17 @@ function Get-WDWrapUpLines {
     ,$out
 }
 
+function Get-WDRunFolderName {
+    # Both copies are named from here, so they cannot come to disagree.
+    param($Session)
+
+    $stamp = $null
+    if ($Session) { $stamp = $Session.Started }
+    if (-not $stamp) { $stamp = Get-Date }
+    # Colons are illegal in a path, so the time is dashed.
+    'Windows Setup Toolkit apply ' + $stamp.ToString('yyyy-MM-dd HH-mm')
+}
+
 function Get-WDDesktopRunFolder {
     param($Session, [string]$Desktop = '', [switch]$Public)
 
@@ -1726,11 +1744,7 @@ function Get-WDDesktopRunFolder {
         }
     }
 
-    $stamp = $null
-    if ($Session) { $stamp = $Session.Started }
-    if (-not $stamp) { $stamp = Get-Date }
-    # Colons are illegal in a path, so the time is dashed.
-    $name = 'Windows Setup Toolkit apply ' + $stamp.ToString('yyyy-MM-dd HH-mm')
+    $name = Get-WDRunFolderName -Session $Session
 
     if (-not $Desktop -or -not (Test-Path -LiteralPath $Desktop)) {
         $fallback = ''
@@ -1742,6 +1756,61 @@ function Get-WDDesktopRunFolder {
         }
     }
     [pscustomobject]@{ Ok = $true; Path = (Join-Path $Desktop $name); Why = '' }
+}
+
+function Get-WDAppRunFolder {
+    # The second home for a run's files. The desktop copy serves whoever is left
+    # standing at the machine; this one is beside the toolkit itself, so it
+    # leaves with the stick and the person who brought it can still read the run
+    # afterwards. That is the documented primary use of this tool and it was the
+    # one case nothing served.
+    param($Session, [string]$Root = '')
+
+    if (-not $Session) { $Session = $script:Session }
+    # This module lives in Modules\ under the toolkit's own folder.
+    if (-not $Root) { $Root = Split-Path -Parent $PSScriptRoot }
+
+    $fallback = ''
+    if ($Session) { $fallback = [string](Get-Prop $Session 'RunDir' '') }
+
+    if (-not $Root) {
+        return [pscustomobject]@{ Ok = $false; Path = $fallback
+            Why = "The toolkit's own folder could not be resolved, so no copy was made beside it." }
+    }
+    try {
+        if (-not (Test-Path -LiteralPath $Root -PathType Container)) {
+            return [pscustomobject]@{ Ok = $false; Path = $fallback
+                Why = "The toolkit's own folder ($Root) is not there any more, so no copy was made beside it." }
+        }
+    } catch {
+        return [pscustomobject]@{ Ok = $false; Path = $fallback
+            Why = "The toolkit's own folder could not be read, so no copy was made beside it." }
+    }
+
+    # A guard runs from the copy of the toolkit under the data root, where the
+    # run folder already is. A copy inside that copy is noise, and "Delete old
+    # run logs" would take it anyway.
+    $dataRoot = ''
+    if ($Session) { $dataRoot = [string](Get-Prop $Session 'Root' '') }
+    if ($dataRoot) {
+        $a = $Root.TrimEnd('\')
+        $b = $dataRoot.TrimEnd('\')
+        if ($a -eq $b -or $a -like "$b\*") {
+            return [pscustomobject]@{ Ok = $false; Path = $fallback
+                Why = 'The toolkit is running from its own copy under the data folder, where the run folder already is, so no second copy was made beside it.' }
+        }
+    }
+
+    # The machine's name leads, because one stick accumulates these from every
+    # machine it is carried to and the date alone does not say which is which.
+    $machine = [string]$env:COMPUTERNAME
+    if (-not $machine) { $machine = 'unknown machine' }
+    $name = "$machine - " + (Get-WDRunFolderName -Session $Session)
+
+    # Under one named folder rather than at the root: the toolkit's folder is a
+    # checkout or an unpacked release, and dated folders strewn through it mix
+    # run output with the program.
+    [pscustomobject]@{ Ok = $true; Path = (Join-Path (Join-Path $Root 'Run logs') $name); Why = '' }
 }
 
 function Read-WDSetupResult {
@@ -1771,6 +1840,10 @@ function Read-WDSetupResult {
     # tidy - so the button is only offered when there is something to open.
     $keep = [string](Get-Prop $extra 'keepDir' '')
     if ($keep) { try { if (-not (Test-Path -LiteralPath $keep)) { $keep = '' } } catch { $keep = '' } }
+    # The stick it was written to is the likeliest thing of all to be gone by
+    # the time anybody signs in, so this one is asked the same question.
+    $appDir = [string](Get-Prop $extra 'appDir' '')
+    if ($appDir) { try { if (-not (Test-Path -LiteralPath $appDir)) { $appDir = '' } } catch { $appDir = '' } }
     $summary = [string](Get-Prop $extra 'summaryFile' '')
     if ($summary) { try { if (-not (Test-Path -LiteralPath $summary)) { $summary = '' } } catch { $summary = '' } }
 
@@ -1779,6 +1852,7 @@ function Read-WDSetupResult {
         Report       = $report
         Counts       = $counts
         KeepDir      = $keep
+        AppDir       = $appDir
         SummaryFile  = $summary
         Label        = [string](Get-Prop $extra 'label' '')
         HasUndo      = [bool](Get-Prop $extra 'hasUndo' $false)
@@ -1838,6 +1912,7 @@ function Export-WDSetupResult {
         $Report,
         [string]$Label = '',
         [string]$KeepDir = '',
+        [string]$AppDir = '',
         [int]$RestartCount = 0,
         [string]$RestorePoint = ''
     )
@@ -1894,9 +1969,9 @@ function Export-WDSetupResult {
     & $w '--------------'
     & $w ''
     # Assigned first, because Get-WDWrapUpLines ends in ,@(): @() around it is
-    # one element holding all five paragraphs, and $w takes [string], so they
+    # one element holding every paragraph, and $w takes [string], so they
     # arrive space-joined as one block.
-    $wrapUp = Get-WDWrapUpLines -KeepDir $KeepDir -RunDir ([string]$Session.RunDir) `
+    $wrapUp = Get-WDWrapUpLines -KeepDir $KeepDir -AppDir $AppDir -RunDir ([string]$Session.RunDir) `
                                 -HasUndo $hasUndo -RestorePoint $RestorePoint `
                                 -RestartCount $RestartCount -Reboot $reboot
     foreach ($line in $wrapUp) {
@@ -1928,13 +2003,14 @@ function Export-WDSetupResult {
         return ''
     }
 
-    # The machine-readable half: where the desktop copy went, whether the
+    # The machine-readable half: where each copy of the run went, whether the
     # rollback script exists, how many changes want a restart. None of it is in
     # the report.
     try {
         ([pscustomobject]@{
             runDir       = [string]$Session.RunDir
             keepDir      = [string]$KeepDir
+            appDir       = [string]$AppDir
             summaryFile  = [string]$path
             label        = [string]$Label
             hasUndo      = [bool]$hasUndo
@@ -1951,34 +2027,14 @@ function Export-WDSetupResult {
     $path
 }
 
-function Export-WDRunFolder {
-    param($Session, [string]$Desktop = '', [switch]$Public)
-
-    if (-not $Session) { $Session = $script:Session }
-    if (-not $Session) { return }
-    if ([bool]$Session.Preview) { return }
-
-    # A machine with no desktop folder is not a reason to fail a run that has
-    # already finished - the run directory still holds everything and this is a
-    # second copy.
-    $where = Get-WDDesktopRunFolder -Session $Session -Desktop $Desktop -Public:$Public
-    if (-not $where.Ok) {
-        Write-WDLog 'No desktop folder was found, so no copy was made there.' -Level Warn
-        return
-    }
-    $stamp = $Session.Started
-    if (-not $stamp) { $stamp = Get-Date }
-    $dir = [string]$where.Path
-    try {
-        $null = New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop
-    } catch {
-        Write-WDLog "Could not create $dir : $($_.Exception.Message)" -Level Warn
-        return
-    }
+function Get-WDRunArtifactList {
+    # What a copy of a run holds. One list, so the desktop copy and the copy
+    # beside the toolkit cannot come to hold different files.
+    param($Session)
 
     # A file that was not written is skipped silently: not selecting an option
     # is not an error.
-    $wanted = @(
+    @(
         # The launcher first, because it is the one to double-click - Windows
         # associates .ps1 with a text editor.
         @{ From = (Join-Path (Split-Path ([string]$Session.UndoFile) -Parent) 'Undo-WinSetupToolkit.cmd')
@@ -2004,13 +2060,42 @@ function Export-WDRunFolder {
         @{ From = [string]$Session.ReportFile
            To   = 'Run report.json'
            What = 'The same run as machine-readable data. Nothing needs it; it is here so nothing is only in a format this toolkit can read.' }
+        # The three below keep the names they have in the run folder, where
+        # every other file here is renamed for a human reader. That is the
+        # point of them: Tools\Show-WDRunTrace.ps1 opens a folder and looks for
+        # trace.jsonl by name, so a renamed copy is one it cannot read.
+        @{ From = [string]$Session.TraceFile
+           To   = 'trace.jsonl'
+           What = 'Every action the run took, one line each: what it was aimed at, what came back, how long it took, and the whole error if it threw. The report above merges an option''s actions into one verdict, so this is the only place that says which of them went wrong. Point Tools\Show-WDRunTrace.ps1 at this folder to read it.' }
+        @{ From = [string]$Session.EnvFile
+           To   = 'environment.json'
+           What = 'What the machine was at the moment the run started - Windows build, whether a restart was already pending, disk space, and a checksum per toolkit file so which build ran is answerable later. Most of what makes a run fail for one cause rather than thirty is in here and nowhere else.' }
+        @{ From = [string]$Session.JournalFile
+           To   = 'journal.jsonl'
+           What = 'What changed and what it was before - the record the rollback script above was generated from. Reading it needs nothing; undoing from it needs the script.' }
     )
+}
+
+function Copy-WDRunArtifacts {
+    # One destination. Export-WDRunFolder calls this once per copy it makes, so
+    # two copies of a run cannot end up holding different files or a read-me
+    # that describes the other one.
+    param($Session, [string]$Dir, $Wanted, [string[]]$Intro)
+
+    $stamp = $Session.Started
+    if (-not $stamp) { $stamp = Get-Date }
+    try {
+        $null = New-Item -ItemType Directory -Path $Dir -Force -ErrorAction Stop
+    } catch {
+        Write-WDLog "Could not create $Dir : $($_.Exception.Message)" -Level Warn
+        return $null
+    }
 
     $copied = New-Object System.Collections.Generic.List[psobject]
-    foreach ($f in $wanted) {
+    foreach ($f in $Wanted) {
         if (-not $f.From -or -not (Test-Path -LiteralPath $f.From)) { continue }
         try {
-            Copy-Item -LiteralPath $f.From -Destination (Join-Path $dir $f.To) -Force -ErrorAction Stop
+            Copy-Item -LiteralPath $f.From -Destination (Join-Path $Dir $f.To) -Force -ErrorAction Stop
             $copied.Add([pscustomobject]@{ Name = [string]$f.To; What = [string]$f.What })
         } catch {
             Write-WDLog "Could not copy $($f.From): $($_.Exception.Message)" -Level Warn
@@ -2026,9 +2111,9 @@ function Export-WDRunFolder {
     & $w ''
     & $w 'It is a copy. The originals are in:'
     & $w "  $($Session.RunDir)"
-    & $w 'They are copied here because the toolkit is often run from a USB stick that'
-    & $w 'then leaves with whoever brought it, and everything you need to undo the run'
-    & $w 'or work out what it did should stay on the machine it was run on.'
+    & $w "  on $($env:COMPUTERNAME)"
+    & $w ''
+    foreach ($line in $Intro) { & $w $line }
     & $w ''
     & $w 'Deleting this folder does not undo anything and does not break anything. It'
     & $w 'only means you no longer have the easy way back.'
@@ -2045,13 +2130,70 @@ function Export-WDRunFolder {
     & $w 'same rollback with a list you can pick from.'
 
     try {
-        Set-Content -LiteralPath (Join-Path $dir 'Read me first.txt') -Value $sb.ToString() -Encoding UTF8
+        Set-Content -LiteralPath (Join-Path $Dir 'Read me first.txt') -Value $sb.ToString() -Encoding UTF8
     } catch {
         Write-WDLog "Could not write the read-me: $($_.Exception.Message)" -Level Warn
     }
 
-    Write-WDLog "Run folder copied to $dir" -Level Success
-    [pscustomobject]@{ Path = $dir; Files = @($copied | ForEach-Object { $_.Name }) }
+    Write-WDLog "Run folder copied to $Dir" -Level Success
+    [pscustomobject]@{ Path = $Dir; Files = @($copied | ForEach-Object { $_.Name }) }
+}
+
+function Export-WDRunFolder {
+    param($Session, [string]$Desktop = '', [switch]$Public, [string]$AppRoot = '')
+
+    if (-not $Session) { $Session = $script:Session }
+    if (-not $Session) { return }
+    if ([bool]$Session.Preview) { return }
+
+    $wanted = Get-WDRunArtifactList -Session $Session
+
+    # Two copies, and neither is allowed to cost the other. The run has already
+    # succeeded by the time this is called, so every failure below is logged and
+    # the run directory still holds the whole of it either way.
+    $deskRes = $null
+    $appRes  = $null
+
+    # A machine with no desktop folder is not a reason to fail a run that has
+    # already finished - the run directory still holds everything and this is a
+    # second copy.
+    $where = Get-WDDesktopRunFolder -Session $Session -Desktop $Desktop -Public:$Public
+    if ($where.Ok) {
+        $deskRes = Copy-WDRunArtifacts -Session $Session -Dir ([string]$where.Path) -Wanted $wanted -Intro @(
+            'They are copied here because the toolkit is often run from a USB stick that'
+            'then leaves with whoever brought it, and everything you need to undo the run'
+            'or work out what it did should stay on the machine it was run on.'
+        )
+    } else {
+        Write-WDLog 'No desktop folder was found, so no copy was made there.' -Level Warn
+    }
+
+    # The other half of that argument: the person who brought the stick has no
+    # copy at all once they walk away, and they are the one who gets asked what
+    # the tool did.
+    $appWhere = Get-WDAppRunFolder -Session $Session -Root $AppRoot
+    if ($appWhere.Ok) {
+        $appRes = Copy-WDRunArtifacts -Session $Session -Dir ([string]$appWhere.Path) -Wanted $wanted -Intro @(
+            'They are copied here, beside the toolkit itself, because it is often run from'
+            'a USB stick on somebody else''s machine. The copy on that machine''s desktop is'
+            'for whoever is left at it; this one leaves with the stick, so the run can still'
+            'be read by whoever ran it. One stick collects these from every machine it goes'
+            'to, which is why the folder is named after the machine.'
+        )
+    } else {
+        Write-WDLog ([string]$appWhere.Why) -Level Debug
+    }
+
+    if (-not $deskRes -and -not $appRes) { return }
+
+    # Path stays the desktop copy: a dozen callers read it by that name and mean
+    # the folder on the machine the run happened to.
+    [pscustomobject]@{
+        Path     = $(if ($deskRes) { [string]$deskRes.Path } else { '' })
+        Files    = @(if ($deskRes) { $deskRes.Files } else { @() })
+        AppPath  = $(if ($appRes) { [string]$appRes.Path } else { '' })
+        AppFiles = @(if ($appRes) { $appRes.Files } else { @() })
+    }
 }
 
 Export-ModuleMember -Function *-WD*, Get-WDSession, Test-WDAdmin, ConvertTo-WDRegParts, Get-Prop
