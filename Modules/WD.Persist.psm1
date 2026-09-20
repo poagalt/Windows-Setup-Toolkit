@@ -856,7 +856,10 @@ function Copy-WDToolkitForGuard {
     # failure this has already had once.
     param([Parameter(Mandatory)]$Paths)
 
-    $skip = @('.git', '.gitignore', 'profile_saves')
+    # 'Run logs' is every past run's output, which grows without bound and is
+    # the guard's business least of all - it is carried for the person holding
+    # the stick, and this copy is for a scheduled task.
+    $skip = @('.git', '.gitignore', 'profile_saves', 'Run logs')
     try {
         if (Test-Path -LiteralPath $Paths.Toolkit) {
             Remove-Item -LiteralPath $Paths.Toolkit -Recurse -Force -ErrorAction Stop

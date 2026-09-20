@@ -3,6 +3,11 @@
 profile_saves/
 *.log
 
+# Every apply now copies itself here as well as to the desktop, so that a run
+# done from a stick on somebody else's machine leaves with the stick. In a
+# checkout that means run output landing in the working tree.
+Run logs/
+
 # The run write-up, when it is saved into a working copy. The first two are
 # what a run generates today; every glob here named a scheme this project had
 # already stopped using, so the CURRENT name was the one thing not covered.
