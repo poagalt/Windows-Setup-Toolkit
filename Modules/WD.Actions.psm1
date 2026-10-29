@@ -60,6 +60,14 @@ function Get-WDProvisionedPackages {
 
 function Clear-WDProvisionedCache { $script:ProvisionedCache = $null }
 
+function Remove-WDProvisionedCacheEntry {
+    # What this run itself deprovisioned is known exactly, so the cached list is
+    # corrected in place rather than thrown away.
+    param([string]$PackageName)
+    if ($null -eq $script:ProvisionedCache) { return }
+    $script:ProvisionedCache = @($script:ProvisionedCache | Where-Object { $_.PackageName -ne $PackageName })
+}
+
 # The same shape for capabilities: one DISM enumeration per pattern became one
 # per run.
 $script:CapabilityCache = $null
@@ -85,6 +93,11 @@ function Invoke-WDAppxAction {
     $blocked = New-Object System.Collections.Generic.List[string]
     $inbox   = New-Object System.Collections.Generic.List[string]
     $errors  = New-Object System.Collections.Generic.List[string]
+    # What the protection list kept, and the deprovisions that threw - which
+    # are usually packages Remove-AppxPackage -AllUsers had already
+    # deprovisioned, and are told apart from refusals by one re-read below.
+    $kept       = New-Object System.Collections.Generic.List[string]
+    $provFailed = New-Object System.Collections.Generic.List[psobject]
     $found   = $false
     $recovered = ''
 
@@ -107,6 +120,12 @@ function Invoke-WDAppxAction {
                 $inbox.Add($pkg.Name)
                 continue
             }
+            # The protection list is a veto here too, not only a filter on what
+            # the scan offers: a curated pattern is a wildcard, and a wildcard
+            # that reaches a framework or a vendor's power tool must not remove
+            # it because the scan was not the one asking.
+            $why = Test-WDProtectedTarget -PackageName $pkg.Name -Package $pkg -Profile $Context.Profile
+            if ($why) { $kept.Add("$($pkg.Name) ($why)"); continue }
             if ($preview) { $removed.Add($pkg.Name); continue }
 
             try {
@@ -160,15 +179,30 @@ function Invoke-WDAppxAction {
             $prov = @(Get-WDProvisionedPackages | Where-Object { $_.DisplayName -like $pattern })
             foreach ($p in $prov) {
                 $found = $true
-                if ($preview) { continue }
+                $why = Test-WDProtectedTarget -PackageName $p.DisplayName -Profile $Context.Profile
+                if ($why) { $kept.Add("$($p.DisplayName) ($why)"); continue }
+                # A package that is only provisioned - installed for nobody yet -
+                # is removed by apply, so the preview has to say so too.
+                if ($preview) {
+                    if ($removed -notcontains $p.DisplayName) { $removed.Add($p.DisplayName) }
+                    continue
+                }
                 try {
                     $null = Remove-AppxProvisionedPackage -Online -PackageName $p.PackageName -ErrorAction Stop
-                    Clear-WDProvisionedCache
+                    # Dropped from the cached list rather than clearing it, so the
+                    # next pattern does not pay a whole DISM enumeration again.
+                    Remove-WDProvisionedCacheEntry -PackageName $p.PackageName
                     if ($removed -notcontains $p.DisplayName) { $removed.Add($p.DisplayName) }
                     Add-WDJournal -ItemId $Context.ItemId -Type 'appx-provisioned' -Target $p.PackageName `
                                   -Status 'Removed' -Undo @{ method = 'reinstall'; name = $p.DisplayName }
                 } catch {
-                    $blocked.Add("$($p.DisplayName) (provisioned)")
+                    # Not yet a refusal. Remove-AppxPackage -AllUsers above also
+                    # deprovisions, the cached list predates it, and asking DISM
+                    # to deprovision what is no longer provisioned throws. This
+                    # used to be reported as "skipped (provisioned)" for every
+                    # package the run removed - the after-snapshot showed every
+                    # one of them deprovisioned.
+                    $provFailed.Add([pscustomobject]@{ Name = $p.DisplayName; Package = $p.PackageName; Error = $_.Exception.Message })
                 }
             }
         } catch {
@@ -187,16 +221,37 @@ function Invoke-WDAppxAction {
         }
     }
 
+    # One fresh enumeration decides every deprovision that threw: still in the
+    # image is a refusal, with DISM's own words kept; gone is a package another
+    # route already deprovisioned. A re-read that itself fails decides nothing,
+    # so those stay refusals rather than becoming claims of success.
+    if ($provFailed.Count) {
+        Clear-WDProvisionedCache
+        $still = $null
+        try { $still = @(Get-WDProvisionedPackages) } catch { }
+        foreach ($f in $provFailed) {
+            $there = ($null -eq $still) -or [bool]@($still | Where-Object { $_.PackageName -eq $f.Package }).Count
+            if ($there) {
+                $blocked.Add("$($f.Name) (still provisioned for new accounts: $($f.Error))")
+            } elseif ($removed -notcontains $f.Name) {
+                $removed.Add($f.Name)
+            }
+        }
+    }
+
     # Patterns overlap heavily, so the same refusal arrives many times over.
     $removed = @($removed | Sort-Object -Unique)
     $blocked = @($blocked | Sort-Object -Unique)
     $inbox   = @($inbox   | Sort-Object -Unique)
     $errors  = @($errors  | Sort-Object -Unique)
+    $kept    = @($kept    | Sort-Object -Unique)
 
     # Ask reality before reporting a refusal: a refusal is a statement about one
     # call, not about the outcome, and the same package is reachable by several
-    # routes.
+    # routes. Against a fresh provisioned list - the cached one predates every
+    # removal this item made.
     if (-not $preview -and $blocked.Count) {
+        Clear-WDProvisionedCache
         $stillThere = $false
         foreach ($pattern in $names) {
             $live = @()
@@ -220,8 +275,18 @@ function Invoke-WDAppxAction {
     if ($removed.Count) {
         $detail = $removed -join ', '
         if ($inbox.Count)   { $detail += " (in-box, not removable: $($inbox -join ', '))" }
-        if ($blocked.Count) { $detail += " (skipped: $($blocked -join ', '))" }
+        if ($kept.Count)    { $detail += " (kept: $($kept -join ', '))" }
+        if ($blocked.Count) {
+            # Removed for the accounts that exist but still provisioned is half
+            # a removal - the next new account gets the app back - so it is
+            # Partial, not Removed with a footnote.
+            $detail += " | refused: $($blocked -join ', ')"
+            return New-WDResult -Status Partial -Message "$($removed.Count) package(s) removed, $($blocked.Count) refused" -Detail $detail -Recovered $recovered
+        }
         return New-WDResult -Status Removed -Message "$($removed.Count) package(s)" -Detail $detail -Recovered $recovered
+    }
+    if ($kept.Count -and -not $blocked.Count -and -not $inbox.Count) {
+        return New-WDResult -Status Skipped -Message 'Kept: on the protection list' -Detail ($kept -join ', ')
     }
     if ($inbox.Count -and -not $blocked.Count) {
         # Found, and Windows refuses to remove it. Blocked by definition, even
@@ -251,9 +316,37 @@ function Invoke-WDAppxAction {
     New-WDResult -Status NotPresent -Message 'Nothing to remove'
 }
 
+$script:AppxPolicyKey = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Appx\RemoveDefaultMicrosoftStorePackages'
+
+function Get-WDAppxPolicyFamilies {
+    # The package families the policy template names one by one. Read from the
+    # template on this machine, so a later build that names more is honoured;
+    # anything not named goes in the dynamic list, which takes any family that
+    # is not a system component.
+    $out = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    try {
+        $admx = Join-Path $env:SystemRoot 'PolicyDefinitions\AppxPackageManager.admx'
+        $text = [IO.File]::ReadAllText($admx)
+        foreach ($m in [regex]::Matches($text, 'RemoveDefaultMicrosoftStorePackages\\([^"\\]+)"\s+valueName="RemovePackage"')) {
+            $null = $out.Add($m.Groups[1].Value)
+        }
+    } catch { }
+    ,$out
+}
+
 function Invoke-WDAppxPolicyAction {
-    # 25H2 shipped a supported way to deprovision in-box apps, on Enterprise and
-    # Education only, so this action is additive rather than a replacement.
+    # 24H2 shipped a supported way to remove in-box apps for every account and
+    # keep them removed - "Remove Default Microsoft Store packages from the
+    # system" - on Enterprise and Education only, so this action is additive
+    # rather than a replacement for the appx action beside it.
+    #
+    # It used to write two values Windows never reads: a DWord named after the
+    # policy and a ";"-joined list, one key too high. The template on the
+    # machine is the specification: Enabled = 1 on
+    # ...\Appx\RemoveDefaultMicrosoftStorePackages, RemovePackage = 1 on a
+    # subkey per package family for the apps the template names, and a
+    # REG_MULTI_SZ DynamicRemovalList for any other family. Every value goes
+    # through the registry executor, so each is backed up and journalled.
     param($Action, $Context)
 
     # $machine, not $profile: that is an automatic variable holding the path to
@@ -262,29 +355,127 @@ function Invoke-WDAppxPolicyAction {
     if (-not $machine.IsEnterprise) {
         return New-WDResult -Status Skipped -Message 'Policy needs Enterprise/Education; appx removal already covers this'
     }
-    if ($machine.Build -lt 26200) {
-        return New-WDResult -Status Skipped -Message 'Needs Windows 11 25H2 or newer'
+    if ($machine.Build -lt 26100) {
+        return New-WDResult -Status Skipped -Message 'Needs Windows 11 24H2 or newer'
     }
 
     $packages = @(Get-Prop $Action 'packages' @())
     if (-not $packages.Count) { return New-WDResult -Status Skipped -Message 'No packages listed' }
 
-    $key = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Appx'
-    if ($Context.Preview) {
-        return New-WDResult -Status Changed -Message "Would set removal policy for $($packages.Count) package(s)"
+    # A family name has the publisher hash after an underscore. A bare package
+    # name is resolved off what is installed or provisioned here; one that
+    # cannot be is reported rather than guessed at, because a wrong hash is a
+    # family that matches nothing.
+    $families = New-Object System.Collections.Generic.List[string]
+    $refused  = New-Object System.Collections.Generic.List[string]
+    foreach ($p in $packages) {
+        $p = [string]$p
+        if ($p -match '_[a-z0-9]{13}$') { $families.Add($p); continue }
+        $pfn = $null
+        $live = $null
+        try { $live = @(Get-AppxPackage -AllUsers -Name $p -ErrorAction SilentlyContinue) | Select-Object -First 1 } catch {
+            try { $live = @(Get-AppxPackage -Name $p -ErrorAction SilentlyContinue) | Select-Object -First 1 } catch { }
+        }
+        if ($live) {
+            # "You cannot remove Windows System components via the dynamic app
+            # removal list" - the template's own words.
+            if ($live.NonRemovable -eq $true) { $refused.Add("$p (a Windows system component, which the policy cannot remove)"); continue }
+            $pfn = [string]$live.PackageFamilyName
+        }
+        if (-not $pfn) {
+            try {
+                $prov = @(Get-WDProvisionedPackages | Where-Object { $_.DisplayName -eq $p }) | Select-Object -First 1
+                if ($prov -and [string]$prov.PackageName -match '^([^_]+)_[^_]*_[^_]*_[^_]*_([a-z0-9]{13})$') { $pfn = "$($Matches[1])_$($Matches[2])" }
+            } catch { }
+        }
+        if ($pfn) { $families.Add($pfn) } else { $refused.Add("$p (not on this machine, so its family name is not known)") }
+    }
+    if (-not $families.Count) {
+        return New-WDResult -Status NotPresent -Message 'Nothing the policy can name here' -Detail ($refused -join '; ')
     }
 
-    try {
-        Backup-WDRegistryKey -Path $key
-        if (-not (Test-Path $key)) { $null = New-Item -Path $key -Force }
-        Set-ItemProperty -Path $key -Name 'RemoveDefaultMicrosoftStorePackages' -Value 1 -Type DWord -Force
-        Set-ItemProperty -Path $key -Name 'RemoveDefaultMicrosoftStorePackagesList' -Value ($packages -join ';') -Type String -Force
-        Add-WDJournal -ItemId $Context.ItemId -Type 'appx-policy' -Target $key -Status 'Changed' `
-                      -Undo @{ method = 'registry'; path = $key; name = 'RemoveDefaultMicrosoftStorePackages'; previous = '__ABSENT__'; kind = 'DWord' }
-        New-WDResult -Status Changed -Message "Removal policy set for $($packages.Count) package(s)"
-    } catch {
-        New-WDResult -Status Failed -Message 'Policy write failed' -Detail $_.Exception.Message
+    $named   = Get-WDAppxPolicyFamilies
+    $values  = New-Object System.Collections.Generic.List[psobject]
+    $dynamic = New-Object System.Collections.Generic.List[string]
+    $values.Add([pscustomobject]@{ path = $script:AppxPolicyKey; name = 'Enabled'; kind = 'DWord'; value = 1 })
+    foreach ($f in ($families | Sort-Object -Unique)) {
+        if ($named.Contains($f)) {
+            $values.Add([pscustomobject]@{ path = "$($script:AppxPolicyKey)\$f"; name = 'RemovePackage'; kind = 'DWord'; value = 1 })
+        } else {
+            $dynamic.Add($f)
+        }
     }
+    if ($dynamic.Count) {
+        # Merged with what is there: somebody else's entries in the list are
+        # theirs.
+        $have = @()
+        try { $have = @((Get-ItemProperty -LiteralPath $script:AppxPolicyKey -Name 'DynamicRemovalList' -ErrorAction Stop).DynamicRemovalList) } catch { }
+        $merged = @(@($have) + @($dynamic) | Where-Object { $_ } | Sort-Object -Unique)
+        $values.Add([pscustomobject]@{ path = $script:AppxPolicyKey; name = 'DynamicRemovalList'; kind = 'MultiString'; value = [string[]]$merged })
+    }
+
+    $r = Invoke-WDRegistryAction -Context $Context -Action ([pscustomobject]@{ type = 'registry'; scope = 'machine'; values = $values.ToArray() })
+    if ($refused.Count) {
+        $detail = "$($r.Detail) | not covered: $($refused -join '; ')"
+        if ([string]$r.Status -in @('Changed', 'AlreadySet')) {
+            return New-WDResult -Status Partial -Message "$($families.Count) package famil$(if ($families.Count -eq 1) { 'y' } else { 'ies' }) under the policy, $($refused.Count) not" -Detail $detail
+        }
+        return New-WDResult -Status $r.Status -Message $r.Message -Detail $detail
+    }
+    $r
+}
+
+# winget's own names for the exit codes worth recognising, from its published
+# table (winget-cli doc/windows/package-manager/winget/returnCodes.md). A run
+# reported four installs as "exit -1978335157" and nothing more; that is
+# FAILED_TO_OPEN_ALL_SOURCES - the package servers could not be reached - and
+# saying so is the whole diagnosis. Keyed by hex string: PowerShell 5.1 reads
+# a literal like 0x8A150008 as a negative Int32.
+$script:WDWingetCodes = @{
+    '8A150008' = 'DOWNLOAD_FAILED: downloading the installer failed - usually no internet connection'
+    '8A15000F' = 'SOURCE_DATA_MISSING: data the package source needs is missing - winget source reset --force usually repairs it'
+    '8A150010' = 'NO_APPLICABLE_INSTALLER: no installer fits this machine'
+    '8A150011' = 'INSTALLER_HASH_MISMATCH: the downloaded installer does not match the manifest'
+    '8A150014' = 'NO_APPLICATIONS_FOUND: no package with that id'
+    '8A150017' = 'NO_MANIFEST_FOUND: no manifest matches'
+    '8A15004B' = 'FAILED_TO_OPEN_ALL_SOURCES: the package sources could not be opened - usually no internet connection'
+    '8A150101' = 'INSTALL_PACKAGE_IN_USE: the application is running'
+    '8A150102' = 'INSTALL_INSTALL_IN_PROGRESS: another installation is already running'
+    '8A150103' = 'INSTALL_FILE_IN_USE: a file it needs is in use'
+    '8A150104' = 'INSTALL_MISSING_DEPENDENCY: a dependency is missing'
+    '8A150105' = 'INSTALL_DISK_FULL: no space left'
+    '8A150107' = 'INSTALL_NO_NETWORK: the installer needs an internet connection'
+    '8A150108' = 'INSTALL_CONTACT_SUPPORT: the installer failed'
+    '8A150109' = 'INSTALL_REBOOT_REQUIRED_TO_FINISH: installed, finishes after a restart'
+    '8A15010A' = 'INSTALL_REBOOT_REQUIRED_FOR_INSTALL: restart, then try again'
+    '8A15010D' = 'INSTALL_ALREADY_INSTALLED: another version is already installed'
+    '8A15010E' = 'INSTALL_DOWNGRADE: a newer version is already installed'
+    '8A15010F' = 'INSTALL_BLOCKED_BY_POLICY: organization policy blocks it'
+    '8A150110' = 'INSTALL_DEPENDENCIES: its dependencies failed to install'
+}
+
+function Format-WDWingetFailure {
+    # One line a person can act on: the code in hex, winget's name for it, and
+    # the last few lines winget itself printed, which carry the reason when the
+    # code is a generic one.
+    param([string]$Id, $Result)
+    # Not "-band 0xFFFFFFFF": PowerShell 5.1 reads that literal as -1, so the
+    # mask did nothing and the code printed as 0xFFFFFFFF8A15004B.
+    $code = [int64]$Result.ExitCode
+    if ($code -lt 0) { $code += 4294967296 }
+    $hex  = '{0:X8}' -f $code
+    $line = "$Id exit $($Result.ExitCode) (0x$hex"
+    if ($script:WDWingetCodes.ContainsKey($hex)) { $line += " $($script:WDWingetCodes[$hex])" }
+    $line += ')'
+    $said = @(([string]$Result.Output + "`n" + [string]$Result.Error) -split "[`r`n]+" |
+              ForEach-Object { ($_ -replace '[^\x20-\x7E]', '').Trim() } |
+              Where-Object { $_.Length -gt 3 -and $_ -notmatch '^[-\\|/ .]+$' })
+    if ($said.Count) {
+        $tail = ($said | Select-Object -Last 3) -join ' / '
+        if ($tail.Length -gt 400) { $tail = $tail.Substring(0, 400) + '...' }
+        $line += " - winget said: $tail"
+    }
+    $line
 }
 
 function Invoke-WDWingetInstall {
@@ -313,7 +504,16 @@ function Invoke-WDWingetInstall {
         $secs = [int](Get-Prop $Action 'timeoutSeconds' 900)
         if ($secs -le 0) { $secs = 900 }
 
-        $res = Invoke-WDProcess -FilePath 'winget.exe' -ArgumentList $argv -TimeoutSeconds $secs
+        # Machine-wide first. winget's own default is the current user, and the
+        # current user of an elevated run is whoever typed the admin password -
+        # over-the-shoulder elevation put VS Code, Python, and PowerToys in the
+        # administrator's profile rather than the person's. A package with no
+        # machine installer answers NO_APPLICABLE_INSTALLER (0x8A150010), and
+        # only then is winget left to choose.
+        $res = Invoke-WDProcess -FilePath 'winget.exe' -ArgumentList ($argv + @('--scope', 'machine')) -TimeoutSeconds $secs
+        if (-not $res.TimedOut -and ([int64]$res.ExitCode -eq -1978335216 -or [int64]$res.ExitCode -eq 2316632080)) {
+            $res = Invoke-WDProcess -FilePath 'winget.exe' -ArgumentList $argv -TimeoutSeconds $secs
+        }
         if ($res.ExitCode -eq 0) {
             $done.Add($id)
             Add-WDJournal -ItemId $Context.ItemId -Type 'winget' -Target $id -Status 'Changed' `
@@ -321,7 +521,7 @@ function Invoke-WDWingetInstall {
         } elseif ($res.TimedOut) {
             $errors.Add("$id timed out")
         } else {
-            $errors.Add("$id exit $($res.ExitCode)")
+            $errors.Add((Format-WDWingetFailure -Id $id -Result $res))
         }
     }
 
@@ -383,7 +583,7 @@ function Invoke-WDWingetAction {
         } elseif ($res.TimedOut) {
             $errors.Add("$id timed out")
         } else {
-            $errors.Add("$id exit $($res.ExitCode)")
+            $errors.Add((Format-WDWingetFailure -Id $id -Result $res))
         }
     }
 
@@ -449,9 +649,12 @@ function Resolve-WDSilentUninstall {
     $u = $Program.UninstallString
     if (-not $u) { return $null }
 
-    # MSI products are the easy, fully reliable case.
-    if ($u -match '\{[0-9A-Fa-f\-]{36}\}') {
-        $guid = $Matches[0]
+    # MSI products are the easy, fully reliable case - when it is msiexec that
+    # the uninstall string runs. A GUID anywhere at all used to count: Norton's
+    # uninstaller lives in a folder named by one, so the toolkit ran msiexec on
+    # a folder name, got 1605 ("not installed"), and recorded Norton removed.
+    if ($u -match '(?i)msiexec(\.exe)?"?\s.*?(\{[0-9A-Fa-f\-]{36}\})') {
+        $guid = $Matches[2]
         return "msiexec.exe /x $guid /qn /norestart"
     }
     if ($SilentArgsOverride) { return "$u $SilentArgsOverride" }
@@ -479,6 +682,7 @@ function Invoke-WDUninstallAction {
 
     $programs = Get-WDInstalledPrograms
     $targets  = New-Object System.Collections.Generic.List[psobject]
+    $kept     = New-Object System.Collections.Generic.List[string]
 
     foreach ($p in $programs) {
         $hit = $false
@@ -490,10 +694,28 @@ function Invoke-WDUninstallAction {
         foreach ($ex in $exclude) {
             if ($p.DisplayName -like $ex) { $skip = $true; break }
         }
-        if (-not $skip) { $targets.Add($p) }
+        if ($skip) { continue }
+        # The protection list is a veto here as well as in the scan - see
+        # Test-WDProtectedTarget.
+        $why = Test-WDProtectedTarget -DisplayName $p.DisplayName -Profile $Context.Profile
+        if ($why) { $kept.Add("$($p.DisplayName) ($why)"); continue }
+        $targets.Add($p)
     }
 
-    if (-not $targets.Count) { return New-WDResult -Status NotPresent -Message 'Not installed' }
+    if (-not $targets.Count) {
+        if ($kept.Count) { return New-WDResult -Status Skipped -Message 'Kept: on the protection list' -Detail ($kept -join '; ') }
+        return New-WDResult -Status NotPresent -Message 'Not installed'
+    }
+
+    # Whether the uninstall entry a target came from is still listed - the only
+    # evidence a program has gone that does not take the uninstaller's word for
+    # it. Keyed on the key name AND the display name, because the three
+    # uninstall roots can each hold a key of the same name.
+    $stillListed = {
+        param($T)
+        Clear-WDProgramCache
+        [bool]@(Get-WDInstalledPrograms | Where-Object { $_.KeyName -eq $T.KeyName -and $_.DisplayName -eq $T.DisplayName }).Count
+    }
 
     $removed = New-Object System.Collections.Generic.List[string]
     $failed  = New-Object System.Collections.Generic.List[string]
@@ -545,14 +767,37 @@ function Invoke-WDUninstallAction {
                              "$($again -join ', ') " +
                              $(if ($again.Count -eq 1) { 'was' } else { 'were' }) +
                              ' closed and it is being retried.') -Level Info -Item $Context.ItemId
-                $res = Invoke-WDProcess -FilePath $exe -ArgumentList @($args) -TimeoutSeconds $timeout
+                # $argLine, as above - this line had $args, the automatic
+                # variable the comment above warns about, so every retry started
+                # the uninstaller with no switches: interactive, and waiting on
+                # nobody until its timeout.
+                $res = Invoke-WDProcess -FilePath $exe -ArgumentList @($argLine) -TimeoutSeconds $timeout
                 if ($res.ExitCode -in @(0, 3010, 1605)) {
                     $retried.Add("$($t.DisplayName) (after closing $($again -join ', '))")
                 }
             }
         }
 
-        # 3010 = success, reboot required. 1605 = already gone.
+        # 3010 = success, reboot required. 1605 = msiexec saying the product is
+        # not installed - which is "already gone" only if the entry went with
+        # it. A 1605 over an entry that is still listed is a stale record nothing
+        # was removed from, and was being reported as an uninstall.
+        if ($res.ExitCode -eq 1605) {
+            if (& $stillListed $t) {
+                $failed.Add("$($t.DisplayName): Windows Installer says it is not installed, but Installed apps still lists it - a stale entry, so nothing was removed. Remove it by hand from Installed apps")
+                continue
+            }
+        } elseif ($res.ExitCode -eq 0) {
+            # Many uninstallers hand over to a copy of themselves in TEMP and
+            # exit 0 at once, so the entry can take a moment to go. Give it a
+            # minute before deciding the success was only a word.
+            $waited = 0
+            while ((& $stillListed $t) -and $waited -lt 60) { Start-Sleep -Seconds 2; $waited += 2 }
+            if (& $stillListed $t) {
+                $failed.Add("$($t.DisplayName): the uninstaller reported success, but Installed apps still lists it a minute later - it may still be finishing, or it removed nothing")
+                continue
+            }
+        }
         if ($res.ExitCode -in @(0, 3010, 1605)) {
             $removed.Add($t.DisplayName)
             if ($res.ExitCode -eq 3010) { Set-WDRebootNeeded }
@@ -561,7 +806,7 @@ function Invoke-WDUninstallAction {
             # The uninstall key goes with the program and InstallLocation with
             # it, so the leftover sweep cannot look this up afterwards. Recorded
             # here or not at all.
-            Register-WDUninstalled -Name $t.DisplayName -InstallLocation $t.InstallLocation
+            Register-WDUninstalled -Name $t.DisplayName -InstallLocation $t.InstallLocation -Publisher ([string]$t.Publisher)
         } elseif ($res.TimedOut) {
             $failed.Add("$($t.DisplayName): uninstaller did not exit (may need manual removal)")
         } else {
@@ -572,7 +817,9 @@ function Invoke-WDUninstallAction {
     if ($removed.Count -and -not $failed.Count -and -not $blocked.Count) {
         $rec = ''
         if ($retried.Count) { $rec = 'the first attempt was refused; it worked once ' + ($retried -join '; ') }
-        return New-WDResult -Status Removed -Message "$($removed.Count) program(s)" -Detail ($removed -join ', ') -Recovered $rec
+        $detail = $removed -join ', '
+        if ($kept.Count) { $detail += " (kept: $($kept -join '; '))" }
+        return New-WDResult -Status Removed -Message "$($removed.Count) program(s)" -Detail $detail -Recovered $rec
     }
     if ($removed.Count) {
         $rest = @($failed) + @($blocked)
@@ -688,6 +935,8 @@ function Test-WDRegistryActionSatisfied {
             $rel = [string](Get-Prop $v 'path' '')
             if (-not $rel) { continue }
             $full = $(if ($scope -ieq 'allusers') { Join-Path $root.Path $rel } else { $rel })
+            # Where the executor would not write, there is nothing outstanding.
+            if ([bool](Get-Prop $v 'ifKeyExists' $false) -and -not (Test-Path -LiteralPath $full)) { continue }
             $ok = Test-WDRegistryValueSet -Full $full `
                                           -Name ([string](Get-Prop $v 'name' '')) `
                                           -Data (Get-Prop $v 'value' 0) `
@@ -697,6 +946,44 @@ function Test-WDRegistryActionSatisfied {
         }
     }
     $true
+}
+
+# Values the User Choice Protection Driver (UCPD.sys) refuses to anything on its
+# list of scripting and registry tools, powershell.exe included, elevated or
+# not: the Widgets button, the Widgets policy, and the Windows 10 feeds mode
+# (2026-08-15 run: "Attempted to perform an unauthorized operation" on all
+# three, from an elevated run, with Administrators holding FullControl on the
+# keys), plus the UserChoice keys behind default apps.
+$script:UcpdValues = @('TaskbarDa', 'AllowNewsAndInterests', 'ShellFeedsTaskbarViewMode')
+
+function Test-WDUcpdRefusal {
+    param([string]$Full, [string]$Name)
+    if ($Name -notin $script:UcpdValues -and $Full -notmatch '\\UserChoice(Latest)?$') { return $false }
+    try { return ([string](Get-Service -Name 'UCPD' -ErrorAction Stop).Status -eq 'Running') } catch { return $false }
+}
+
+function New-WDFirstSignInCommand {
+    # The reg.exe line that writes one value into HKCU, for a RunOnce entry in
+    # the default profile. $null for what reg.exe cannot say on one line.
+    param([string]$Rel, [string]$Name, [string]$Kind, $Data, [bool]$Delete)
+
+    $key  = 'HKCU\' + $Rel.TrimStart('\')
+    $q    = { param([string]$s) '"' + ($s -replace '"', '\"') + '"' }
+    $who  = $(if ($Name -eq '(default)' -or -not $Name) { '/ve' } else { '/v ' + (& $q $Name) })
+    if ($Delete) { return "reg.exe delete $(& $q $key) $who /f" }
+    $type = switch ($Kind) {
+        'DWord'        { 'REG_DWORD' }
+        'QWord'        { 'REG_QWORD' }
+        'String'       { 'REG_SZ' }
+        'ExpandString' { 'REG_EXPAND_SZ' }
+        default        { $null }
+    }
+    if (-not $type) { return $null }
+    $d = $(if ($type -in @('REG_DWORD', 'REG_QWORD')) { [string]([int64]$Data) } else { & $q ([string]$Data) })
+    $cmd = "reg.exe add $(& $q $key) $who /t $type /d $d /f"
+    # The documented ceiling for a Run or RunOnce command line.
+    if ($cmd.Length -gt 259) { return $null }
+    $cmd
 }
 
 function Invoke-WDRegistryAction {
@@ -719,6 +1006,15 @@ function Invoke-WDRegistryAction {
         'allusers' {
             $roots = @(Select-WDAccountHives -Hives (Get-WDUserHives) -Default $Context.DefaultHive `
                                              -Accounts (Get-WDContextAccounts $Context))
+            # Said, never folded into "nothing to change": that is the success a
+            # value already absent earns, and a run told to write to no account
+            # reported fifty of them as successes while writing nothing at all.
+            if (-not $roots.Count) {
+                return New-WDResult -Status Skipped -Message 'No account selected to write to' `
+                                    -Detail ('Nothing is ticked under "which accounts per-user settings are written to", ' +
+                                             'so this per-account setting was not written anywhere. Tick an account under ' +
+                                             'How the run behaves, then run this option again.')
+            }
         }
         default    { $roots = @([pscustomobject]@{ Name = 'HKLM'; Path = 'HKLM:' }) }
     }
@@ -736,6 +1032,41 @@ function Invoke-WDRegistryAction {
             # relative.
             $full = $rel
             if ($scope -ieq 'allusers') { $full = Join-Path $root.Path $rel }
+
+            # The default profile is NTUSER.DAT, and a new account's
+            # HKCU\Software\Classes is a different file - UsrClass.dat, created
+            # fresh at first sign-in - so a Classes value written into the
+            # default hive reaches nobody. Neither does a value Windows itself
+            # re-seeds when it builds a profile ("firstSignIn" on the value).
+            # Both become a RunOnce entry in the default profile, which every
+            # new account runs once at its first sign-in: the generator
+            # Schneegans writes this one value the same way, from its first
+            # sign-in script. A loaded account's Software\Classes is linked to
+            # its UsrClass hive, so those writes were always fine.
+            $isDefault = [bool](Get-Prop $root 'Mounted' $false)
+
+            # "ifKeyExists": a value that only means something on a key that is
+            # already there - a shell namespace entry, say - is not written
+            # anywhere the key is absent, because writing it creates the key: the
+            # OneDrive sidebar row left empty CLSID keys behind after the
+            # uninstaller had removed the real ones. The default profile has no
+            # way to answer the question for accounts not made yet, so it is
+            # skipped too.
+            if ([bool](Get-Prop $v 'ifKeyExists' $false) -and ($isDefault -or -not (Test-Path -LiteralPath $full))) {
+                continue
+            }
+
+            if ($scope -ieq 'allusers' -and $isDefault -and
+                ($rel -match '^(?i)\\?software\\classes\\' -or [bool](Get-Prop $v 'firstSignIn' $false))) {
+                $cmd = New-WDFirstSignInCommand -Rel $rel -Name $name -Kind $kind -Data $data -Delete $del
+                if ($cmd) {
+                    $tag  = ([BitConverter]::ToString(([Security.Cryptography.SHA1]::Create()).ComputeHash(
+                                [Text.Encoding]::UTF8.GetBytes("$rel|$name".ToLower()))) -replace '-', '').Substring(0, 12)
+                    $full = Join-Path $root.Path 'Software\Microsoft\Windows\CurrentVersion\RunOnce'
+                    $name = "WinSetupToolkit-$tag"
+                    $kind = 'String'; $data = $cmd; $del = $false
+                }
+            }
 
             try {
                 # Read before deciding, in both modes: if preview and apply
@@ -769,14 +1100,37 @@ function Invoke-WDRegistryAction {
                         $written++
                     }
                 } else {
-                    if (-not (Test-Path -LiteralPath $full)) { $null = New-Item -Path $full -Force -ErrorAction Stop }
-                    Set-ItemProperty -LiteralPath $full -Name $name -Value $data -Type $kind -Force -ErrorAction Stop
+                    # The highest key this has to create, so that a write which
+                    # is then refused does not leave an empty key behind that
+                    # nothing journalled - the Widgets policy left
+                    # Policies\Microsoft\Dsh standing empty on every run.
+                    $made = $null
+                    if (-not (Test-Path -LiteralPath $full)) {
+                        $made = $full
+                        $up = Split-Path $full -Parent
+                        while ($up -and -not (Test-Path -LiteralPath $up)) { $made = $up; $up = Split-Path $up -Parent }
+                        $null = New-Item -Path $full -Force -ErrorAction Stop
+                    }
+                    try {
+                        Set-ItemProperty -LiteralPath $full -Name $name -Value $data -Type $kind -Force -ErrorAction Stop
+                    } catch {
+                        if ($made) { Remove-Item -LiteralPath $made -Recurse -Force -ErrorAction SilentlyContinue }
+                        throw
+                    }
                     $written++
                 }
 
                 Add-WDJournal -ItemId $Context.ItemId -Type 'registry' -Target "$full\$name" -Status 'Changed' `
                               -Undo @{ method = 'registry'; path = $full; name = $name; previous = $prev; kind = $kind; raw = $true }
             } catch {
+                # A value the User Choice Protection Driver guards is refused by
+                # a kernel filter, not an ACL, so seizing the key changes
+                # nothing and only leaves it owned by somebody else. Said in
+                # words, and never retried.
+                if (Test-WDUcpdRefusal -Full $full -Name $name) {
+                    $errors.Add("$full\$name : Windows protects this value - the User Choice Protection Driver refuses writes to it from scripts and registry tools, even as administrator ($($_.Exception.Message))")
+                    continue
+                }
                 # Policy keys under TrustedInstaller ownership refuse writes
                 # even to an administrator, and seizing the key is reliable
                 # here.
@@ -1010,6 +1364,32 @@ function Invoke-WDTaskAction {
     $already = New-Object System.Collections.Generic.List[string]
     $found   = $false
 
+    # One routine for the first attempt and for the retry after taking
+    # ownership, so the two cannot journal differently. Deleting is not
+    # disabling: Enable-ScheduledTask cannot bring back a task that no longer
+    # exists, and that is what deleted tasks were journalled with - an undo that
+    # could only ever fail. The definition is exported first and the undo
+    # registers it again; a task whose definition cannot be saved is disabled
+    # instead, which stops it running just as well and can be undone.
+    $act = {
+        param($T)
+        if ($delete) {
+            $xml = $null
+            try { $xml = [string](Export-ScheduledTask -TaskName $T.TaskName -TaskPath $T.TaskPath -ErrorAction Stop) } catch { }
+            if ($xml) {
+                Unregister-ScheduledTask -TaskName $T.TaskName -TaskPath $T.TaskPath -Confirm:$false -ErrorAction Stop
+                Add-WDJournal -ItemId $Context.ItemId -Type 'task' -Target "$($T.TaskPath)$($T.TaskName)" -Status 'Removed' `
+                              -Undo @{ method = 'register-task'; path = $T.TaskPath; name = $T.TaskName; xml = $xml }
+                return ''
+            }
+        }
+        $null = Disable-ScheduledTask -TaskName $T.TaskName -TaskPath $T.TaskPath -ErrorAction Stop
+        Add-WDJournal -ItemId $Context.ItemId -Type 'task' -Target "$($T.TaskPath)$($T.TaskName)" -Status 'Changed' `
+                      -Undo @{ method = 'task'; path = $T.TaskPath; name = $T.TaskName }
+        if ($delete) { return ' (disabled rather than deleted: its definition could not be saved)' }
+        ''
+    }
+
     foreach ($spec in $tasks) {
         # Accept "\Path\Name" or "\Path\*".
         $path = Split-Path $spec -Parent
@@ -1028,14 +1408,8 @@ function Invoke-WDTaskAction {
             if ($Context.Preview) { $changed.Add($t.TaskName); continue }
 
             try {
-                if ($delete) {
-                    Unregister-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath -Confirm:$false -ErrorAction Stop
-                } else {
-                    $null = Disable-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath -ErrorAction Stop
-                }
-                $changed.Add($t.TaskName)
-                Add-WDJournal -ItemId $Context.ItemId -Type 'task' -Target "$($t.TaskPath)$($t.TaskName)" -Status 'Changed' `
-                              -Undo @{ method = 'task'; path = $t.TaskPath; name = $t.TaskName }
+                $note = & $act $t
+                $changed.Add("$($t.TaskName)$note")
             } catch {
                 # A locked task's entry in TaskCache is TrustedInstaller-owned.
                 $done = $false
@@ -1047,12 +1421,9 @@ function Invoke-WDTaskAction {
                         Add-WDJournal -ItemId $Context.ItemId -Type 'ownership' -Target $tree -Status 'Changed' `
                                       -Undo @{ method = 'owner'; path = $tree; previous = $own.PreviousOwner }
                         try {
-                            if ($delete) { Unregister-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath -Confirm:$false -ErrorAction Stop }
-                            else         { $null = Disable-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath -ErrorAction Stop }
-                            $changed.Add("$($t.TaskName) (after taking ownership)")
+                            $note = & $act $t
+                            $changed.Add("$($t.TaskName)$note (after taking ownership)")
                             $done = $true
-                            Add-WDJournal -ItemId $Context.ItemId -Type 'task' -Target "$($t.TaskPath)$($t.TaskName)" -Status 'Changed' `
-                                          -Undo @{ method = 'task'; path = $t.TaskPath; name = $t.TaskName }
                         } catch { }
                     }
                 }
@@ -1065,7 +1436,8 @@ function Invoke-WDTaskAction {
         $d = ($changed -join ', ')
         if ($blocked.Count) { $d += " (locked: $($blocked -join ', '))" }
         if ($already.Count) { $d += " (already disabled: $($already -join ', '))" }
-        return New-WDResult -Status Changed -Message "$($changed.Count) task(s) disabled" -Detail $d
+        $verb = $(if ($delete) { 'removed' } else { 'disabled' })
+        return New-WDResult -Status Changed -Message "$($changed.Count) task(s) $verb" -Detail $d
     }
     if ($blocked.Count) { return New-WDResult -Status Blocked -Message 'Task protected' -Detail ($blocked -join ', ') }
     if (-not $found)    { return New-WDResult -Status NotPresent -Message 'Task not present' }
@@ -1131,26 +1503,49 @@ function Invoke-WDCapabilityAction {
 
     $names   = @(Get-Prop $Action 'names' @())
     $install = ([string](Get-Prop $Action 'mode' 'remove') -ieq 'install')
+    # Firewall rules installing the capability creates on its own - OpenSSH
+    # Server adds and enables OpenSSH-Server-In-TCP, letting port 22 in, and
+    # removing the capability leaves the rule behind. A rule that was not there
+    # before is journalled so the undo takes it away again.
+    $rules   = @(Get-Prop $Action 'firewallRules' @())
     $changed = New-Object System.Collections.Generic.List[string]
     $errors  = New-Object System.Collections.Generic.List[string]
     $found   = $false
+    # Whether the pattern named anything this build offers at all. Install mode
+    # answered "Already installed" for a name that matched nothing, which is a
+    # claim about a capability that is not there.
+    $offered = $false
 
     foreach ($pattern in $names) {
         $caps = @()
         try { $caps = @(Get-WDCapabilityList | Where-Object { $_.Name -like $pattern }) } catch { }
         foreach ($c in $caps) {
+            $offered = $true
             if ($install) { if ($c.State -eq 'Installed') { continue } }
             else          { if ($c.State -ne 'Installed') { continue } }
             $found = $true
             if ($Context.Preview) { $changed.Add($c.Name); continue }
             try {
                 if ($install) {
+                    $before = @{}
+                    foreach ($rn in $rules) {
+                        $before[$rn] = $false
+                        try { $before[$rn] = [bool](Get-NetFirewallRule -Name $rn -ErrorAction SilentlyContinue) } catch { }
+                    }
                     $r = Add-WindowsCapability -Online -Name $c.Name -ErrorAction Stop
                     Clear-WDCapabilityCache
                     $changed.Add($c.Name)
                     if ($r -and $r.RestartNeeded) { Set-WDRebootNeeded }
                     Add-WDJournal -ItemId $Context.ItemId -Type 'capability' -Target $c.Name -Status 'Changed' `
                                   -Undo @{ method = 'capability-off'; name = $c.Name }
+                    foreach ($rn in $rules) {
+                        $now = $false
+                        try { $now = [bool](Get-NetFirewallRule -Name $rn -ErrorAction SilentlyContinue) } catch { }
+                        if ($now -and -not $before[$rn]) {
+                            Add-WDJournal -ItemId $Context.ItemId -Type 'firewall' -Target $rn -Status 'Changed' `
+                                          -Undo @{ method = 'remove-firewall-rule'; name = $rn }
+                        }
+                    }
                 } else {
                     $r = Remove-WindowsCapability -Online -Name $c.Name -ErrorAction Stop
                     Clear-WDCapabilityCache
@@ -1168,6 +1563,7 @@ function Invoke-WDCapabilityAction {
     if ($install) {
         if ($changed.Count) { return New-WDResult -Status Changed -Message "$($changed.Count) capability(ies) installed" -Detail ($changed -join ', ') }
         if ($errors.Count)  { return New-WDResult -Status Failed -Message 'Capability install failed' -Detail ($errors -join '; ') }
+        if (-not $offered)  { return New-WDResult -Status NotPresent -Message 'This build does not offer it' -Detail ($names -join ', ') }
         return New-WDResult -Status AlreadySet -Message 'Already installed'
     }
 
@@ -1200,15 +1596,11 @@ function Invoke-WDFileAction {
                 Add-WDJournal -ItemId $Context.ItemId -Type 'file' -Target $Item.FullName -Status 'Removed' -Undo $null
             } elseif ($recycle) {
                 # Refuse rather than quietly hard-delete: FOF_ALLOWUNDO is a
-                # request, and SHFileOperation reports success either way.
-                if (-not (Test-WDRecycleAvailable -Path $Item.FullName)) {
-                    return "$($Item.FullName) : no Recycle Bin on that volume, left in place"
-                }
-                if (-not (Remove-WDToRecycleBin -Path $Item.FullName)) {
-                    return "$($Item.FullName) : could not be moved to the Recycle Bin"
-                }
-                Add-WDJournal -ItemId $Context.ItemId -Type 'file' -Target $Item.FullName -Status 'Removed' `
-                              -Undo @{ method = 'recycle'; path = $Item.FullName }
+                # request, and SHFileOperation reports success either way. The
+                # shared routine asks, and parks the item in the run folder
+                # instead when this runs as SYSTEM, whose bin nobody can open.
+                $why = Remove-WDFileUndoable -Path $Item.FullName -ItemId $Context.ItemId
+                if ($why) { return "$($Item.FullName) : $why" }
             } else {
                 Remove-Item -LiteralPath $Item.FullName -Recurse -Force -ErrorAction Stop
                 Add-WDJournal -ItemId $Context.ItemId -Type 'file' -Target $Item.FullName -Status 'Removed' -Undo $null
@@ -1259,7 +1651,23 @@ function Invoke-WDShortcutAction {
     $exclude = @(Get-Prop $Action 'exclude' @())
     $where   = @(Get-Prop $Action 'locations' @('desktop', 'startmenu'))
     $recurse = [bool](Get-Prop $Action 'recurse' $true)
-    $recycle = [bool](Get-Prop $Action 'recycle' $false)
+    # Recycled unless an item says otherwise. A shortcut is a file somebody can
+    # see and may want back, and the vendor-promo sweep was hard-deleting
+    # whatever its name patterns matched, with no journal entry at all.
+    $recycle = [bool](Get-Prop $Action 'recycle' $true)
+    # "keepLive": a .lnk whose target still exists is a shortcut to a program
+    # that is installed, so a sweep for promotional links leaves it alone - an
+    # "Opera*" pattern meant for a bundled installer otherwise took the
+    # shortcut to the Opera somebody uses. .url links are web links and stay in
+    # scope, and so does a .lnk that opens a browser at a web address: that is
+    # the usual shape of an affiliate tile, and its target - the browser - is
+    # always there. A .lnk with no readable target is kept: an advertised
+    # installer shortcut (Office's are) reads back an empty TargetPath and is
+    # very much live.
+    $keepLive = [bool](Get-Prop $Action 'keepLive' $false)
+    $shell    = $null
+    if ($keepLive) { try { $shell = New-Object -ComObject WScript.Shell } catch { } }
+    $kept     = New-Object System.Collections.Generic.List[string]
 
     $dirs = @()
     if ($where -contains 'desktop') {
@@ -1298,21 +1706,34 @@ function Invoke-WDShortcutAction {
                 if ($h.BaseName -like $pattern) { $wanted = $false; break }
             }
             if (-not $wanted) { continue }
+            if ($keepLive -and $h.Extension -eq '.lnk') {
+                $target = ''; $argText = ''; $read = $false
+                try {
+                    if ($shell) {
+                        $sc = $shell.CreateShortcut($h.FullName)
+                        $target = [string]$sc.TargetPath
+                        $argText = [string]$sc.Arguments
+                        $read = $true
+                    }
+                } catch { }
+                $webLink = $argText -match 'https?://'
+                # No shell to ask, or nothing it could read, is no answer - and
+                # no answer keeps it.
+                if (-not $read -or -not $target -or ((Test-Path -LiteralPath $target) -and -not $webLink)) {
+                    $kept.Add($h.BaseName)
+                    continue
+                }
+            }
             if ($Context.Preview) { $deleted.Add($h.BaseName); continue }
             try {
                 if ($recycle -and -not (Test-WDIrreversible)) {
                     # Refuse rather than quietly hard-delete, exactly as the
                     # file action does.
-                    if (-not (Test-WDRecycleAvailable -Path $h.FullName)) {
-                        $errors.Add("$($h.FullName) : no Recycle Bin on that volume, left in place")
+                    $why = Remove-WDFileUndoable -Path $h.FullName -ItemId $Context.ItemId
+                    if ($why) {
+                        $errors.Add("$($h.FullName) : $why")
                         continue
                     }
-                    if (-not (Remove-WDToRecycleBin -Path $h.FullName)) {
-                        $errors.Add("$($h.FullName) : could not be moved to the Recycle Bin")
-                        continue
-                    }
-                    Add-WDJournal -ItemId $Context.ItemId -Type 'file' -Target $h.FullName -Status 'Removed' `
-                                  -Undo @{ method = 'recycle'; path = $h.FullName }
                 } else {
                     Remove-Item -LiteralPath $h.FullName -Force -ErrorAction Stop
                 }
@@ -1323,8 +1744,10 @@ function Invoke-WDShortcutAction {
         }
     }
 
-    if ($deleted.Count) { return New-WDResult -Status Removed -Message "$($deleted.Count) shortcut(s)" -Detail (($deleted | Sort-Object -Unique) -join ', ') }
+    $keptNote = $(if ($kept.Count) { " (kept, they open a program that is installed or could not be read: $(($kept | Sort-Object -Unique) -join ', '))" } else { '' })
+    if ($deleted.Count) { return New-WDResult -Status Removed -Message "$($deleted.Count) shortcut(s)" -Detail ((($deleted | Sort-Object -Unique) -join ', ') + $keptNote) }
     if ($errors.Count)  { return New-WDResult -Status Blocked -Message 'In use or protected' -Detail ($errors -join '; ') }
+    if ($kept.Count)    { return New-WDResult -Status NotPresent -Message 'No promotional shortcuts' -Detail $keptNote.Trim(' ()') }
     New-WDResult -Status NotPresent -Message 'No matching shortcuts'
 }
 
@@ -1541,7 +1964,7 @@ function Expand-WDSymptoms {
 # Authored, because a handler name is a function name and tells a reader
 # nothing.
 $script:WDHandlerNotes = @{
-    'CleanComponentStore'     = 'Runs DISM /StartComponentCleanup, which discards the superseded copies of Windows components kept under C:\Windows\WinSxS. The same thing Disk Cleanup calls Windows Update Cleanup.'
+    'CleanComponentStore'     = 'Runs DISM /StartComponentCleanup /ResetBase, which discards the superseded copies of Windows components kept under C:\Windows\WinSxS. The same thing Disk Cleanup calls Windows Update Cleanup, plus /ResetBase, which is what makes installed updates impossible to uninstall afterwards.'
     'ClearActivityTraces'     = 'Clears the recent-items lists Windows keeps: jump lists, Quick Access, the Run box history, and the Registry Editor last key and favourites.'
     'ClearDeliveryOptimization' = 'Empties the update pieces Windows caches to share with other PCs on the network, under C:\Windows\SoftwareDistribution\DeliveryOptimization. Windows refills it as needed; nothing is uninstalled.'
     'ClearRunLogs'            = 'Deletes this toolkit''s own past run folders. Nothing about Windows.'
@@ -1549,17 +1972,17 @@ $script:WDHandlerNotes = @{
     'ClearThumbnailCache'     = 'Deletes the thumbnail and icon cache databases under %LOCALAPPDATA%\Microsoft\Windows\Explorer. Explorer rebuilds them on demand.'
     'ClearUpdateCache'        = 'Empties C:\Windows\SoftwareDistribution\Download, where Windows keeps update files it has already installed.'
     'CloseResurrectionPaths'  = 'Shuts the five routes a removed app comes back through: deprovisioning what was uninstalled, the content-delivery values that reinstall bundled apps at sign-in, the consumer-features policy, the push-to-install tasks, and the Edge updater when Edge is gone.'
-    'CopilotKeyToRightCtrl'   = 'Remaps the Copilot key. Uses the native setting in Settings > Personalization > Text input where the build has it, and PowerToys Keyboard Manager where it does not.'
+    'CopilotKeyToRightCtrl'   = 'Remaps the Copilot key. Uses the native setting in Settings > Personalization > Text input where the build has it, and PowerToys Keyboard Manager where it does not - only a PowerToys that is installed, never installing it.'
     'DisableHibernation'      = 'Runs powercfg /hibernate off, which also deletes C:\hiberfil.sys and takes fast startup with it.'
     'DisableReservedStorage'  = 'Runs DISM /Set-ReservedStorageState, releasing the several gigabytes Windows holds back for updates.'
-    'DisableStartupEntries'   = 'Switches off the startup entries you picked, the same ones listed in Task Manager > Startup apps.'
+    'DisableStartupEntries'   = 'Marks every startup entry that is not a system dependency disabled exactly as Task Manager does - a StartupApproved value for each Run entry and Startup-folder file, and State 1 for each packaged startup task - for every selected account. Nothing is deleted, so each one is listed as Disabled in Task Manager > Startup apps and Settings > Apps > Startup.'
     'EmptyRecycleBin'         = 'Empties the Recycle Bin on every drive, including anything you put there yourself.'
     'EnableIrreversibleMode'  = 'Changes how the rest of this run behaves: files are deleted outright instead of to the Recycle Bin. It removes nothing itself.'
     'InstallChosenBrowser'    = 'Installs the browser you picked, with winget, from that vendor''s own package.'
     'InstallPersistenceGuard' = 'Registers a scheduled task under Task Scheduler that re-runs your saved selection at every sign-in.'
-    'InstallUpdateGuard'      = 'Registers a scheduled task that checks the Windows build at every boot and re-runs your saved selection only after a feature update.'
-    'McAfeeScrub'             = 'Downloads and runs McAfee''s own removal tool, MCPR, from mcafee.com.'
-    'NortonScrub'             = 'Downloads and runs Norton''s own removal tool from norton.com.'
+    'InstallUpdateGuard'      = 'Registers a scheduled task that checks the Windows build at each sign-in and re-runs your saved selection only after a feature update.'
+    'McAfeeScrub'             = 'Runs each McAfee product''s own uninstaller, then - with vendor downloads allowed - fetches McAfee''s MCPR cleanup tool from mcafee.com, checks it is signed by McAfee, and opens it for you to finish on screen.'
+    'NortonScrub'             = 'Runs Norton''s own uninstaller where it can run silently, then points at Norton Remove and Reinstall (norton.com/nrnr) for the rest, which has to be run by hand.'
     'RemoveEdge'              = 'Blocks every reinstall path first - the EdgeUpdate policies, its three services, and its scheduled tasks - then runs Edge''s own uninstaller. The WebView2 runtime other programs embed is deliberately kept.'
     'RemoveInstallShortcuts'  = 'Deletes the desktop shortcuts an installer this run just created.'
     'RemoveOneDrive'          = 'Runs OneDrive''s own uninstaller, then removes its program and cache folders. Your synced OneDrive folder is not one of them and is not touched.'
@@ -1570,24 +1993,30 @@ $script:WDHandlerNotes = @{
     'ReportVendorProfile'     = 'Reads the SMBIOS manufacturer string and says which vendor profile the run will use. Changes nothing.'
     'RestartExplorer'         = 'Stops and restarts explorer.exe once, so the taskbar, Start menu, and context menus re-read the settings this run wrote.'
     'ScanStartup'             = 'Lists what currently starts with Windows. Changes nothing.'
-    'SetDefaultBrowser'       = 'Reads every protocol and file type the current browser holds - http and https, and .htm, .html, .pdf, .svg and the rest of what a browser opens - then opens Settings > Apps > Default apps at the browser you have and says which button to press, because Windows will not let any tool move them silently. Names anything the new browser has not registered for, since Set default cannot move those either.'
+    'SetDefaultBrowser'       = 'Reads every protocol and file type the current browser holds, then opens Settings > Apps > Default apps at the browser you have and says which button to press, because Windows will not let any tool move them silently. Set default moves http, https, .htm, and .html - in the EEA also .pdf, .svg, and the other web types - and anything else the new browser can take is named, to be picked by hand on that page.'
+    'ClearStaleShortcuts'     = 'Finds shortcuts on every account''s desktop and Start menu whose target was under a program folder and no longer exists - the leftovers of something this run removed - and moves them to the Recycle Bin, or parks them in the run folder when the run is SYSTEM''s, so the rollback can put them back.'
+    'DisableMicrosoftUpdateService' ='Unregisters the Microsoft Update service (7971f918-a847-4430-9279-4a52d1efe18d) from Automatic Updates, which is what Settings > Windows Update > Advanced options > Receive updates for other Microsoft products does when switched off, and records the same choice in HKLM\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings. No policy, so the switch stays usable.'
+    'PromoteTrayIcons'        ='Turns on every app under Settings > Personalization > Taskbar > Other system tray icons, for each account, by setting IsPromoted on its entry under Control Panel\NotifyIconSettings. Only apps that have already shown an icon have an entry.'
     'SetNoSoundScheme'        = 'Sets the sound scheme to No Sounds, the same as Control Panel > Sound > Sounds > Sound Scheme.'
     'SetPowerPlan'            = 'Runs powercfg /setactive, the same as picking a plan in Control Panel > Power Options.'
     'SetPowerToysModule'      = 'Writes PowerToys'' own settings.json under %LOCALAPPDATA%\Microsoft\PowerToys, which is what its own settings window edits.'
     'SetShortcutArrow'        = 'Writes a blank icon into the toolkit''s own folder and points HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Icons value 29 at it, which is where Explorer reads the shortcut overlay from. Also clears the icon cache so the change shows.'
     'SetTaskbarAutoHide'      = 'Flips one bit in the taskbar layout blob at HKCU\...\StuckRects3, the same as ticking auto-hide in Settings > Personalization > Taskbar.'
-    'SetPowerScheme'          = 'Sets one value in the power plan currently in use, for both mains and battery, through powercfg - the same numbers Control Panel > Power Options > Change advanced power settings shows, including the ones Windows hides from that page. Your previous values are recorded first, so undoing the run puts your own settings back rather than Microsoft''s defaults.'
-    'SetUpdateDeferral'       = 'Writes the deferral policy under HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate for the number of days you chose. The same thing Settings > Windows Update > Advanced options exposes on Pro and above.'
+    'SetPowerScheme'          = 'Sets one value in every power plan on the machine, for both mains and battery, through the Windows power API - the same numbers Control Panel > Power Options > Change advanced power settings shows, including the ones Windows hides from that page. Each plan''s previous values are recorded first, so undoing the run puts your own settings back, into the plan they came from, rather than Microsoft''s defaults.'
+    'HoldUpdateRestarts'      = 'Registers a SYSTEM task that runs every 15 minutes, and at sign-in, unlock, and wake. While anyone is signed in it keeps Windows Update''s active hours (HKLM\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings) around the current hour, so no update restart can start; when nobody is, it moves them off it. Also turns off "Get me up to date" and removes the NoAutoRebootWithLoggedOnUsers policy, which does not work. Your own active hours are recorded first and come back on undo.'
+    'SetRestartDeadline'      = 'Writes the "Specify deadline for automatic updates and restarts for quality update" policy under HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate: the number of days you chose, and a two-day grace period after an update is ready to restart. Feature updates are left without a deadline.'
+    'SetRestartHoldHours'     = 'Writes the hours you chose into a small file beside the restart hold''s task under ProgramData\WinSetupToolkit, and runs the task once so it takes effect now.'
+    'SetUpdateDeferral'       = 'Writes the deferral policy under HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate for the number of days you chose. Windows 11 Settings has no page for it.'
     'WriteCommonIssues'       = 'Writes a text file listing, for every option this run took, the phrases somebody would search for if it turned out to cause a problem, and how to undo that one option. It changes no setting.'
     'WriteRollbackScript'     = 'Turns this run''s journal into Undo-WinSetupToolkit.ps1, a script that restores every registry value and service start-type the run changed, using the values recorded at the time. It runs last, so the journal it reads is complete, and it changes no setting itself.'
     'VerifyDefender'          = 'Checks that Microsoft Defender took back over after a third-party antivirus was removed, and reports what it found. Changes nothing.'
-    'VerifyShellHealth'       = 'Checks that Explorer, the Start menu, and the search host are running after the run. Changes nothing.'
 }
 
 # Handlers that ride along behind another action rather than being the item.
 # They change nothing, so an item whose other actions have gone inert has
-# nothing left to do.
-$script:WDPassiveHandlers = @('VerifyShellHealth')
+# nothing left to do. Empty since the CoreAI item, and the shell check that rode
+# behind it, were deleted; the rule stays for the next one.
+$script:WDPassiveHandlers = @()
 
 function Get-WDHandlerNote {
     param([string]$Name)
@@ -1776,7 +2205,15 @@ function Get-WDItemMechanics {
                 foreach ($p in @(Get-Prop $a 'paths' @())) { $lines.Add("File: deletes $p$how") }
             }
             'shortcut' {
-                foreach ($n in @(Get-Prop $a 'names' @())) { $lines.Add("Shortcut: deletes $n from the desktop and the Start menu") }
+                $how = ', outright'
+                if ([bool](Get-Prop $a 'recycle' $true)) { $how = ', to the Recycle Bin' }
+                $live = ''
+                if ([bool](Get-Prop $a 'keepLive' $false)) { $live = ' - unless it opens a program that is installed' }
+                $places = @(Get-Prop $a 'locations' @('desktop', 'startmenu'))
+                $where = 'the desktop and the Start menu'
+                if ($places -notcontains 'startmenu') { $where = 'the desktop' }
+                elseif ($places -notcontains 'desktop') { $where = 'the Start menu' }
+                foreach ($n in @(Get-Prop $a 'names' @())) { $lines.Add("Shortcut: deletes $n from $where$how$live") }
             }
             'uninstall' {
                 # 'match' rather than 'names' on every OEM and antivirus entry:
@@ -1846,8 +2283,12 @@ function Get-WDItemRevertibility {
         $mine = 'partially'
         if ($type -in $full) {
             $mine = 'fully'
-        } elseif ($type -eq 'file' -or $type -eq 'shortcut') {
+        } elseif ($type -eq 'file') {
             $mine = $(if ([bool](Get-Prop $a 'recycle' $false)) { 'partially' } else { 'no' })
+        } elseif ($type -eq 'shortcut') {
+            # Shortcuts recycle unless the action says otherwise - the same
+            # default Invoke-WDShortcutAction uses.
+            $mine = $(if ([bool](Get-Prop $a 'recycle' $true)) { 'partially' } else { 'no' })
         }
         if ($rank[$mine] -gt $rank[$best]) { $best = $mine }
     }
@@ -2049,6 +2490,7 @@ function Get-WDItemRevertRoutes {
 }
 
 Export-ModuleMember -Function Invoke-WD*, Get-WDInstalledPrograms, Resolve-WDSilentUninstall,
+                              Format-WDWingetFailure,
                               Get-WDItemRevertRoutes, Format-WDHivePath, Get-WDItemConsoles,
                               Test-WDRegistryActionSatisfied, Test-WDRegistryValueSet,
                               Test-WDServiceActionSatisfied,

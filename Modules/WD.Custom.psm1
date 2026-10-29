@@ -45,22 +45,21 @@ Register-WDHandler 'CopilotKeyToRightCtrl' {
         Write-WDLog 'Native Copilot key setting unavailable, falling back to PowerToys.' -Level Info -Item $Context.ItemId
     }
 
-    # Fallback that works on every current build: PowerToys.
+    # Fallback that works on every current build: PowerToys - but only one that
+    # is there. This used to install it with winget, silently, from a
+    # Conservative-tier option whose text never said so and with nothing
+    # journalled to take it off again; and since the key detection answers
+    # Unknown on any 2024-or-later machine it cannot prove has one, that was any
+    # recent PC. No mode installs software. PowerToys is its own row under Add,
+    # which runs earlier in the same plan.
     if (-not (Test-WDPowerToys)) {
-        if ($Context.Preview) {
-            return New-WDResult -Status Changed -Message 'Would install PowerToys and map Win+Shift+F23 to Right Ctrl'
+        $queued = $false
+        try { $queued = [bool]($Context.PlannedIds -and $Context.PlannedIds.Contains('add-powertoys')) } catch { }
+        if ($Context.Preview -and $queued) {
+            return New-WDResult -Status Changed -Message 'Would map Win+Shift+F23 to Right Ctrl in PowerToys, once this run has installed it'
         }
-        if (-not $Context.Profile.HasWinget) {
-            return New-WDResult -Status Skipped -Message 'PowerToys needed for the remap but winget is unavailable' `
-                                -Detail 'Install PowerToys manually, then re-run this item.'
-        }
-        Write-WDLog 'Installing PowerToys (needed for the Copilot key remap)...' -Level Info -Item $Context.ItemId
-        $res = Invoke-WDProcess -FilePath 'winget.exe' -TimeoutSeconds 900 -ArgumentList @(
-            'install','--id','Microsoft.PowerToys','--exact','--silent',
-            '--accept-package-agreements','--accept-source-agreements','--disable-interactivity')
-        if ($res.ExitCode -ne 0) {
-            return New-WDResult -Status Failed -Message 'PowerToys install failed' -Detail "winget exit $($res.ExitCode)"
-        }
+        return New-WDResult -Status Skipped -Message 'Needs PowerToys, which is not installed' `
+                            -Detail 'Tick "PowerToys" under Add to have this run install it, or install it yourself, then run this option again.'
     }
 
     Set-WDPowerToysRemap -Context $Context
@@ -118,8 +117,13 @@ function Set-WDPowerToysRemap {
         if (-not (Test-Path -LiteralPath $kbmDir)) { $null = New-Item -ItemType Directory -Path $kbmDir -Force }
 
         $json = $null
+        # A copy only when there was a file to copy: the journal used to name
+        # "$cfg.wdbak" either way, so undoing a run that created the file
+        # looked for a copy that had never been made, and failed.
+        $bak = $null
         if (Test-Path -LiteralPath $cfg) {
-            Copy-Item -LiteralPath $cfg -Destination "$cfg.wdbak" -Force -ErrorAction SilentlyContinue
+            $bak = Get-WDBackupPath -Path $cfg -Context $Context
+            Copy-Item -LiteralPath $cfg -Destination $bak -Force -ErrorAction SilentlyContinue
             try { $json = Get-Content -LiteralPath $cfg -Raw | ConvertFrom-Json } catch { $json = $null }
         }
         if (-not $json) {
@@ -148,22 +152,29 @@ function Set-WDPowerToysRemap {
             }
         }
         $json.remapShortcuts.global = $global
-        $json | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $cfg -Encoding UTF8
+        Write-WDJsonNoBom -Path $cfg -Object $json -Depth 12
 
-        # Make sure the module is actually switched on.
+        Add-WDJournal -ItemId $Context.ItemId -Type 'copilot-key' -Target $cfg -Status 'Changed' `
+                      -Undo @{ method = 'file-restore'; file = $bak; target = $cfg }
+
+        # Make sure the module is actually switched on - through the same merge
+        # the PowerToys options use, which backs the file up per run and journals
+        # it, so undoing this leaves Keyboard Manager as it was. It was edited
+        # with no backup and no journal entry at all. Only a file PowerToys has
+        # written: absent, it starts every module at its own default, and
+        # Keyboard Manager's is on.
         $ptSettings = Join-Path $ptRoot 'settings.json'
         if (Test-Path -LiteralPath $ptSettings) {
             try {
-                $s = Get-Content -LiteralPath $ptSettings -Raw | ConvertFrom-Json
-                if ($s.PSObject.Properties['enabled']) {
-                    $s.enabled | Add-Member -NotePropertyName 'Keyboard Manager' -NotePropertyValue $true -Force
-                    $s | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $ptSettings -Encoding UTF8
+                $null = Set-WDPowerToysJson -Path $ptSettings -Context $Context -Edit {
+                    param($j)
+                    if (-not $j.PSObject.Properties['enabled']) { $j | Add-Member -NotePropertyName 'enabled' -NotePropertyValue ([pscustomobject]@{}) -Force }
+                    $j.enabled | Add-Member -NotePropertyName 'Keyboard Manager' -NotePropertyValue $true -Force
                 }
-            } catch { }
+            } catch {
+                Write-WDLog "Keyboard Manager could not be switched on in PowerToys' settings: $($_.Exception.Message)" -Level Warn -Item $Context.ItemId
+            }
         }
-
-        Add-WDJournal -ItemId $Context.ItemId -Type 'copilot-key' -Target $cfg -Status 'Changed' `
-                      -Undo @{ method = 'file-restore'; file = "$cfg.wdbak"; target = $cfg }
 
         # PowerToys reads its config only at start, and the engine is a separate
         # process from the tray app - it is the one that has to be bounced.
@@ -216,40 +227,70 @@ Register-WDHandler 'RemoveOneDrive' {
 
     # Known Folder Move first: OneDrive repoints Documents, Pictures, and
     # Desktop into its own folder, and uninstalling without putting them back
-    # strands them.
-    $kfmRoot = Join-Path $env:USERPROFILE 'OneDrive'
-    $shellKey = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders'
+    # strands them. Every account the run reaches, not only the one running
+    # it - the others kept their Desktop and Documents pointing into a OneDrive
+    # folder nothing synced any more. Both spellings Windows stores: the named
+    # values and the known-folder GUIDs beside them.
+    $shellRel = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders'
     $kfm = @(
-        @{ Name = 'Personal';    Local = (Join-Path $env:USERPROFILE 'Documents') },
-        @{ Name = 'My Pictures'; Local = (Join-Path $env:USERPROFILE 'Pictures') },
-        @{ Name = 'My Video';    Local = (Join-Path $env:USERPROFILE 'Videos') },
-        @{ Name = 'My Music';    Local = (Join-Path $env:USERPROFILE 'Music') },
-        @{ Name = 'Desktop';     Local = (Join-Path $env:USERPROFILE 'Desktop') }
+        @{ Name = 'Personal';                               Local = 'Documents' }
+        @{ Name = '{F42EE2D3-909F-4907-8871-4C22FC0BF756}'; Local = 'Documents' }
+        @{ Name = 'My Pictures';                            Local = 'Pictures' }
+        @{ Name = '{0DDD015D-B06C-45D5-8C4C-F59713854639}'; Local = 'Pictures' }
+        @{ Name = 'My Video';                               Local = 'Videos' }
+        @{ Name = '{35286A68-3C57-41A1-BBB1-0EAE73D76C95}'; Local = 'Videos' }
+        @{ Name = 'My Music';                               Local = 'Music' }
+        @{ Name = '{A0C69A99-21C8-4671-8703-7934162FCF1D}'; Local = 'Music' }
+        @{ Name = 'Desktop';                                Local = 'Desktop' }
+        @{ Name = '{754AC886-DF64-4CBA-86B5-F7FBF4FBCEF5}'; Local = 'Desktop' }
     )
     $moved = New-Object System.Collections.Generic.List[string]
-    foreach ($k in $kfm) {
-        $cur = ''
-        try { $cur = [string](Get-ItemProperty -LiteralPath $shellKey -Name $k.Name -ErrorAction Stop).$($k.Name) } catch { continue }
-        if (-not $cur) { continue }
-        $expanded = [Environment]::ExpandEnvironmentVariables($cur)
-        if (-not $expanded.StartsWith($kfmRoot, [StringComparison]::OrdinalIgnoreCase)) { continue }
-        $moved.Add($k.Name)
-        if ($Context.Preview) { continue }
-        try {
-            if (-not (Test-Path -LiteralPath $k.Local)) {
-                $null = New-Item -ItemType Directory -Path $k.Local -Force -ErrorAction Stop
+    $hives = @(Select-WDAccountHives -Hives (Get-WDUserHives) -Default $null -Accounts (Get-WDContextAccounts $Context))
+    foreach ($h in $hives) {
+        # Whose profile this hive is, so %USERPROFILE% in its values means that
+        # person's folder rather than the one running this.
+        $profileDir = $env:USERPROFILE
+        if ([string]$h.Name -ne 'CurrentUser') {
+            $profileDir = ''
+            try { $profileDir = [string](Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$($h.Name)" -Name 'ProfileImagePath' -ErrorAction Stop).ProfileImagePath } catch { }
+            if (-not $profileDir) { continue }
+            $profileDir = [Environment]::ExpandEnvironmentVariables($profileDir)
+        }
+        $key = Join-Path $h.Path $shellRel
+        if (-not (Test-Path -LiteralPath $key)) { continue }
+        $into = '^' + [regex]::Escape($profileDir.TrimEnd('\')) + '\\OneDrive( - [^\\]+)?\\'
+        foreach ($k in $kfm) {
+            $cur = ''
+            # Read unexpanded: %USERPROFILE% has to be resolved against this
+            # hive's profile, not this process's.
+            try {
+                $rk = Get-Item -LiteralPath $key -ErrorAction Stop
+                $cur = [string]$rk.GetValue($k.Name, '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            } catch { continue }
+            if (-not $cur) { continue }
+            $expanded = $cur -ireplace '%USERPROFILE%', $profileDir.TrimEnd('\')
+            if ($expanded -notmatch $into) { continue }
+            $moved.Add("$($k.Name) ($($h.Name))")
+            if ($Context.Preview) { continue }
+            try {
+                $local = Join-Path $profileDir $k.Local
+                if (-not (Test-Path -LiteralPath $local)) {
+                    $null = New-Item -ItemType Directory -Path $local -Force -ErrorAction Stop
+                }
+                Add-WDJournal -ItemId $Context.ItemId -Type 'registry' -Target "$key\$($k.Name)" -Status 'Changed' `
+                              -Undo @{ method = 'registry'; path = $key; name = $k.Name; kind = 'ExpandString'; previous = $cur; raw = $true }
+                # The form Windows itself writes, which follows the profile if
+                # it ever moves.
+                Set-ItemProperty -LiteralPath $key -Name $k.Name -Value "%USERPROFILE%\$($k.Local)" -Type ExpandString -Force -ErrorAction Stop
+                Write-WDLog "$($k.Name) for $($h.Name) was redirected into OneDrive; pointed back at $local so it still resolves once OneDrive is gone. Anything stored in the OneDrive copy stays in your OneDrive account." `
+                            -Level Warn -Item $Context.ItemId
+            } catch {
+                $failed.Add("could not point $($k.Name) for $($h.Name) back at the local profile: $($_.Exception.Message)")
             }
-            Add-WDJournal -ItemId $Context.ItemId -Type 'registry' -Target "$shellKey\$($k.Name)" -Status 'Changed' `
-                          -Undo @{ method = 'registry'; path = $shellKey; name = $k.Name; kind = 'ExpandString'; previous = $cur; raw = $true }
-            Set-ItemProperty -LiteralPath $shellKey -Name $k.Name -Value $k.Local -Type ExpandString -Force -ErrorAction Stop
-            Write-WDLog "$($k.Name) was redirected into OneDrive; pointed back at $($k.Local) so it still resolves once OneDrive is gone. Anything stored in the OneDrive copy stays in your OneDrive account." `
-                        -Level Warn -Item $Context.ItemId
-        } catch {
-            $failed.Add("could not point $($k.Name) back at the local profile: $($_.Exception.Message)")
         }
     }
     if ($moved.Count) {
-        $steps.Add("$($moved.Count) folder(s) pointed back at this PC ($($moved -join ', '))")
+        $steps.Add("$($moved.Count) folder setting(s) pointed back at this PC ($($moved -join ', '))")
     }
 
     if (-not $Context.Preview) {
@@ -258,7 +299,26 @@ Register-WDHandler 'RemoveOneDrive' {
         Start-Sleep -Milliseconds 500
     }
 
-    # OneDrive ships its own uninstaller in both bitnesses and both scopes.
+    # Every uninstaller present, in the order that matters. The uninstall
+    # entries first and verbatim: a per-machine install registers
+    # ".../OneDriveSetup.exe /uninstall /allusers", and running its setup with
+    # plain /uninstall - all this ever did - left the per-machine copy under
+    # Program Files standing (21 MB of it on this machine). Then the copies
+    # under Program Files by path, then the in-box setup and the per-user ones.
+    $cmds = New-Object System.Collections.Generic.List[psobject]
+    foreach ($p in @(Get-WDInstalledPrograms | Where-Object { $_.DisplayName -like 'Microsoft OneDrive*' -and $_.UninstallString })) {
+        $u = [string]$p.UninstallString
+        $exe = $u; $argLine = ''
+        if ($u -match '^\s*"([^"]+)"\s*(.*)$')        { $exe = $Matches[1]; $argLine = $Matches[2] }
+        elseif ($u -match '^\s*(\S+\.exe)\s*(.*)$')   { $exe = $Matches[1]; $argLine = $Matches[2] }
+        $cmds.Add([pscustomobject]@{ Exe = $exe; Args = $argLine; Why = "$($p.DisplayName) uninstall entry" })
+    }
+    foreach ($root in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+        if (-not $root) { continue }
+        foreach ($s in @(Get-ChildItem -Path (Join-Path $root 'Microsoft OneDrive\*\OneDriveSetup.exe') -ErrorAction SilentlyContinue)) {
+            $cmds.Add([pscustomobject]@{ Exe = $s.FullName; Args = '/uninstall /allusers'; Why = 'per-machine install' })
+        }
+    }
     $setups = @(
         (Join-Path $env:SystemRoot 'SysWOW64\OneDriveSetup.exe'),
         (Join-Path $env:SystemRoot 'System32\OneDriveSetup.exe'),
@@ -268,40 +328,77 @@ Register-WDHandler 'RemoveOneDrive' {
         $candidate = Join-Path $dir.FullName 'OneDriveSetup.exe'
         if (Test-Path -LiteralPath $candidate) { $setups += $candidate }
     }
+    foreach ($s in ($setups | Sort-Object -Unique)) {
+        $cmds.Add([pscustomobject]@{ Exe = $s; Args = '/uninstall'; Why = 'setup' })
+    }
 
     $ran = $false
-    foreach ($s in ($setups | Sort-Object -Unique)) {
-        if (-not (Test-Path -LiteralPath $s)) { continue }
+    # Kept apart from $failed: the in-box setups run after the real uninstaller
+    # and answer with an error when it has already taken everything, which
+    # reported a complete removal as "partly removed" (0x8004069B twice, on a
+    # laptop where the uninstall entry had just done the job). Judged below
+    # against whether OneDrive is actually still there.
+    $setupFails = New-Object System.Collections.Generic.List[string]
+    $done = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($c in $cmds) {
+        if (-not (Test-Path -LiteralPath $c.Exe)) { continue }
+        if (-not $done.Add("$($c.Exe)|$($c.Args)")) { continue }
         $ran = $true
-        if ($Context.Preview) { $steps.Add("uninstall via $(Split-Path $s -Leaf)"); continue }
-        $r = Invoke-WDProcess -FilePath $s -ArgumentList @('/uninstall') -TimeoutSeconds 300
-        if ($r.ExitCode -in @(0, 3010)) { $steps.Add('uninstaller ran') } else { $failed.Add("setup exit $($r.ExitCode)") }
+        if ($Context.Preview) { $steps.Add("uninstall via $(Split-Path $c.Exe -Leaf) $($c.Args) ($($c.Why))"); continue }
+        $r = Invoke-WDProcess -FilePath $c.Exe -ArgumentList @($c.Args) -TimeoutSeconds 300
+        # Plain arithmetic: 0xFFFFFFFF is -1 to PowerShell 5.1, so masking with
+        # it changes nothing.
+        $u = [int64]$r.ExitCode; if ($u -lt 0) { $u += 4294967296 }
+        $hex = '0x{0:X8}' -f $u
+        if ($r.ExitCode -in @(0, 3010)) { $steps.Add("uninstaller ran ($($c.Why))") } else { $setupFails.Add("$($c.Why): $(Split-Path $c.Exe -Leaf) $($c.Args) exit $($r.ExitCode) ($hex)") }
     }
 
     if (-not $Context.Preview) {
-        # Explorer navigation pane entries, both bitnesses.
-        foreach ($clsid in @(
-            'HKCR:\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}',
-            'HKCR:\Wow6432Node\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}')) {
-            $psPath = $clsid -replace '^HKCR:', 'Registry::HKEY_CLASSES_ROOT'
-            if (Test-Path -LiteralPath $psPath) {
-                try {
-                    Set-ItemProperty -LiteralPath $psPath -Name 'System.IsPinnedToNameSpaceTree' -Value 0 -Type DWord -Force -EA Stop
-                    $steps.Add('removed from Explorer sidebar')
-                } catch { $failed.Add('Explorer sidebar entry') }
-            }
+        Clear-WDProgramCache
+        # Its scheduled tasks, through the task executor so each definition is
+        # exported first and the rollback can register it again - they were
+        # unregistered here with nothing journalled.
+        $t = Invoke-WDTaskAction -Context $Context -Action ([pscustomobject]@{ type = 'task'; tasks = @('\OneDrive*'); delete = $true })
+        if ([string]$t.Status -in @('Changed', 'Removed')) { $steps.Add('scheduled tasks removed') }
+        # The startup entries, every account plus the default profile, whose
+        # OneDriveSetup value is what installs OneDrive for each new account.
+        # Through the registry executor, so each is journalled.
+        $null = Invoke-WDRegistryAction -Context $Context -Action ([pscustomobject]@{
+            type = 'registry'; scope = 'allusers'
+            values = @(
+                [pscustomobject]@{ path = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Run'; name = 'OneDrive';      kind = 'String'; value = ''; delete = $true }
+                [pscustomobject]@{ path = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Run'; name = 'OneDriveSetup'; kind = 'String'; value = ''; delete = $true }
+            ) })
+    }
+
+    # Asked of the machine after the uninstallers, the same question the
+    # "already done" probe asks: an uninstall entry, or OneDrive.exe in either
+    # place it installs. The folders themselves go in the next action.
+    if (-not $Context.Preview -and $setupFails.Count) {
+        $left = @(Get-WDInstalledPrograms | Where-Object { $_.DisplayName -like 'Microsoft OneDrive*' }).Count -gt 0
+        foreach ($exe in @((Join-Path ([string]$env:ProgramFiles) 'Microsoft OneDrive\OneDrive.exe'),
+                           (Join-Path ([string]${env:ProgramFiles(x86)}) 'Microsoft OneDrive\OneDrive.exe'),
+                           (Join-Path $env:LOCALAPPDATA 'Microsoft\OneDrive\OneDrive.exe'))) {
+            if (Test-Path -LiteralPath $exe -ErrorAction SilentlyContinue) { $left = $true }
         }
-        try {
-            Remove-ItemProperty -LiteralPath 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' `
-                                -Name 'OneDrive' -Force -EA SilentlyContinue
-        } catch { }
-        Get-ScheduledTask -TaskName 'OneDrive*' -ErrorAction SilentlyContinue |
-            Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
-        $steps.Add('scheduled tasks removed')
+        if ($left) {
+            foreach ($f in $setupFails) { $failed.Add($f) }
+        } elseif (@($steps | Where-Object { $_ -like 'uninstaller ran*' }).Count) {
+            $steps.Add("OneDrive confirmed gone; the remaining setup copies had nothing left to remove ($($setupFails -join '; '))")
+        } elseif ($steps.Count) {
+            $steps.Add("OneDrive itself was not installed ($($setupFails -join '; '))")
+        } else {
+            # Nothing uninstalled and nothing there: the in-box setup stub
+            # exists on every machine and errors when OneDrive never was.
+            return New-WDResult -Status NotPresent -Message 'OneDrive not installed' -Detail ($setupFails -join '; ')
+        }
     }
 
     if (-not $ran -and -not $steps.Count) { return New-WDResult -Status NotPresent -Message 'OneDrive not installed' }
     if ($failed.Count -and -not $steps.Count) { return New-WDResult -Status Failed -Message 'OneDrive removal failed' -Detail ($failed -join '; ') }
+    if ($failed.Count) {
+        return New-WDResult -Status Partial -Message 'OneDrive partly removed' -Detail ((($steps | Sort-Object -Unique) -join ', ') + ' | ' + ($failed -join '; '))
+    }
     New-WDResult -Status Removed -Message 'OneDrive removed' -Detail (($steps | Sort-Object -Unique) -join ', ')
 }
 
@@ -327,16 +424,35 @@ Register-WDHandler 'McAfeeScrub' {
             -Detail "$($inner.Detail) | Enable 'allow vendor cleanup downloads' to run McAfee's MCPR tool and remove the leftover drivers and services."
     }
 
+    # MCPR is interactive - a terms page and a typed code - so it can only be
+    # handed to the person at the screen. Run unattended (a guard, as SYSTEM)
+    # there is nobody to finish it, and the run used to sit on it for twenty
+    # minutes and then report McAfee "scrubbed" whatever had happened.
+    $sys = $false
+    try { $sys = [Security.Principal.WindowsIdentity]::GetCurrent().IsSystem } catch { }
+    if ($sys) {
+        return New-WDResult -Status $inner.Status -Message "$($inner.Message) - McAfee's cleanup tool needs someone at the screen" `
+                            -Detail "$($inner.Detail) | Run this option from the toolkit window to be handed McAfee's MCPR tool for what the uninstaller left."
+    }
+
     $url = 'https://download.mcafee.com/molbin/iss-loc/SupportTools/MCPR/MCPR.exe'
     $dst = Join-Path $Context.Session.RunDir 'MCPR.exe'
     try {
         Write-WDLog "Downloading McAfee MCPR from $url" -Level Info -Item $Context.ItemId
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing -TimeoutSec 180
-        $r = Invoke-WDProcess -FilePath $dst -TimeoutSeconds 1200
+        # A downloaded executable about to run elevated is checked first: a
+        # valid Authenticode signature, from McAfee.
+        $sig = Get-AuthenticodeSignature -FilePath $dst -ErrorAction Stop
+        if ([string]$sig.Status -ne 'Valid' -or -not $sig.SignerCertificate -or [string]$sig.SignerCertificate.Subject -notmatch 'McAfee') {
+            Remove-Item -LiteralPath $dst -Force -ErrorAction SilentlyContinue
+            return New-WDResult -Status $inner.Status -Message "$($inner.Message) - MCPR not run" `
+                                -Detail "The downloaded MCPR.exe was not validly signed by McAfee ($($sig.Status)), so it was deleted unrun. Get it from mcafee.com if you want it."
+        }
+        Start-Process -FilePath $dst -ErrorAction Stop
         Set-WDRebootNeeded
-        New-WDResult -Status Removed -Message 'McAfee removed and scrubbed with MCPR' `
-                     -Detail "MCPR exit $($r.ExitCode). Reboot required." -Reboot
+        New-WDResult -Status $inner.Status -Message "$($inner.Message) - McAfee's MCPR cleanup is open on screen" `
+                     -Detail "$($inner.Detail) | Follow MCPR's own steps to remove the drivers and services the uninstaller leaves behind, then restart." -Reboot
     } catch {
         New-WDResult -Status $inner.Status -Message "$($inner.Message) - MCPR scrub unavailable" -Detail $_.Exception.Message
     }
@@ -426,17 +542,23 @@ Register-WDHandler 'RemoveInstallShortcuts' {
 
     # Recycled, not deleted: this is the one class of file the run creates on
     # somebody's desktop, and getting it wrong should cost a drag out of the
-    # bin.
+    # bin. Through the shared routine, which asks whether there is a bin to use
+    # at all - this one used to recycle without asking, on a volume where that
+    # quietly deletes - and deletes outright only in irreversible mode, which
+    # empties the bin at the end anyway and would leave every entry journalled
+    # here a promise nothing could keep.
     $gone = 0
+    $why  = New-Object System.Collections.Generic.List[string]
     foreach ($f in $found) {
-        if (Remove-WDToRecycleBin -Path $f.FullName) {
-            $gone++
-            Add-WDJournal -ItemId $Context.ItemId -Type 'file' -Target $f.FullName -Status 'Removed' `
-                          -Undo @{ method = 'recycle'; path = $f.FullName }
+        if (Test-WDIrreversible) {
+            try { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; $gone++ } catch { $why.Add("$($f.Name): $($_.Exception.Message)") }
+            continue
         }
+        $no = Remove-WDFileUndoable -Path $f.FullName -ItemId $Context.ItemId
+        if ($no) { $why.Add("$($f.Name): $no") } else { $gone++ }
     }
     if (-not $gone) {
-        return New-WDResult -Status Blocked -Message 'The new shortcuts could not be moved to the Recycle Bin'
+        return New-WDResult -Status Blocked -Message 'The new shortcuts could not be moved to the Recycle Bin' -Detail ($why -join '; ')
     }
     New-WDResult -Status Removed -Message "$gone new desktop shortcut(s) removed" `
                  -Detail "$($names -join ', '). Only shortcuts created during this run were touched."
@@ -454,13 +576,55 @@ $script:KeepStartup = @(
     'PowerToys*'    # required for the Copilot key remap to work
 )
 
+function Get-WDRunValues {
+    # The values of one Run key, read through the key rather than as object
+    # properties - a Run value named PSPath, or anything starting PS, is
+    # otherwise indistinguishable from the provider's own.
+    param([string]$Key)
+    $out = New-Object System.Collections.Generic.List[psobject]
+    if (-not (Test-Path -LiteralPath $Key -ErrorAction SilentlyContinue)) { return ,$out.ToArray() }
+    try {
+        $k = Get-Item -LiteralPath $Key -ErrorAction Stop
+        foreach ($n in $k.GetValueNames()) {
+            if (-not $n) { continue }
+            $out.Add([pscustomobject]@{ Name = [string]$n; Command = [string]$k.GetValue($n) })
+        }
+    } catch { }
+    ,$out.ToArray()
+}
+
+function New-WDStartupDisabledBytes {
+    # Task Manager's own "disabled": a little-endian 3, then the FILETIME it was
+    # switched off. 0x02 or 0x06 in the first byte is enabled, and an entry with
+    # no StartupApproved value at all counts as enabled.
+    $b = New-Object byte[] 12
+    $b[0] = 3
+    [Array]::Copy([BitConverter]::GetBytes([DateTime]::UtcNow.ToFileTimeUtc()), 0, $b, 4, 8)
+    ,$b
+}
+
+function Test-WDStartupApprovedOff {
+    # The low bit of the first byte is what reads as disabled: 3 is Task
+    # Manager's, and 7 is taken the same way rather than as enabled.
+    param([string]$Key, [string]$Name)
+    try {
+        $bytes = [byte[]](Get-ItemProperty -LiteralPath $Key -Name $Name -ErrorAction Stop).$Name
+        return ($bytes.Length -ge 1 -and ($bytes[0] -band 1) -eq 1)
+    } catch { return $false }
+}
+
 Register-WDHandler 'DisableStartupEntries' {
+    # Task Manager's own switch, not a deletion. Each Run value and Startup
+    # folder file gets a StartupApproved entry marking it disabled - keyed by
+    # its name, in the same hive as its source - and each packaged startup task
+    # a State of 1, "disabled by the user", which the app itself cannot
+    # overturn. Nothing is deleted, so Settings > Apps > Startup and Task
+    # Manager list every entry as Disabled and turn it back on in one click.
+    # It used to delete the Run values and rename the files, which put them
+    # where no page could show them, and Steam put its own value straight back.
     param($Action, $Context)
 
     $protected = Get-WDProtectedPrograms -Profile $Context.Profile
-    $disabled  = New-Object System.Collections.Generic.List[string]
-    $kept      = New-Object System.Collections.Generic.List[string]
-
     $isProtected = {
         param([string]$name, [string]$command)
         if (Test-WDPatternMatch $name $script:KeepStartup) { return $true }
@@ -473,59 +637,93 @@ Register-WDHandler 'DisableStartupEntries' {
         $false
     }
 
-    foreach ($k in @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run',
-                     'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run',
-                     'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run')) {
-        if (-not (Test-Path -LiteralPath $k)) { continue }
-        $props = Get-ItemProperty -LiteralPath $k -ErrorAction SilentlyContinue
-        if (-not $props) { continue }
+    $values  = New-Object System.Collections.Generic.List[psobject]
+    $named   = New-Object System.Collections.Generic.List[string]
+    $kept    = New-Object System.Collections.Generic.List[string]
+    $already = New-Object System.Collections.Generic.List[string]
+    $off     = New-WDStartupDisabledBytes
+    $sa      = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved'
 
-        foreach ($prop in @($props.PSObject.Properties)) {
-            if ($prop.Name -like 'PS*') { continue }
-            $cmd = [string]$prop.Value
-
-            if (& $isProtected $prop.Name $cmd) { $kept.Add($prop.Name); continue }
-            if ($Context.Preview) { $disabled.Add($prop.Name); continue }
-
-            try {
-                Backup-WDRegistryKey -Path $k
-                Remove-ItemProperty -LiteralPath $k -Name $prop.Name -Force -ErrorAction Stop
-                $disabled.Add($prop.Name)
-                Add-WDJournal -ItemId $Context.ItemId -Type 'registry' -Target "$k\$($prop.Name)" -Status 'Changed' `
-                              -Undo @{ method = 'registry'; path = $k; name = $prop.Name; previous = $cmd; kind = 'String'; raw = $true }
-            } catch {
-                $kept.Add("$($prop.Name) (locked)")
-            }
-        }
+    $queue = {
+        param([string]$Approved, [string]$Name, [string]$Label, [string]$Command)
+        if (& $isProtected $Label $Command) { $kept.Add($Label); return }
+        if (Test-WDStartupApprovedOff -Key $Approved -Name $Name) { $already.Add($Label); return }
+        $values.Add([pscustomobject]@{ path = $Approved; name = $Name; kind = 'Binary'; value = $off })
+        $named.Add($Label)
     }
 
-    foreach ($folder in @([Environment]::GetFolderPath('Startup'), [Environment]::GetFolderPath('CommonStartup'))) {
-        if (-not $folder -or -not (Test-Path -LiteralPath $folder)) { continue }
-        foreach ($f in (Get-ChildItem -LiteralPath $folder -File -ErrorAction SilentlyContinue)) {
+    # Machine-wide Run keys, approved under HKLM - Run32 for the 32-bit one.
+    foreach ($pair in @(
+        @{ Src = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run';             Approved = "HKLM:\$sa\Run" }
+        @{ Src = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run'; Approved = "HKLM:\$sa\Run32" })) {
+        foreach ($e in (Get-WDRunValues -Key $pair.Src)) { & $queue $pair.Approved $e.Name $e.Name $e.Command }
+    }
+    $common = [Environment]::GetFolderPath('CommonStartup')
+    if ($common -and (Test-Path -LiteralPath $common)) {
+        foreach ($f in @(Get-ChildItem -LiteralPath $common -File -ErrorAction SilentlyContinue)) {
             if ($f.Extension -eq '.disabled') { continue }
-            if (& $isProtected $f.BaseName $f.FullName) { $kept.Add($f.BaseName); continue }
-            if ($Context.Preview) { $disabled.Add($f.BaseName); continue }
+            & $queue "HKLM:\$sa\StartupFolder" $f.Name $f.BaseName $f.FullName
+        }
+    }
+
+    # Each selected account's own Run key, Startup folder, and packaged
+    # startup tasks, approved in that account's hive. The default profile has
+    # none of these to switch off.
+    $roots = @(Select-WDAccountHives -Hives (Get-WDUserHives) -Default $null -Accounts (Get-WDContextAccounts $Context))
+    foreach ($root in $roots) {
+        foreach ($e in (Get-WDRunValues -Key (Join-Path $root.Path 'SOFTWARE\Microsoft\Windows\CurrentVersion\Run'))) {
+            & $queue (Join-Path $root.Path "$sa\Run") $e.Name $e.Name $e.Command
+        }
+
+        $startup = ''
+        if ([string]$root.Name -eq 'CurrentUser') { $startup = [Environment]::GetFolderPath('Startup') }
+        else {
             try {
-                Rename-Item -LiteralPath $f.FullName -NewName "$($f.Name).disabled" -Force -ErrorAction Stop
-                $disabled.Add($f.BaseName)
-                Add-WDJournal -ItemId $Context.ItemId -Type 'file' -Target $f.FullName -Status 'Changed' `
-                              -Undo @{ method = 'rename'; from = "$($f.FullName).disabled"; to = $f.FullName }
-            } catch {
-                $kept.Add("$($f.BaseName) (locked)")
+                $pdir = [Environment]::ExpandEnvironmentVariables([string](Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$($root.Name)" -Name 'ProfileImagePath' -ErrorAction Stop).ProfileImagePath)
+                $startup = Join-Path $pdir 'AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup'
+            } catch { }
+        }
+        if ($startup -and (Test-Path -LiteralPath $startup)) {
+            foreach ($f in @(Get-ChildItem -LiteralPath $startup -File -ErrorAction SilentlyContinue)) {
+                if ($f.Extension -eq '.disabled') { continue }
+                & $queue (Join-Path $root.Path "$sa\StartupFolder") $f.Name $f.BaseName $f.FullName
+            }
+        }
+
+        # Packaged (MSIX) startup tasks: State 2 is enabled, 1 disabled by the
+        # user. 0 never enabled, 3 and 4 policy's - all three left alone.
+        $apps = Join-Path $root.Path 'Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\SystemAppData'
+        if (-not (Test-Path -LiteralPath $apps -ErrorAction SilentlyContinue)) { continue }
+        foreach ($pkg in @(Get-ChildItem -LiteralPath $apps -ErrorAction SilentlyContinue)) {
+            foreach ($task in @(Get-ChildItem -LiteralPath $pkg.PSPath -ErrorAction SilentlyContinue)) {
+                $state = $null
+                try { $state = [int](Get-ItemProperty -LiteralPath $task.PSPath -Name 'State' -ErrorAction Stop).State } catch { continue }
+                $family = ([string]$pkg.PSChildName) -replace '_[^_]+$', ''
+                $label  = "$($task.PSChildName) ($family)"
+                if ($state -eq 1) { $already.Add($label); continue }
+                if ($state -ne 2) { continue }
+                if ((& $isProtected ([string]$task.PSChildName) '') -or (& $isProtected $family '')) { $kept.Add($label); continue }
+                $tk = Join-Path (Join-Path $apps $pkg.PSChildName) $task.PSChildName
+                $values.Add([pscustomobject]@{ path = $tk; name = 'State'; kind = 'DWord'; value = 1 })
+                $values.Add([pscustomobject]@{ path = $tk; name = 'LastDisabledTime'; kind = 'QWord'; value = [int64][DateTime]::UtcNow.ToFileTimeUtc() })
+                $named.Add($label)
             }
         }
     }
 
-    if (-not $disabled.Count -and -not $kept.Count) {
+    $keptNote = $(if ($kept.Count) { " | kept as system dependencies: $((($kept | Sort-Object -Unique) -join ', '))" } else { '' })
+    $offNote  = $(if ($already.Count) { " | already disabled: $((($already | Sort-Object -Unique) -join ', '))" } else { '' })
+    if (-not $values.Count) {
+        if ($already.Count) { return New-WDResult -Status AlreadySet -Message 'Every startup entry is already disabled' -Detail (($offNote + $keptNote).TrimStart(' |')) }
+        if ($kept.Count) { return New-WDResult -Status Skipped -Message "All $($kept.Count) startup entries are system dependencies - none touched" -Detail $keptNote.TrimStart(' |') }
         return New-WDResult -Status NotPresent -Message 'No startup entries found'
     }
-    if (-not $disabled.Count) {
-        return New-WDResult -Status Skipped -Message "All $($kept.Count) startup entries are system dependencies - none attempted" `
-                            -Detail (($kept | Sort-Object -Unique) -join ', ')
-    }
-    New-WDResult -Status Changed -Message "$($disabled.Count) startup entries disabled" `
-                 -Detail ("disabled: $((($disabled | Sort-Object -Unique) -join ', '))" +
-                          $(if ($kept.Count) { " | kept as system dependencies: $((($kept | Sort-Object -Unique) -join ', '))" } else { '' }))
+
+    $res = Invoke-WDRegistryAction -Action ([pscustomobject]@{ type = 'registry'; scope = 'machine'; values = $values.ToArray() }) -Context $Context
+    if ([string]$res.Status -notin @('Changed', 'Removed')) { return $res }
+    $verb = $(if ($Context.Preview) { 'Would disable' } else { 'Disabled' })
+    New-WDResult -Status Changed -Message "$verb $($named.Count) startup entr$(if ($named.Count -eq 1) { 'y' } else { 'ies' })" `
+                 -Detail ("$((($named | Sort-Object -Unique) -join ', '))$offNote$keptNote")
 }
 
 Register-WDHandler 'ScanStartup' {
@@ -608,11 +806,28 @@ Register-WDHandler 'RemoveUninstallLeftovers' {
     # Never sweep a shared root: some installers write "C:\Program Files" into
     # InstallLocation. The list lives in WD.Core, because the process kill needs
     # the identical answer.
+    # Some vendors declare their vendor root as the install location, so the
+    # folder a program leaves behind can also be the folder another of that
+    # vendor's programs lives in. Read fresh, after this run's uninstalls.
+    Clear-WDProgramCache
+    $liveRoots = New-Object System.Collections.Generic.List[string]
+    foreach ($p in @(Get-WDInstalledPrograms)) {
+        $l = ([string]$p.InstallLocation).Trim().Trim('"').TrimEnd('\')
+        if ($l) { $liveRoots.Add($l) }
+    }
+
     $found = New-Object System.Collections.Generic.List[psobject]
+    $held  = New-Object System.Collections.Generic.List[string]
     foreach ($d in $done) {
         $loc = Test-WDSweepableRoot -Path ([string]$d.InstallLocation)
         if (-not $loc) { continue }
         if (-not (Test-Path -LiteralPath $loc -PathType Container)) { continue }
+        $root = ([string]$loc).TrimEnd('\')
+        $owner = $null
+        foreach ($l in $liveRoots) {
+            if ($l -ieq $root -or $l.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase)) { $owner = $l; break }
+        }
+        if ($owner) { $held.Add("$loc (still holds $owner)"); continue }
         # An empty shell is the uninstaller tidying up asynchronously, not a
         # leftover worth reporting.
         $bytes = 0
@@ -622,10 +837,15 @@ Register-WDHandler 'RemoveUninstallLeftovers' {
         $found.Add([pscustomobject]@{ Name = $d.Name; Path = $loc; Bytes = [long]$bytes })
     }
 
-    if (-not $found.Count) { return New-WDResult -Status NotPresent -Message 'The uninstallers left nothing behind' }
+    $heldNote = ''
+    if ($held.Count) { $heldNote = " Left alone, another installed program lives there: $($held -join '; ')" }
+    if (-not $found.Count) {
+        if ($held.Count) { return New-WDResult -Status Skipped -Message 'Left alone: another installed program lives there' -Detail ($held -join '; ') }
+        return New-WDResult -Status NotPresent -Message 'The uninstallers left nothing behind'
+    }
 
     $mb    = [Math]::Round((($found | Measure-Object Bytes -Sum).Sum) / 1MB, 1)
-    $detail = ($found | ForEach-Object { "$($_.Name) -> $($_.Path)" }) -join '; '
+    $detail = (($found | ForEach-Object { "$($_.Name) -> $($_.Path)" }) -join '; ') + $heldNote
 
     if ($Context.Preview) {
         return New-WDResult -Status Removed -Message "Would clear $($found.Count) leftover folder(s), about $mb MB" -Detail $detail
@@ -634,26 +854,21 @@ Register-WDHandler 'RemoveUninstallLeftovers' {
     $gone = New-Object System.Collections.Generic.List[string]
     $kept = New-Object System.Collections.Generic.List[string]
     foreach ($f in $found) {
-        if (-not (Test-WDRecycleAvailable -Path $f.Path)) {
-            $kept.Add("$($f.Path) (no Recycle Bin on that volume)")
-            continue
-        }
-        if (Remove-WDToRecycleBin -Path $f.Path) {
-            $gone.Add($f.Path)
-            Add-WDJournal -ItemId $Context.ItemId -Type 'file' -Target $f.Path -Status 'Removed' `
-                          -Undo @{ method = 'recycle'; path = $f.Path }
-        } else {
-            $kept.Add("$($f.Path) (in use or locked)")
-        }
+        # Remove-WDFileUndoable rather than the bin directly: as SYSTEM - every
+        # re-apply guard - the bin is one nobody can open, so it parks instead.
+        $why = Remove-WDFileUndoable -Path $f.Path -ItemId $Context.ItemId
+        if ($why) { $kept.Add("$($f.Path) ($why)") } else { $gone.Add($f.Path) }
     }
 
+    # A folder left because another program lives in it is the sweep being
+    # right, not a refusal, so it is said in the detail and never counted as one.
     if ($gone.Count -and -not $kept.Count) {
-        return New-WDResult -Status Removed -Message "$($gone.Count) leftover folder(s) sent to the Recycle Bin, about $mb MB" -Detail ($gone -join '; ')
+        return New-WDResult -Status Removed -Message "$($gone.Count) leftover folder(s) cleared, about $mb MB" -Detail (($gone -join '; ') + $heldNote)
     }
     if ($gone.Count) {
-        return New-WDResult -Status Partial -Message "$($gone.Count) cleared, $($kept.Count) left in place" -Detail ($kept -join '; ')
+        return New-WDResult -Status Partial -Message "$($gone.Count) cleared, $($kept.Count) left in place" -Detail (($kept -join '; ') + $heldNote)
     }
-    New-WDResult -Status Blocked -Message 'The leftovers could not be cleared' -Detail ($kept -join '; ')
+    New-WDResult -Status Blocked -Message 'The leftovers could not be cleared' -Detail (($kept -join '; ') + $heldNote)
 }
 
 function Get-WDResidueTokens {
@@ -671,12 +886,73 @@ function Get-WDResidueTokens {
         ForEach-Object { $_.ToLower() } | Select-Object -Unique)
 }
 
+function Get-WDResidueFlat {
+    # A name with its punctuation, spacing, bracketed notes, and version numbers
+    # taken out, so "Lenovo Now", "LenovoNow", and "Lenovo Now 2.1" compare equal.
+    param([string]$Name)
+    ($Name -replace '\(.*?\)', ' ' -replace '\bv?\d+(\.\d+)+\b', ' ' -replace '[^A-Za-z0-9]', '').ToLowerInvariant()
+}
+
+function New-WDResidueMatcher {
+    # What one uninstalled program's leftovers may be called. A folder or key
+    # is a match only when its name IS the program - its whole name, or one of
+    # its distinctive words standing alone - and never when it merely contains
+    # one. It used to be "contains any word of five letters or more", which
+    # made "Lenovo Now" a reason to recycle C:\Program Files\Lenovo and delete
+    # HKLM\SOFTWARE\Lenovo, where Lenovo Vantage lives, and made Google Drive's
+    # "drive" match C:\Program Files\Microsoft OneDrive.
+    #
+    # Two kinds of word never count: the program's own publisher (a vendor's
+    # name is the name of everything that vendor makes) and any word still in
+    # the name or publisher of something installed ($KeepWords).
+    param($Program, $KeepWords)
+    $own = @(Get-WDResidueTokens -Name ([string]$Program.Publisher))
+    $words = @(Get-WDResidueTokens -Name ([string]$Program.Name) |
+               Where-Object { $_ -notin $own -and -not ($KeepWords -and $KeepWords.Contains($_)) })
+    [pscustomobject]@{ Whole = (Get-WDResidueFlat ([string]$Program.Name)); Words = $words }
+}
+
+function New-WDResidueKeep {
+    # What still-installed programs claim: every word of their names and
+    # publishers, and their install folders.
+    param($Programs)
+    $words = New-WDStringSet @()
+    $roots = New-Object System.Collections.Generic.List[string]
+    foreach ($p in @($Programs)) {
+        if (-not $p) { continue }
+        foreach ($t in @(Get-WDResidueTokens -Name ([string]$p.DisplayName)) + @(Get-WDResidueTokens -Name ([string]$p.Publisher))) { $null = $words.Add($t) }
+        foreach ($t in @((Get-WDResidueFlat ([string]$p.DisplayName)), (Get-WDResidueFlat ([string]$p.Publisher)))) { if ($t) { $null = $words.Add($t) } }
+        $loc = ([string]$p.InstallLocation).Trim().Trim('"').TrimEnd([char]92)
+        if ($loc) { $roots.Add($loc.ToLowerInvariant()) }
+    }
+    [pscustomobject]@{ Words = $words; Roots = $roots }
+}
+
+function Test-WDResidueName {
+    # The reason a name is the program's, or '' when it is not.
+    param([string]$Name, $Matcher, $KeepWords)
+    $flat = Get-WDResidueFlat $Name
+    if (-not $flat) { return '' }
+    # Something still installed answers to this name: a vendor container.
+    if ($KeepWords -and $KeepWords.Contains($flat)) { return '' }
+    if ($Matcher.Whole.Length -ge 5 -and $flat -eq $Matcher.Whole) { return "named after the program itself" }
+    if (@($Matcher.Words) -contains $flat) { return "named '$flat', a word of the program's name that nothing installed shares" }
+    ''
+}
+
 Register-WDHandler 'RemoveUninstallResidue' {
     param($Action, $Context)
 
     # Assigned, never wrapped - see RemoveUninstallLeftovers above.
     $done = Get-WDUninstalledThisRun
     if (-not $done.Count) { return New-WDResult -Status NotPresent -Message 'Nothing was uninstalled this run' }
+
+    # Read fresh, after this run's uninstalls: what is still installed decides
+    # which names belong to somebody else, and which folders hold a program.
+    Clear-WDProgramCache
+    $keep      = New-WDResidueKeep -Programs @(Get-WDInstalledPrograms)
+    $keepWords = $keep.Words
+    $keepRoots = $keep.Roots
 
     # Only the containers where per-application residue accumulates. Anything
     # one level up would match half the machine.
@@ -698,21 +974,24 @@ Register-WDHandler 'RemoveUninstallResidue' {
 
     $hits = New-Object System.Collections.Generic.List[psobject]
     foreach ($d in $done) {
-        $tokens = @(Get-WDResidueTokens -Name $d.Name)
-        if (-not $tokens.Count) { continue }
+        $m = New-WDResidueMatcher -Program $d -KeepWords $keepWords
+        if (-not $m.Words.Count -and $m.Whole.Length -lt 5) { continue }
 
         foreach ($root in $roots) {
             foreach ($dir in @(Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue)) {
-                $flat = ($dir.Name -replace '[^A-Za-z0-9]', '').ToLowerInvariant()
-                $tok  = @($tokens | Where-Object { $flat -like "*$_*" }) | Select-Object -First 1
+                $tok = Test-WDResidueName -Name $dir.Name -Matcher $m -KeepWords $keepWords
                 if (-not $tok) { continue }
-                if ($claimed -contains $dir.FullName.ToLowerInvariant()) { continue }
+                $low = $dir.FullName.TrimEnd([char]92).ToLowerInvariant()
+                if ($claimed -contains $low) { continue }
+                # A folder that holds - or is - a program still installed is that
+                # program's, whatever it is called.
+                if (@($keepRoots | Where-Object { $_ -eq $low -or $_.StartsWith("$low\") }).Count) { continue }
                 $bytes = 0
                 try { $bytes = (Get-ChildItem -LiteralPath $dir.FullName -Recurse -File -Force -ErrorAction SilentlyContinue |
                                 Measure-Object Length -Sum).Sum } catch { }
                 $hits.Add([pscustomobject]@{
                     Kind = 'folder'; Program = $d.Name; Path = $dir.FullName
-                    Why  = "folder name matches '$tok'"
+                    Why  = "folder $tok"
                     Size = "$([Math]::Round(([double]$bytes) / 1MB, 1)) MB"
                 })
             }
@@ -720,12 +999,11 @@ Register-WDHandler 'RemoveUninstallResidue' {
 
         foreach ($root in $regRoots) {
             foreach ($key in @(Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue)) {
-                $flat = ($key.PSChildName -replace '[^A-Za-z0-9]', '').ToLowerInvariant()
-                $tok  = @($tokens | Where-Object { $flat -like "*$_*" }) | Select-Object -First 1
+                $tok = Test-WDResidueName -Name $key.PSChildName -Matcher $m -KeepWords $keepWords
                 if (-not $tok) { continue }
                 $hits.Add([pscustomobject]@{
                     Kind = 'registry'; Program = $d.Name; Path = $key.Name
-                    Why  = "key name matches '$tok'"; Size = ''
+                    Why  = "key $tok"; Size = ''
                 })
             }
         }
@@ -811,58 +1089,201 @@ Register-WDHandler 'RemoveUninstallResidue' {
     New-WDResult -Status Blocked -Message 'The leftovers could not be cleared' -Detail ($kept -join '; ')
 }
 
+function Use-WDPowrProf {
+    # The power-management API itself rather than powercfg's text. Compiled by
+    # its first caller, like WDPriv and WDDisk: every Add-Type is a csc run, and
+    # nothing on the launch path reads a power setting.
+    #
+    # It replaced parsing "powercfg /query", which was wrong three ways at once:
+    # /query omits every setting Windows marks hidden (the network-in-standby
+    # one is hidden by default everywhere, so that option found "nothing" and
+    # never wrote anything); the parse matched the English labels, so on any
+    # other display language every power option did nothing; and it could only
+    # see the active plan.
+    if ('WDPowrProf' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class WDPowrProf {
+    [DllImport("powrprof.dll")] static extern uint PowerGetActiveScheme(IntPtr root, out IntPtr scheme);
+    [DllImport("powrprof.dll")] static extern uint PowerSetActiveScheme(IntPtr root, ref Guid scheme);
+    [DllImport("powrprof.dll")] static extern uint PowerReadACValueIndex(IntPtr root, ref Guid scheme, ref Guid sub, ref Guid setting, out uint value);
+    [DllImport("powrprof.dll")] static extern uint PowerReadDCValueIndex(IntPtr root, ref Guid scheme, ref Guid sub, ref Guid setting, out uint value);
+    [DllImport("powrprof.dll")] static extern uint PowerWriteACValueIndex(IntPtr root, ref Guid scheme, ref Guid sub, ref Guid setting, uint value);
+    [DllImport("powrprof.dll")] static extern uint PowerWriteDCValueIndex(IntPtr root, ref Guid scheme, ref Guid sub, ref Guid setting, uint value);
+    [DllImport("powrprof.dll")] static extern uint PowerEnumerate(IntPtr root, IntPtr scheme, IntPtr sub, uint flags, uint index, byte[] buffer, ref uint size);
+    [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr mem);
+
+    public static Guid Active() {
+        IntPtr p;
+        uint r = PowerGetActiveScheme(IntPtr.Zero, out p);
+        if (r != 0) { throw new System.ComponentModel.Win32Exception((int)r); }
+        try { return (Guid)Marshal.PtrToStructure(p, typeof(Guid)); } finally { LocalFree(p); }
+    }
+    // Every plan on the machine. 16 is ACCESS_SCHEME; the walk ends on
+    // ERROR_NO_MORE_ITEMS.
+    public static Guid[] Schemes() {
+        var list = new System.Collections.Generic.List<Guid>();
+        for (uint i = 0; i < 256; i++) {
+            byte[] buf = new byte[16];
+            uint size = 16;
+            if (PowerEnumerate(IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, 16, i, buf, ref size) != 0) { break; }
+            list.Add(new Guid(buf));
+        }
+        return list.ToArray();
+    }
+    // -1 when the setting does not exist on this machine.
+    public static long Read(Guid scheme, Guid sub, Guid setting, bool ac) {
+        uint v = 0;
+        uint r = ac ? PowerReadACValueIndex(IntPtr.Zero, ref scheme, ref sub, ref setting, out v)
+                    : PowerReadDCValueIndex(IntPtr.Zero, ref scheme, ref sub, ref setting, out v);
+        if (r != 0) { return -1; }
+        return v;
+    }
+    public static uint Write(Guid scheme, Guid sub, Guid setting, bool ac, uint value) {
+        return ac ? PowerWriteACValueIndex(IntPtr.Zero, ref scheme, ref sub, ref setting, value)
+                  : PowerWriteDCValueIndex(IntPtr.Zero, ref scheme, ref sub, ref setting, value);
+    }
+    public static uint Apply(Guid scheme) { return PowerSetActiveScheme(IntPtr.Zero, ref scheme); }
+}
+'@
+}
+
+$script:PowerAliases = $null
+
+function Resolve-WDPowerGuid {
+    # A GUID as itself, an alias through "powercfg /aliases" - whose output is
+    # GUIDs and fixed identifiers only, the same in every display language.
+    param([string]$Name)
+    $g = [guid]::Empty
+    if ([guid]::TryParse($Name, [ref]$g)) { return $g }
+    if ($null -eq $script:PowerAliases) {
+        $script:PowerAliases = @{}
+        try {
+            foreach ($l in @(& "$env:SystemRoot\System32\powercfg.exe" /aliases 2>$null)) {
+                if ([string]$l -match '^\s*([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\s+(\S+)\s*$') {
+                    $script:PowerAliases[$Matches[2]] = [guid]$Matches[1]
+                }
+            }
+        } catch { }
+    }
+    if ($script:PowerAliases.ContainsKey($Name)) { return $script:PowerAliases[$Name] }
+    $null
+}
+
+function Get-WDPowerSchemeNames {
+    # Display only, so the localized names powercfg prints are exactly right.
+    $names = @{}
+    try {
+        foreach ($l in @(& "$env:SystemRoot\System32\powercfg.exe" /list 2>$null)) {
+            if ([string]$l -match '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\s+\(([^)]+)\)') {
+                $names[$Matches[1].ToLower()] = $Matches[2]
+            }
+        }
+    } catch { }
+    $names
+}
+
+function Get-WDPowerSettingRows {
+    # One row per plan that has the setting: the plan, and its mains and
+    # battery values. Empty when no plan on this machine has it.
+    param([guid]$Sub, [guid]$Setting)
+    Use-WDPowrProf
+    $rows = New-Object System.Collections.Generic.List[psobject]
+    foreach ($s in [WDPowrProf]::Schemes()) {
+        $ac = [WDPowrProf]::Read($s, $Sub, $Setting, $true)
+        $dc = [WDPowrProf]::Read($s, $Sub, $Setting, $false)
+        if ($ac -lt 0 -and $dc -lt 0) { continue }
+        $rows.Add([pscustomobject]@{ Scheme = $s; Ac = $ac; Dc = $dc })
+    }
+    ,$rows.ToArray()
+}
+
 Register-WDHandler 'SetPowerScheme' {
+    # Every power plan on the machine, not only the active one: a setting that
+    # comes undone the moment somebody picks another plan in Control Panel is
+    # not the setting the row promised.
     param($Action, $Context)
 
-    $sub = [string](Get-Prop $Action 'sub' '')
-    $set = [string](Get-Prop $Action 'setting' '')
-    if (-not $sub -or -not $set) {
+    $subName = [string](Get-Prop $Action 'sub' '')
+    $setName = [string](Get-Prop $Action 'setting' '')
+    if (-not $subName -or -not $setName) {
         return New-WDResult -Status Failed -Message 'Power setting not specified' `
                             -Detail 'The action needs both a "sub" and a "setting".'
     }
-    $want = [int](Get-Prop $Action 'value' 0)
+    $sub = Resolve-WDPowerGuid $subName
+    $set = Resolve-WDPowerGuid $setName
+    if (-not $sub -or -not $set) {
+        return New-WDResult -Status Failed -Message 'Unknown power setting name' `
+                            -Detail "powercfg has no alias '$(if (-not $sub) { $subName } else { $setName })' on this machine."
+    }
+    $want = [uint32](Get-Prop $Action 'value' 0)
 
-    # /query prints the AC and DC index as hex on their own lines. Anything
-    # unparseable leaves the undo without a value, which beats restoring a
-    # guess.
-    $acWas = $null; $dcWas = $null
+    $rows = @()
     try {
-        $q = @(& "$env:SystemRoot\System32\powercfg.exe" /query SCHEME_CURRENT $sub $set 2>&1)
-        foreach ($line in $q) {
-            if ($line -match 'AC Power Setting Index:\s*0x([0-9a-fA-F]+)') { $acWas = [Convert]::ToInt32($Matches[1], 16) }
-            if ($line -match 'DC Power Setting Index:\s*0x([0-9a-fA-F]+)') { $dcWas = [Convert]::ToInt32($Matches[1], 16) }
-        }
-    } catch { }
-
-    if ($null -eq $acWas -and $null -eq $dcWas) {
-        return New-WDResult -Status NotPresent -Message 'This power setting is not on this machine' `
-                            -Detail "powercfg does not report $sub / $set here, which is normal on hardware that does not implement it."
-    }
-    if ([int]$acWas -eq $want -and [int]$dcWas -eq $want) {
-        return New-WDResult -Status NotPresent -Message 'Already set' -Detail "$sub / $set is already $want on both AC and battery."
-    }
-    if ($Context.Preview) {
-        return New-WDResult -Status Changed -Message "Would set $set to $want" `
-                            -Detail "Currently AC $acWas, battery $dcWas."
-    }
-
-    try {
-        $exe = "$env:SystemRoot\System32\powercfg.exe"
-        $null = & $exe /setacvalueindex SCHEME_CURRENT $sub $set $want 2>&1
-        $null = & $exe /setdcvalueindex SCHEME_CURRENT $sub $set $want 2>&1
-        # Without this the scheme holds the new numbers and the machine goes on
-        # behaving the old way.
-        $null = & $exe /setactive SCHEME_CURRENT 2>&1
+        # Assigned, never wrapped: the function ends in ,@(...).
+        $rows = Get-WDPowerSettingRows -Sub $sub -Setting $set
     } catch {
-        return New-WDResult -Status Blocked -Message 'powercfg refused the change' -Detail $_.Exception.Message
+        return New-WDResult -Status Failed -Message 'Could not read the power plans' -Detail (Format-WDException $_)
+    }
+    if (-not @($rows).Count) {
+        return New-WDResult -Status NotPresent -Message 'This power setting is not on this machine' `
+                            -Detail "No power plan here has $subName / $setName, which is normal on hardware that does not implement it."
     }
 
-    Add-WDJournal -ItemId $Context.ItemId -Type 'power' -Target "$sub\$set" -Status 'Changed' `
-                  -Undo @{ method = 'powercfg'; sub = $sub; setting = $set
-                           ac = $(if ($null -ne $acWas) { [int]$acWas } else { [int]$dcWas })
-                           dc = $(if ($null -ne $dcWas) { [int]$dcWas } else { [int]$acWas }) }
-    New-WDResult -Status Changed -Message "$set set to $want" `
-                 -Detail "Was AC $acWas, battery $dcWas. Applied to the active power plan."
+    $names  = Get-WDPowerSchemeNames
+    $label  = { param($g) $k = ([string]$g).ToLower(); if ($names.ContainsKey($k)) { $names[$k] } else { $k } }
+    $todo   = @($rows | Where-Object { ($_.Ac -ge 0 -and $_.Ac -ne $want) -or ($_.Dc -ge 0 -and $_.Dc -ne $want) })
+    if (-not $todo.Count) {
+        return New-WDResult -Status AlreadySet -Message "Already $want in every power plan" `
+                            -Detail ((@($rows | ForEach-Object { & $label $_.Scheme }) -join ', ') + ' already hold it on mains and battery.')
+    }
+    $was = @($todo | ForEach-Object { "$(& $label $_.Scheme): mains $($_.Ac), battery $($_.Dc)" })
+    if ($Context.Preview) {
+        return New-WDResult -Status Changed -Message "Would set it to $want in $($todo.Count) power plan(s)" `
+                            -Detail ('Currently ' + ($was -join '; ') + '.')
+    }
+
+    $active = $null
+    try { $active = [WDPowrProf]::Active() } catch { }
+    $done   = New-Object System.Collections.Generic.List[string]
+    $failed = New-Object System.Collections.Generic.List[string]
+    foreach ($r in $todo) {
+        $name = & $label $r.Scheme
+        $errAc = $(if ($r.Ac -ge 0) { [WDPowrProf]::Write($r.Scheme, $sub, $set, $true,  $want) } else { 0 })
+        $errDc = $(if ($r.Dc -ge 0) { [WDPowrProf]::Write($r.Scheme, $sub, $set, $false, $want) } else { 0 })
+        # Read back rather than trusting the return codes - a value a policy
+        # owns can be accepted and not held.
+        $nowAc = [WDPowrProf]::Read($r.Scheme, $sub, $set, $true)
+        $nowDc = [WDPowrProf]::Read($r.Scheme, $sub, $set, $false)
+        $okAc  = ($r.Ac -lt 0) -or ($nowAc -eq $want)
+        $okDc  = ($r.Dc -lt 0) -or ($nowDc -eq $want)
+        if ($okAc -or $okDc) {
+            # The plan's own previous values, so undoing the run puts back the
+            # numbers somebody had tuned rather than Microsoft's defaults - into
+            # that plan, which is why the scheme is recorded.
+            Add-WDJournal -ItemId $Context.ItemId -Type 'power' -Target "$($r.Scheme)\$sub\$set" -Status 'Changed' `
+                          -Undo @{ method = 'powercfg'; scheme = ([string]$r.Scheme); sub = ([string]$sub); setting = ([string]$set)
+                                   ac = $(if ($r.Ac -ge 0) { [int]$r.Ac } else { [int]$r.Dc })
+                                   dc = $(if ($r.Dc -ge 0) { [int]$r.Dc } else { [int]$r.Ac }) }
+        }
+        if ($okAc -and $okDc) { $done.Add($name) }
+        elseif ($errAc -eq 5 -or $errDc -eq 5) { $failed.Add("$name (needs administrator rights)") }
+        else { $failed.Add("$name (Windows answered $errAc / $errDc and now holds mains $nowAc, battery $nowDc)") }
+    }
+    # A plan holds new numbers and the machine goes on behaving the old way
+    # until the active one is applied again.
+    if ($null -ne $active) { $null = [WDPowrProf]::Apply($active) }
+
+    if ($failed.Count -and -not $done.Count) {
+        return New-WDResult -Status Blocked -Message 'Windows did not keep the change' -Detail ($failed -join '; ')
+    }
+    if ($failed.Count) {
+        return New-WDResult -Status Partial -Message "Set in $($done.Count) power plan(s), refused in $($failed.Count)" `
+                            -Detail ("Set: $($done -join ', '). Refused: $($failed -join '; ')")
+    }
+    New-WDResult -Status Changed -Message "Set to $want in $($done.Count) power plan(s)" `
+                 -Detail ('Was ' + ($was -join '; ') + '.')
 }
 
 Register-WDHandler 'SetTaskbarAutoHide' {
@@ -914,47 +1335,38 @@ Register-WDHandler 'SetTaskbarAutoHide' {
 }
 
 Register-WDHandler 'CleanComponentStore' {
+    # The component store and nothing else. It also used to hard-delete both
+    # temp folders first, which the row it was attached to never mentioned and
+    # which "Temporary files" already does properly, with its own text.
     param($Action, $Context)
+
+    # DISM refuses with 0x800f0806 while servicing is pending, and removing a
+    # Windows feature earlier in the same run makes it pending - so ticking both
+    # made a refusal the expected outcome. Said plainly instead.
+    if (Test-WDServicingPending) {
+        return New-WDResult -Status Skipped -Message 'Run this again after restarting' `
+                            -Detail 'Windows servicing is waiting on a restart (often from a feature this run removed), and the component store cannot be cleaned up until it has finished.'
+    }
+    if ($Context.Preview) {
+        return New-WDResult -Status Changed -Message 'Would compact the component store' `
+                            -Detail 'Typically several gigabytes. Takes several minutes, and updates installed before it can no longer be uninstalled afterwards.'
+    }
 
     $before = 0
     try { $before = (Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$($env:SystemDrive)'").FreeSpace } catch { }
-
-    if ($Context.Preview) {
-        return New-WDResult -Status Changed -Message 'Would compact the component store and clear temp files' `
-                            -Detail 'Typically 3-8 GB. Takes several minutes, and installed updates can no longer be uninstalled afterwards.'
-    }
-
-    $notes = New-Object System.Collections.Generic.List[string]
-
-    # Temp first: it is quick, and it is free space DISM does not need to work
-    # in.
-    $tempBytes = 0
-    foreach ($dir in @($env:TEMP, (Join-Path $env:SystemRoot 'Temp'))) {
-        if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { continue }
-        foreach ($e in @(Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue)) {
-            try {
-                if ($e.PSIsContainer) {
-                    $tempBytes += (Get-ChildItem -LiteralPath $e.FullName -Recurse -File -Force -ErrorAction SilentlyContinue |
-                                   Measure-Object Length -Sum).Sum
-                } else { $tempBytes += $e.Length }
-                Remove-Item -LiteralPath $e.FullName -Recurse -Force -ErrorAction Stop
-            } catch { }   # in-use temp files are the normal case, not a failure
-        }
-    }
-    $notes.Add("temp files: about $([Math]::Round(([double]$tempBytes) / 1MB, 0)) MB")
 
     $dism = Invoke-WDProcess -FilePath "$env:SystemRoot\System32\Dism.exe" `
                              -ArgumentList @('/Online', '/Cleanup-Image', '/StartComponentCleanup', '/ResetBase', '/Quiet', '/NoRestart') `
                              -TimeoutSeconds 2400
     if ($dism.TimedOut) {
-        $notes.Add('component store cleanup did not finish in 40 minutes')
-    } elseif ($dism.ExitCode -in @(0, 3010)) {
-        if ($dism.ExitCode -eq 3010) { Set-WDRebootNeeded }
-        $notes.Add('component store compacted')
-    } else {
-        return New-WDResult -Status Partial -Message 'Temp files cleared, component store cleanup refused' `
-                            -Detail "DISM exit $($dism.ExitCode). This usually means a servicing operation is pending - retry after a restart. $($notes -join '; ')"
+        return New-WDResult -Status Failed -Message 'The cleanup did not finish in 40 minutes' `
+                            -Detail 'DISM was stopped. Nothing is damaged by that; run it again later.'
     }
+    if ($dism.ExitCode -notin @(0, 3010)) {
+        return New-WDResult -Status Blocked -Message 'Windows refused the component store cleanup' `
+                            -Detail "DISM exit $($dism.ExitCode). This usually means a servicing operation is pending - run it again after a restart."
+    }
+    if ($dism.ExitCode -eq 3010) { Set-WDRebootNeeded }
 
     $freed = 0
     try {
@@ -962,8 +1374,8 @@ Register-WDHandler 'CleanComponentStore' {
         $freed = [Math]::Round((([double]$after - [double]$before)) / 1GB, 2)
     } catch { }
 
-    $msg = if ($freed -gt 0) { "About $freed GB reclaimed" } else { 'Cleanup finished' }
-    New-WDResult -Status Removed -Message $msg -Detail ($notes -join '; ')
+    $msg = if ($freed -gt 0) { "About $freed GB reclaimed" } else { 'Component store compacted' }
+    New-WDResult -Status Removed -Message $msg -Detail 'Superseded component versions removed with DISM /StartComponentCleanup /ResetBase.'
 }
 
 Register-WDHandler 'EnableIrreversibleMode' {
@@ -1099,16 +1511,13 @@ Register-WDHandler 'ClearStaleShortcuts' {
                 if (Test-WDIrreversible) {
                     Remove-Item -LiteralPath $h.FullName -Force -ErrorAction Stop
                 } else {
-                    if (-not (Test-WDRecycleAvailable -Path $h.FullName)) {
-                        $errors.Add("$($h.FullName) : no Recycle Bin on that volume, left in place")
+                    # The bin, or parked in the run folder when this runs as
+                    # SYSTEM - see Remove-WDFileUndoable.
+                    $why = Remove-WDFileUndoable -Path $h.FullName -ItemId $Context.ItemId
+                    if ($why) {
+                        $errors.Add("$($h.FullName) : $why")
                         continue
                     }
-                    if (-not (Remove-WDToRecycleBin -Path $h.FullName)) {
-                        $errors.Add("$($h.FullName) : could not be moved to the Recycle Bin")
-                        continue
-                    }
-                    Add-WDJournal -ItemId $Context.ItemId -Type 'file' -Target $h.FullName -Status 'Removed' `
-                                  -Undo @{ method = 'recycle'; path = $h.FullName }
                 }
                 Write-WDLog "Removed a Start menu or desktop shortcut pointing at '$target', which is gone." `
                             -Level Info -Item $Context.ItemId
@@ -1133,31 +1542,6 @@ Register-WDHandler 'ClearStaleShortcuts' {
     if ($stale.Count) { return New-WDResult -Status Removed -Message "$($stale.Count) dead shortcut(s)" -Detail $names }
     if ($errors.Count) { return New-WDResult -Status Blocked -Message 'Dead shortcuts could not be removed' -Detail ($errors -join '; ') }
     New-WDResult -Status NotPresent -Message 'No shortcuts point at anything missing'
-}
-
-Register-WDHandler 'VerifyShellHealth' {
-    param($Action, $Context)
-    if ($Context.Preview) { return New-WDResult -Status Skipped -Message 'Health check runs during apply only' }
-
-    Start-Sleep -Seconds 2
-    $problems = New-Object System.Collections.Generic.List[string]
-
-    if (-not (Get-Process -Name explorer -ErrorAction SilentlyContinue)) {
-        Start-Process explorer.exe -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 3
-        if (-not (Get-Process -Name explorer -ErrorAction SilentlyContinue)) { $problems.Add('Explorer will not start') }
-    }
-    foreach ($pkg in @('Microsoft.Windows.ShellExperienceHost','Microsoft.Windows.StartMenuExperienceHost')) {
-        if (-not (Get-AppxPackage -Name $pkg -ErrorAction SilentlyContinue)) { $problems.Add("$pkg missing") }
-    }
-    if (-not (Test-Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer')) { $problems.Add('Explorer settings key missing') }
-
-    if ($problems.Count) {
-        Write-WDLog "SHELL HEALTH CHECK FAILED: $($problems -join '; ')" -Level Error -Item $Context.ItemId
-        return New-WDResult -Status Failed -Message 'Shell health check failed after AI package removal' `
-            -Detail "$($problems -join '; '). Run the generated rollback script or use System Restore."
-    }
-    New-WDResult -Status AlreadySet -Message 'Shell health check passed'
 }
 
 # Tools that keep hardware working. The single place that decides what
@@ -1210,22 +1594,91 @@ Register-WDHandler 'ReportPreservedVendorTools' {
 }
 
 Register-WDHandler 'SetPowerPlan' {
+    # Laptops keep Balanced: High performance pins clocks and costs battery life
+    # for no real gain on portable hardware. Desktops get High performance.
+    #
+    # A plan is found by its PERSONALITY, the value every plan carries saying
+    # which of the three kinds it is (0 power saver, 1 high performance, 2
+    # balanced) - not by the built-in GUID, because OEM images ship their own
+    # copies under new ones (this Lenovo's High performance is f4326b59..., and
+    # 8c5e7fda... is not in its list at all, so the old fixed GUID failed on
+    # exactly the machines most likely to want it). And not by name, which is
+    # localized.
     param($Action, $Context)
 
-    # Laptops keep Balanced: High Performance pins clocks and destroys battery
-    # life for no real gain on portable hardware.
-    $guid = if ($Context.Profile.IsPortable) {
-        '381b4222-f694-41f0-9685-ff5bb260df2e'   # Balanced
-    } else {
-        '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c'   # High performance
+    $portable = [bool]$Context.Profile.IsPortable
+    $want     = $(if ($portable) { 2 } else { 1 })
+    $builtIn  = $(if ($portable) { [guid]'381b4222-f694-41f0-9685-ff5bb260df2e' } else { [guid]'8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c' })
+    $kind     = $(if ($portable) { 'Balanced' } else { 'High performance' })
+    $subNone  = [guid]'fea3413e-7e05-4911-9a71-700331f1c294'
+    $persona  = [guid]'245d8541-3943-4422-b025-13a784f679b7'
+
+    try { Use-WDPowrProf } catch {
+        return New-WDResult -Status Failed -Message 'Could not read the power plans' -Detail (Format-WDException $_)
     }
-    $label = if ($Context.Profile.IsPortable) { 'Balanced (laptop)' } else { 'High performance (desktop)' }
+    $names   = Get-WDPowerSchemeNames
+    $nameOf  = { param($g) $k = ([string]$g).ToLower(); if ($names.ContainsKey($k)) { $names[$k] } else { $k } }
+    $active  = $null
+    try { $active = [WDPowrProf]::Active() } catch { }
+    if ($null -ne $active -and [WDPowrProf]::Read($active, $subNone, $persona, $true) -eq $want) {
+        return New-WDResult -Status AlreadySet -Message "Already on a $kind plan" -Detail "$(& $nameOf $active) is active."
+    }
 
-    if ($Context.Preview) { return New-WDResult -Status Changed -Message "Would set power plan to $label" }
+    $schemes = @([WDPowrProf]::Schemes())
+    $target  = $null
+    if ($schemes -contains $builtIn) { $target = $builtIn }
+    if ($null -eq $target) {
+        $target = @($schemes | Where-Object { [WDPowrProf]::Read($_, $subNone, $persona, $true) -eq $want }) | Select-Object -First 1
+    }
+    if ($Context.Preview) {
+        if ($null -eq $target) {
+            return New-WDResult -Status Changed -Message "Would add a $kind plan and switch to it" `
+                                -Detail "This machine has no $kind plan, so one would be copied from Windows' own template."
+        }
+        return New-WDResult -Status Changed -Message "Would switch to $(& $nameOf $target)" -Detail "From $(& $nameOf $active)."
+    }
 
-    $r = Invoke-WDProcess -FilePath 'powercfg.exe' -ArgumentList @('/setactive', $guid) -TimeoutSeconds 60
-    if ($r.ExitCode -eq 0) { return New-WDResult -Status Changed -Message "Power plan set to $label" }
-    New-WDResult -Status Blocked -Message 'Could not set power plan' -Detail "powercfg exit $($r.ExitCode). Some OEM images lock the plan list."
+    $created = ''
+    if ($null -eq $target) {
+        # Windows' own template, copied: it exists on every build even when the
+        # plan list does not show it.
+        $dup = Invoke-WDProcess -FilePath "$env:SystemRoot\System32\powercfg.exe" -ArgumentList @('/duplicatescheme', $builtIn) -TimeoutSeconds 60
+        if ($dup.ExitCode -ne 0 -or [string]$dup.Output -notmatch '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') {
+            return New-WDResult -Status Blocked -Message "Could not add a $kind plan" -Detail "powercfg exit $($dup.ExitCode). Some OEM images lock the plan list."
+        }
+        $target  = [guid]$Matches[1]
+        $created = ([string]$target).ToLower()
+        $names   = Get-WDPowerSchemeNames
+    }
+
+    $r = Invoke-WDProcess -FilePath "$env:SystemRoot\System32\powercfg.exe" -ArgumentList @('/setactive', $target) -TimeoutSeconds 60
+    $now = $null
+    try { $now = [WDPowrProf]::Active() } catch { }
+    if ($r.ExitCode -ne 0 -or $now -ne $target) {
+        return New-WDResult -Status Blocked -Message 'Could not set the power plan' `
+                            -Detail "powercfg exit $($r.ExitCode). Some OEM images lock the plan list."
+    }
+    # The plan that was active, and the one this added if it added one - so the
+    # undo switches back and takes the copy away again.
+    Add-WDJournal -ItemId $Context.ItemId -Type 'power' -Target 'active power plan' -Status 'Changed' `
+                  -Undo @{ method = 'power-scheme'; previous = $(if ($active) { ([string]$active).ToLower() } else { '381b4222-f694-41f0-9685-ff5bb260df2e' })
+                           label = $(if ($active) { [string](& $nameOf $active) } else { 'Balanced' }); created = $created }
+    $how = $(if ($created) { ' (added from Windows'' own template)' } else { '' })
+    New-WDResult -Status Changed -Message "Power plan set to $(& $nameOf $target)$how" -Detail "Was $(& $nameOf $active)."
+}
+
+function Get-WDHibernateState {
+    # $true on, $false off, $null unreadable. HibernateEnabled is absent until
+    # something has switched it, and absent means the machine's default - which
+    # HibernateEnabledDefault records. Reading only the first called every
+    # untouched machine "not off", which happened to be right only where the
+    # default is on.
+    try {
+        $pw = Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Power' -ErrorAction Stop
+        if ($pw.PSObject.Properties['HibernateEnabled'])        { return ([int]$pw.HibernateEnabled -ne 0) }
+        if ($pw.PSObject.Properties['HibernateEnabledDefault']) { return ([int]$pw.HibernateEnabledDefault -ne 0) }
+    } catch { }
+    $null
 }
 
 Register-WDHandler 'DisableHibernation' {
@@ -1233,10 +1686,20 @@ Register-WDHandler 'DisableHibernation' {
     if ($Context.Profile.HasBattery) {
         return New-WDResult -Status Skipped -Message 'Skipped on battery-powered hardware' -Detail 'Disabling hibernation on a laptop loses sleep-to-disk and hybrid sleep.'
     }
-    if ($Context.Preview) { return New-WDResult -Status Changed -Message 'Would disable hibernation and delete hiberfil.sys' }
+    $on = Get-WDHibernateState
+    if ($on -eq $false) {
+        return New-WDResult -Status AlreadySet -Message 'Hibernation is already off'
+    }
+    if ($Context.Preview) { return New-WDResult -Status Changed -Message 'Would disable hibernation and delete hiberfil.sys' -Detail 'Fast startup and hybrid sleep go with it.' }
 
-    $r = Invoke-WDProcess -FilePath 'powercfg.exe' -ArgumentList @('/hibernate', 'off') -TimeoutSeconds 60
-    if ($r.ExitCode -eq 0) { return New-WDResult -Status Changed -Message 'Hibernation disabled, hiberfil.sys reclaimed' }
+    $r = Invoke-WDProcess -FilePath "$env:SystemRoot\System32\powercfg.exe" -ArgumentList @('/hibernate', 'off') -TimeoutSeconds 60
+    if ($r.ExitCode -eq 0 -and (Get-WDHibernateState) -eq $false) {
+        # It was journalled nowhere, so neither the rollback script nor the
+        # Revert page could turn it back on while both said "partially".
+        Add-WDJournal -ItemId $Context.ItemId -Type 'power' -Target 'hibernation' -Status 'Changed' `
+                      -Undo @{ method = 'hibernate'; previous = 'on' }
+        return New-WDResult -Status Changed -Message 'Hibernation disabled, hiberfil.sys reclaimed' -Detail 'Fast startup and hybrid sleep went with it.'
+    }
     New-WDResult -Status Blocked -Message 'Could not disable hibernation' -Detail "powercfg exit $($r.ExitCode)"
 }
 
@@ -1245,11 +1708,21 @@ Register-WDHandler 'DisableReservedStorage' {
     try {
         $state = Get-WindowsReservedStorageState -ErrorAction Stop
         if ($state.ReservedStorageState -eq 'Disabled') {
-            return New-WDResult -Status NotPresent -Message 'Reserved storage is already disabled'
+            return New-WDResult -Status AlreadySet -Message 'Reserved storage is already disabled'
+        }
+        # Microsoft: "If reserved storage is in use, it may not be disabled ...
+        # wait for any servicing operations to complete". Removing a Windows
+        # feature earlier in the same run is one, so this is said plainly
+        # rather than reported as a refusal nobody can read.
+        if (Test-WDServicingPending) {
+            return New-WDResult -Status Skipped -Message 'Run this again after restarting' `
+                                -Detail 'Windows servicing is waiting on a restart (often from a feature this run removed), and Reserved Storage cannot be changed until it has finished.'
         }
         if ($Context.Preview) { return New-WDResult -Status Changed -Message 'Would disable reserved storage (~7 GB)' }
 
         Set-WindowsReservedStorageState -State Disabled -ErrorAction Stop
+        Add-WDJournal -ItemId $Context.ItemId -Type 'storage' -Target 'reserved storage' -Status 'Changed' `
+                      -Undo @{ method = 'reserved-storage'; previous = 'Enabled' }
         New-WDResult -Status Changed -Message 'Reserved storage disabled' -Detail 'Feature updates may now need free space staged manually.'
     } catch {
         # Windows refuses while an update is pending; that is expected, not a
@@ -1266,6 +1739,43 @@ Register-WDHandler 'DisableReservedStorage' {
 
 function Get-WDPowerToysRoot { Join-Path $env:LOCALAPPDATA 'Microsoft\PowerToys' }
 
+function Write-WDJsonNoBom {
+    # PowerToys reads its settings through Windows.Data.Json, which refuses a
+    # byte order mark ("Invalid JSON string", 0x83750007) - and Set-Content
+    # -Encoding UTF8 on PowerShell 5.1 always writes one. PowerToys then treats
+    # the file as empty and starts from defaults, so every option written here
+    # did nothing, while the toolkit's own check (PowerShell, which accepts a
+    # BOM) read it back and said it had worked.
+    param([string]$Path, $Object, [int]$Depth = 20)
+    $text = $Object | ConvertTo-Json -Depth $Depth
+    [IO.File]::WriteAllText($Path, $text, (New-Object Text.UTF8Encoding $false))
+}
+
+function Test-WDFileHasBom {
+    param([string]$Path)
+    try {
+        $fs = [IO.File]::OpenRead($Path)
+        try {
+            $b = New-Object byte[] 3
+            $n = $fs.Read($b, 0, 3)
+            ($n -eq 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF)
+        } finally { $fs.Dispose() }
+    } catch { $false }
+}
+
+function Get-WDBackupPath {
+    # One copy per run and per option. Every PowerToys option used to back up
+    # to the same settings.json.wdbak, so the second option overwrote the first
+    # option's copy of the original, and the rollback - which keeps the first
+    # entry for a file - restored the state after the first option instead.
+    param([string]$Path, $Context)
+    $run = ''
+    try { $run = [string]$Context.Session.Id } catch { }
+    if (-not $run) { $run = (Get-Date).ToString('yyyyMMdd-HHmmss') }
+    $item = ([string]$Context.ItemId) -replace '[^A-Za-z0-9\-]', '_'
+    "$Path.$run.$item.wdbak"
+}
+
 function Set-WDPowerToysJson {
     param([string]$Path, [scriptblock]$Edit, $Context, [pscustomobject]$Seed)
 
@@ -1276,7 +1786,7 @@ function Set-WDPowerToysJson {
     $json = $null
     $bak  = $null
     if ($existed) {
-        $bak = "$Path.wdbak"
+        $bak = Get-WDBackupPath -Path $Path -Context $Context
         Copy-Item -LiteralPath $Path -Destination $bak -Force -ErrorAction SilentlyContinue
         try { $json = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json } catch { $json = $null }
         if (-not $json) { throw "PowerToys config at $Path is not readable JSON - left untouched" }
@@ -1285,7 +1795,7 @@ function Set-WDPowerToysJson {
     }
 
     & $Edit $json
-    $json | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $Path -Encoding UTF8
+    Write-WDJsonNoBom -Path $Path -Object $json -Depth 20
     Add-WDJournal -ItemId $Context.ItemId -Type 'powertoys' -Target $Path -Status 'Changed' `
                   -Undo @{ method = 'file-restore'; file = $bak; target = $Path }
 }
@@ -1434,13 +1944,22 @@ function Get-WDStorageSources {
     $win = [string]$env:SystemRoot
     if (-not $win) { $win = Join-Path $sys 'Windows' }
 
+    # Windows' own two, then every account's - not just the temp folder of
+    # whoever elevated. SystemTemp is where SYSTEM processes put theirs since
+    # 24H2, and a run as SYSTEM has it as its own TEMP.
+    $tempPaths = New-Object System.Collections.Generic.List[hashtable]
+    $tempPaths.Add(@{ Path = (Join-Path $win 'Temp'); Bucket = 'windows' })
+    $tempPaths.Add(@{ Path = (Join-Path $win 'SystemTemp'); Bucket = 'windows' })
+    $tempList = Get-WDProfileTempPaths
+    foreach ($t in $tempList) { $tempPaths.Add(@{ Path = $t; Bucket = 'users' }) }
+
     [ordered]@{
+        # Only what has sat untouched for a day: anything newer may belong to a
+        # program that is running, or an installer halfway through. Windows' own
+        # Temporary Files clean-up waits a week for the same reason.
         'disk-temp' = @{
-            Kind = 'folder'; What = 'temporary files'
-            Paths = @(
-                @{ Path = (Join-Path $win 'Temp'); Bucket = 'windows' }
-                @{ Path = [string]$env:TEMP;       Bucket = 'users'   }
-            )
+            Kind = 'folder'; What = 'temporary files'; MinAgeHours = 24
+            Paths = $tempPaths.ToArray()
         }
         'disk-update-cache' = @{
             Kind = 'folder'; What = 'the Windows Update cache'
@@ -1448,15 +1967,20 @@ function Get-WDStorageSources {
                 @{ Path = (Join-Path $win 'SoftwareDistribution\Download'); Bucket = 'windows' }
             )
         }
+        # The Cache folder, not the whole service folder: beside it sit the
+        # service's own logs and state, which this has no business with.
         'disk-delivery-opt' = @{
             Kind = 'folder'; What = 'the Delivery Optimization cache'
             Paths = @(
                 @{ Path = (Join-Path $win 'SoftwareDistribution\DeliveryOptimization'); Bucket = 'windows' }
-                @{ Path = (Join-Path $win 'ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization'); Bucket = 'windows' }
+                @{ Path = (Join-Path $win 'ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache'); Bucket = 'windows' }
             )
         }
+        # The cache databases only. The same folder holds Explorer's startup logs
+        # and the Recommendations filter list, which are not caches.
         'disk-thumbnails' = @{
             Kind = 'folder'; What = 'the thumbnail and icon cache'
+            Include = @('thumbcache_*.db', 'iconcache_*.db'); NoRecurse = $true; DelayLocked = $true
             Paths = @(
                 @{ Path = (Join-Path ([string]$env:LOCALAPPDATA) 'Microsoft\Windows\Explorer'); Bucket = 'users' }
             )
@@ -1478,6 +2002,62 @@ function Get-WDStorageSources {
             Paths = @()
         }
     }
+}
+
+function Get-WDProfileTempPaths {
+    # Every real account's own temp folder. S-1-5-21 SIDs only, so the service
+    # profiles under System32 are not swept as though they were people's.
+    $out  = New-Object System.Collections.Generic.List[string]
+    $seen = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($k in @(Get-ChildItem -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList' -ErrorAction SilentlyContinue)) {
+        if ([string]$k.PSChildName -notlike 'S-1-5-21-*') { continue }
+        $dir = ''
+        try { $dir = [Environment]::ExpandEnvironmentVariables([string](Get-ItemProperty -LiteralPath $k.PSPath -Name 'ProfileImagePath' -ErrorAction Stop).ProfileImagePath) } catch { }
+        if (-not $dir) { continue }
+        $t = Join-Path $dir 'AppData\Local\Temp'
+        if ($seen.Add($t)) { $out.Add($t) }
+    }
+    ,$out.ToArray()
+}
+
+function Get-WDFilteredFiles {
+    # The files a filtered clean-up takes: untouched for at least MinAgeHours,
+    # and matching Include when it is given. One walk serves the sizing and the
+    # deletion, so the row and the run cannot disagree. Never descends into a
+    # junction or a symbolic link - this deletes file by file, and whatever is
+    # behind a link is somewhere else entirely.
+    param([string]$Path, [int]$MinAgeHours = 0, [string[]]$Include = @(), [switch]$NoRecurse)
+
+    $out   = New-Object System.Collections.Generic.List[System.IO.FileInfo]
+    $cut   = (Get-Date).AddHours(-$MinAgeHours)
+    $stack = New-Object System.Collections.Generic.Stack[string]
+    if (-not $Path) { return ,$out.ToArray() }
+    $stack.Push($Path)
+    while ($stack.Count) {
+        $dir = $stack.Pop()
+        $di = $null
+        try { $di = New-Object System.IO.DirectoryInfo $dir } catch { continue }
+        if (-not $di.Exists) { continue }
+        try {
+            foreach ($f in $di.EnumerateFiles()) {
+                if ($Include.Count) {
+                    $hit = $false
+                    foreach ($p in $Include) { if ($f.Name -like $p) { $hit = $true; break } }
+                    if (-not $hit) { continue }
+                }
+                if ($MinAgeHours -gt 0 -and ($f.LastWriteTime -ge $cut -or $f.CreationTime -ge $cut)) { continue }
+                $out.Add($f)
+            }
+        } catch { }
+        if ($NoRecurse) { continue }
+        try {
+            foreach ($s in $di.EnumerateDirectories()) {
+                if ($s.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+                $stack.Push($s.FullName)
+            }
+        } catch { }
+    }
+    ,$out.ToArray()
 }
 
 function Measure-WDRecycleBin {
@@ -1518,8 +2098,26 @@ function Measure-WDReclaimable {
             continue
         }
         $sum = 0L; $blind = 0; $present = $false
+        # A filtered clean-up is sized by the same walk that deletes, or the row
+        # would promise the whole folder while the run took a part of it.
+        # Keys, not Get-Prop: a source is a hashtable, and Get-Prop reads object
+        # properties, so it would answer the defaults for every one of these.
+        $minAge  = [int]$src['MinAgeHours']
+        $include = @()
+        if ($src['Include']) { $include = @($src['Include']) }
+        $flat    = [bool]$src['NoRecurse']
         foreach ($p in @($src.Paths)) {
-            $d = Measure-WDFolderDetail -Path ([string]$p.Path) -Cancellable:$Cancellable
+            if ($minAge -gt 0 -or $include.Count) {
+                $here = Test-Path -LiteralPath ([string]$p.Path) -ErrorAction SilentlyContinue
+                $b = 0L
+                if ($here) {
+                    $fs = Get-WDFilteredFiles -Path ([string]$p.Path) -MinAgeHours $minAge -Include $include -NoRecurse:$flat
+                    foreach ($f in $fs) { $b += [int64]$f.Length }
+                }
+                $d = [pscustomobject]@{ Bytes = $b; Denied = 0; Present = [bool]$here }
+            } else {
+                $d = Measure-WDFolderDetail -Path ([string]$p.Path) -Cancellable:$Cancellable
+            }
             $sum   += $d.Bytes
             $blind += $d.Denied
             if ($d.Present) { $present = $true }
@@ -1706,13 +2304,44 @@ function Get-WDDiskCapacity {
 }
 
 function Clear-WDFolderContents {
-    param([string[]]$Paths, $Context, [string]$What)
+    param([string[]]$Paths, $Context, [string]$What,
+          [int]$MinAgeHours = 0, [string[]]$Include = @(), [switch]$NoRecurse, [switch]$DelayLocked)
 
     # -ErrorAction on Test-Path, because some of these are owned by a service
     # account and answering "does it exist" throws Access denied rather than
     # returning false.
     $live = @($Paths | Where-Object { $_ -and (Test-Path -LiteralPath $_ -ErrorAction SilentlyContinue) })
     if (-not $live.Count) { return New-WDResult -Status NotPresent -Message "Nothing to clear in $What" }
+
+    # Filtered: file by file, through the same walk that sized the row.
+    if ($MinAgeHours -gt 0 -or $Include.Count) {
+        $targets = New-Object System.Collections.Generic.List[System.IO.FileInfo]
+        foreach ($p in $live) {
+            foreach ($f in (Get-WDFilteredFiles -Path $p -MinAgeHours $MinAgeHours -Include $Include -NoRecurse:$NoRecurse)) { $targets.Add($f) }
+        }
+        $total = 0L
+        foreach ($f in $targets) { $total += [int64]$f.Length }
+        $aged = $(if ($MinAgeHours -gt 0) { ' that has sat untouched for a day or more' } else { '' })
+        if ($total -le 0) { return New-WDResult -Status NotPresent -Message "Nothing in $What$aged to clear" }
+        if ($Context.Preview) {
+            return New-WDResult -Status Removed -Message "Would free about $(Format-WDBytes $total) from $What" -Detail ($live -join '; ')
+        }
+        $freed = 0L; $stuck = 0; $queued = 0
+        $canQueue = $DelayLocked -and (Initialize-WDPendingDeleteType)
+        foreach ($f in $targets) {
+            try { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; $freed += [int64]$f.Length }
+            catch {
+                # 4 = MOVEFILE_DELAY_UNTIL_REBOOT: a real deletion, deferred to
+                # the next restart, before anything has the file open again.
+                if ($canQueue -and [WD.Pending]::MoveFileEx($f.FullName, $null, 4)) { $queued++ } else { $stuck++ }
+            }
+        }
+        $notes = New-Object System.Collections.Generic.List[string]
+        if ($queued) { $notes.Add("$queued file(s) in use are deleted at the next restart.") }
+        if ($stuck)  { $notes.Add("$stuck file(s) were in use and were left alone.") }
+        $status = $(if ($stuck -and -not $freed -and -not $queued) { 'Blocked' } elseif ($stuck) { 'Partial' } else { 'Removed' })
+        return New-WDResult -Status $status -Message "Freed about $(Format-WDBytes $freed) from $What" -Detail ($notes -join ' ')
+    }
 
     $bytes = 0L
     foreach ($p in $live) { $bytes += Measure-WDFolder -Path $p }
@@ -1746,10 +2375,24 @@ function Get-WDStoragePaths {
     @($src[$Id].Paths | ForEach-Object { [string]$_.Path })
 }
 
+function Clear-WDStorageSource {
+    # A clean-up straight off its row of the path table, filters and all, so
+    # the handler cannot clear something other than what the row sized.
+    param([Parameter(Mandatory)][string]$Id, $Context)
+    $all = Get-WDStorageSources
+    if (-not $all.Contains($Id)) { return New-WDResult -Status Failed -Message "No storage source '$Id'" }
+    $src = $all[$Id]
+    $inc = @()
+    if ($src['Include']) { $inc = @($src['Include']) }
+    Clear-WDFolderContents -Context $Context -What ([string]$src['What']) `
+                           -Paths @($src['Paths'] | ForEach-Object { [string]$_.Path }) `
+                           -MinAgeHours ([int]$src['MinAgeHours']) -Include $inc `
+                           -NoRecurse:([bool]$src['NoRecurse']) -DelayLocked:([bool]$src['DelayLocked'])
+}
+
 Register-WDHandler 'ClearTempFiles' {
     param($Action, $Context)
-    Clear-WDFolderContents -Context $Context -What 'temporary files' `
-                           -Paths (Get-WDStoragePaths -Id 'disk-temp')
+    Clear-WDStorageSource -Id 'disk-temp' -Context $Context
 }
 
 Register-WDHandler 'ClearUpdateCache' {
@@ -1766,32 +2409,54 @@ Register-WDHandler 'ClearUpdateCache' {
                             -Detail 'Windows downloads again anything it still needs.'
     }
 
-    $wasRunning = $false
-    try {
-        $svc = Get-Service -Name 'wuauserv' -ErrorAction SilentlyContinue
-        if ($svc -and $svc.Status -eq 'Running') {
-            $wasRunning = $true
-            Stop-Service -Name 'wuauserv' -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Milliseconds 500
-        }
-    } catch { }
+    # Windows Update and BITS both, as Microsoft's own reset procedure does:
+    # BITS is what downloads into this folder, so with it running a file can be
+    # held open, or wuauserv restarted under the delete. Started again after,
+    # whichever were running.
+    $stopped = New-Object System.Collections.Generic.List[string]
+    foreach ($n in @('wuauserv', 'bits')) {
+        try {
+            $svc = Get-Service -Name $n -ErrorAction SilentlyContinue
+            if ($svc -and $svc.Status -eq 'Running') {
+                Stop-Service -Name $n -Force -ErrorAction SilentlyContinue
+                $stopped.Add($n)
+            }
+        } catch { }
+    }
+    if ($stopped.Count) { Start-Sleep -Milliseconds 500 }
     try {
         Clear-WDFolderContents -Context $Context -What 'the Windows Update cache' -Paths @($dl)
     } finally {
-        if ($wasRunning) { try { Start-Service -Name 'wuauserv' -ErrorAction SilentlyContinue } catch { } }
+        foreach ($n in $stopped) { try { Start-Service -Name $n -ErrorAction SilentlyContinue } catch { } }
     }
 }
 
 Register-WDHandler 'ClearThumbnailCache' {
     param($Action, $Context)
-    Clear-WDFolderContents -Context $Context -What 'the thumbnail and icon cache' `
-                           -Paths (Get-WDStoragePaths -Id 'disk-thumbnails')
+    Clear-WDStorageSource -Id 'disk-thumbnails' -Context $Context
 }
 
 Register-WDHandler 'ClearDeliveryOptimization' {
+    # Windows' own cmdlet where it exists: the cache belongs to a running
+    # service, and Delete-DeliveryOptimizationCache is that service being asked
+    # to drop it. Deleting files out from under it is the fallback for builds
+    # without the cmdlet.
     param($Action, $Context)
-    Clear-WDFolderContents -Context $Context -What 'the Delivery Optimization cache' `
-                           -Paths (Get-WDStoragePaths -Id 'disk-delivery-opt')
+    $cmd = Get-Command Delete-DeliveryOptimizationCache -ErrorAction SilentlyContinue
+    if (-not $cmd) { return Clear-WDStorageSource -Id 'disk-delivery-opt' -Context $Context }
+
+    $paths = @(Get-WDStoragePaths -Id 'disk-delivery-opt' | Where-Object { $_ -and (Test-Path -LiteralPath $_ -ErrorAction SilentlyContinue) })
+    $before = 0L
+    foreach ($p in $paths) { $before += Measure-WDFolder -Path $p }
+    if ($before -le 0) { return New-WDResult -Status NotPresent -Message 'The Delivery Optimization cache is already empty' }
+    if ($Context.Preview) {
+        return New-WDResult -Status Removed -Message "Would free about $(Format-WDBytes $before) from the Delivery Optimization cache"
+    }
+    try { Delete-DeliveryOptimizationCache -Force -ErrorAction Stop }
+    catch { return New-WDResult -Status Blocked -Message 'Delivery Optimization refused to clear its cache' -Detail $_.Exception.Message }
+    $after = 0L
+    foreach ($p in $paths) { $after += Measure-WDFolder -Path $p }
+    New-WDResult -Status Removed -Message "Freed about $(Format-WDBytes ([Math]::Max(0L, $before - $after))) from the Delivery Optimization cache"
 }
 
 Register-WDHandler 'RemoveWindowsOld' {
@@ -1807,8 +2472,12 @@ Register-WDHandler 'RemoveWindowsOld' {
                             -Detail 'This is what "Go back to the previous version of Windows" restores from. Deleting it ends that option for good.'
     }
     # Owned by TrustedInstaller throughout, so the ACL has to be taken first.
-    $null = & takeown.exe /F $old /R /A /D Y 2>&1
-    $null = & icacls.exe $old /grant "*S-1-5-32-544:F" /T /C /Q 2>&1
+    # Without following links: a profile inside Windows.old can carry absolute
+    # links - All Users to C:\ProgramData among them - and takeown /R follows
+    # them by default, which would re-own the live folders they point at.
+    # /SKIPSL for takeown, /L for icacls, which then acts on the link itself.
+    $null = & takeown.exe /F $old /R /A /D Y /SKIPSL 2>&1
+    $null = & icacls.exe $old /grant "*S-1-5-32-544:F" /T /C /L /Q 2>&1
     try {
         Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction Stop
         New-WDResult -Status Removed -Message "Windows.old deleted, about $(Format-WDBytes $b) freed" `
@@ -1862,6 +2531,10 @@ function Test-WDPowerToysModuleSet {
 
     $settings = Join-Path $root 'settings.json'
     if (-not (Test-Path -LiteralPath $settings)) { return $false }
+    # A file PowerToys cannot read is not a setting that is set, however well
+    # PowerShell reads it: an earlier version of this toolkit wrote these with a
+    # byte order mark, which PowerToys' JSON parser refuses outright.
+    if (Test-WDFileHasBom $settings) { return $false }
     $j = $null
     try { $j = Get-Content -LiteralPath $settings -Raw | ConvertFrom-Json } catch { return $false }
     if (-not $j -or -not $j.PSObject.Properties['enabled']) { return $false }
@@ -1877,6 +2550,7 @@ function Test-WDPowerToysModuleSet {
         if ($prop) {
             $own = Join-Path $root (Join-Path $file 'settings.json')
             if (-not (Test-Path -LiteralPath $own)) { return $false }
+            if (Test-WDFileHasBom $own) { return $false }
             $k = $null
             try { $k = Get-Content -LiteralPath $own -Raw | ConvertFrom-Json } catch { return $false }
             $cur = $null
@@ -1898,6 +2572,10 @@ function Test-WDPowerToysModuleSet {
 $script:StateTests = @{
     'SetPowerToysModule' = ${function:Test-WDPowerToysModuleSet}
 
+    # The task is the hold; its active hours are the task's to move. In
+    # WD.Persist, which every runspace that asks this imports.
+    'HoldUpdateRestarts' = { param($Action) [bool](Test-WDRestartHoldTask) }
+
     # Both scrubs ask "is any of this vendor's software still installed", which
     # is the handler's own first line.
     'McAfeeScrub' = {
@@ -1911,43 +2589,43 @@ $script:StateTests = @{
     }
 
     # Asked exactly as RemoveEdge asks it. Done only when the browser is gone
-    # and the reinstall vectors are shut, because half that job is not the job.
+    # and the updater that would bring it back is off, because half that job
+    # is not the job. The updater is asked about rather than its policy, which
+    # binds only a domain-joined machine.
     'RemoveEdge' = {
         param($Action)
-        foreach ($d in @((Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application'),
-                         (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application'))) {
+        foreach ($d in @((Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'),
+                         (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe'))) {
             if (Test-Path -LiteralPath $d -ErrorAction SilentlyContinue) { return $false }
         }
         try { if (@(Get-AppxPackage -Name 'Microsoft.MicrosoftEdge.Stable' -ErrorAction SilentlyContinue).Count) { return $false } } catch { }
-        $pol = 'HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate'
-        $v = $null
-        try { $v = Get-ItemProperty -LiteralPath $pol -ErrorAction SilentlyContinue } catch { }
-        if (-not $v) { return $false }
-        foreach ($n in @('InstallDefault', 'UpdateDefault')) {
-            if (-not $v.PSObject.Properties[$n] -or [int]$v.$n -ne 0) { return $false }
+        foreach ($s in @(Get-Service -Name 'edgeupdate', 'edgeupdatem' -ErrorAction SilentlyContinue)) {
+            $st = ''
+            try { $st = [string]$s.StartType } catch { }
+            if ($st -ne 'Disabled') { return $false }
         }
         $true
     }
 
-    # Done when http and https point at something that is not Edge, which is
-    # readable without touching anything Windows protects.
+    # The handler's own question, asked through the same plan: done when one
+    # press of Set default would move nothing. This read http and https alone
+    # while the handler also saw .svg with Edge, so the row said "already
+    # applied" over a step that reopened Settings at every run. Reads only.
     'SetDefaultBrowser' = {
         param($Action)
-        foreach ($p in @('http', 'https')) {
-            $k = "HKCU:\SOFTWARE\Microsoft\Windows\Shell\Associations\UrlAssociations\$p\UserChoice"
-            $id = ''
-            try { $id = [string](Get-ItemProperty -LiteralPath $k -Name 'ProgId' -ErrorAction SilentlyContinue).ProgId } catch { }
-            if (-not $id) { return $false }
-            if ($id -like 'MSEdge*' -or $id -like 'AppX*Edge*') { return $false }
-        }
-        $true
+        if (-not (Get-Command Get-WDDefaultBrowserPlan -ErrorAction SilentlyContinue)) { return $false }
+        try { return [bool](Get-WDDefaultBrowserPlan).Done } catch { return $false }
     }
 
+    # OneDrive itself, not its in-box installer: System32\OneDriveSetup.exe is a
+    # protected Windows file on every machine, so testing for it meant this
+    # could never read as done and every guard ran the uninstall again.
     'RemoveOneDrive' = {
         param($Action)
-        foreach ($p in @((Join-Path $env:SystemRoot 'System32\OneDriveSetup.exe'),
-                         (Join-Path $env:SystemRoot 'SysWOW64\OneDriveSetup.exe'),
-                         (Join-Path $env:LOCALAPPDATA 'Microsoft\OneDrive'))) {
+        if (@(Get-WDInstalledPrograms | Where-Object { $_.DisplayName -like 'Microsoft OneDrive*' }).Count) { return $false }
+        foreach ($p in @((Join-Path ([string]$env:ProgramFiles) 'Microsoft OneDrive'),
+                         (Join-Path ([string]${env:ProgramFiles(x86)}) 'Microsoft OneDrive'),
+                         (Join-Path $env:LOCALAPPDATA 'Microsoft\OneDrive\OneDrive.exe'))) {
             if (Test-Path -LiteralPath $p -ErrorAction SilentlyContinue) { return $false }
         }
         $true
@@ -1962,14 +2640,51 @@ $script:StateTests = @{
     # afford.
     'DisableHibernation' = {
         param($Action)
-        $v = $null
-        try { $v = Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Power' -Name 'HibernateEnabled' -ErrorAction SilentlyContinue } catch { }
-        if (-not $v -or -not $v.PSObject.Properties['HibernateEnabled']) { return $false }
-        [int]$v.HibernateEnabled -eq 0
+        (Get-WDHibernateState) -eq $false
+    }
+
+    # Through the power API, which is microseconds once loaded; the compile is
+    # paid once, on the background scan that fills this answer in.
+    'SetPowerScheme' = {
+        param($Action)
+        $sub = Resolve-WDPowerGuid ([string](Get-Prop $Action 'sub' ''))
+        $set = Resolve-WDPowerGuid ([string](Get-Prop $Action 'setting' ''))
+        if (-not $sub -or -not $set) { return $false }
+        $rows = @()
+        try { $rows = Get-WDPowerSettingRows -Sub $sub -Setting $set } catch { return $false }
+        if (-not @($rows).Count) { return $false }
+        $want = [long](Get-Prop $Action 'value' 0)
+        foreach ($r in $rows) {
+            if (($r.Ac -ge 0 -and $r.Ac -ne $want) -or ($r.Dc -ge 0 -and $r.Dc -ne $want)) { return $false }
+        }
+        $true
     }
 
     # One bit inside a blob, per account, which is why the handler exists at
     # all. Read the same byte back.
+    # Off when Microsoft Update is not registered with Automatic Updates. An
+    # agent that cannot be asked is no answer, which is not done.
+    'DisableMicrosoftUpdateService' = {
+        param($Action)
+        $on = Test-WDMicrosoftUpdateOn
+        ($null -ne $on) -and (-not $on)
+    }
+
+    # Done when every tray entry Windows knows is promoted. An account with no
+    # entries yet has nothing outstanding, but a machine with none at all is not
+    # "already set" - nothing has been looked at.
+    'PromoteTrayIcons' = {
+        param($Action)
+        $keys = Get-WDTrayIconKeys
+        if (-not $keys.Count) { return $false }
+        foreach ($k in $keys) {
+            $v = $null
+            try { $v = (Get-ItemProperty -LiteralPath $k -Name 'IsPromoted' -ErrorAction Stop).IsPromoted } catch { return $false }
+            if ([int]$v -ne 1) { return $false }
+        }
+        $true
+    }
+
     'SetTaskbarAutoHide' = {
         param($Action)
         $rel  = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3'
@@ -2028,9 +2743,24 @@ $script:StateTests = @{
             try { $v = [string](Get-ItemProperty -LiteralPath $c.P -Name $c.N -ErrorAction SilentlyContinue).$($c.N) } catch { }
             if ($v -eq 'RightControl') { return $true }
         }
+        # The chord the handler writes, mapped to what the handler writes. It
+        # matched any "162" anywhere in the file - Left Ctrl - while the handler
+        # writes 163, so its own remap read as not applied and a Left Ctrl
+        # mapping read as done. PowerToys installed is part of the answer: the
+        # remap does nothing without it.
+        if (-not (Test-WDPowerToys)) { return $false }
         $f = Join-Path (Get-WDPowerToysRoot) 'Keyboard Manager\default.json'
         if (-not (Test-Path -LiteralPath $f)) { return $false }
-        try { return ((Get-Content -LiteralPath $f -Raw) -match '"162"') } catch { return $false }
+        try {
+            $j = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json
+            foreach ($g in @($j.remapShortcuts.global)) {
+                $keys = [string]$g.originalKeys
+                if (($keys -eq "$($script:VK.LWin);$($script:VK.LShift);$($script:VK.F23)" -or
+                     $keys -eq "$($script:VK.LWin);$($script:VK.Shift);$($script:VK.F23)") -and
+                    [string]$g.newRemapKeys -eq [string]$script:VK.RCtrl) { return $true }
+            }
+        } catch { }
+        return $false
     }
 }
 
@@ -2219,6 +2949,42 @@ Register-WDHandler 'SetPowerToysModule' {
     }
 }
 
+function Get-WDTrayIconKeys {
+    # Every app entry Windows keeps under Control Panel\NotifyIconSettings, per
+    # account. Windows makes one the first time an app shows a tray icon, so the
+    # default profile has none.
+    param($Context)
+    $accounts = $null
+    if ($Context) { $accounts = Get-WDContextAccounts $Context }
+    $roots = @(Select-WDAccountHives -Hives (Get-WDUserHives) -Default $null -Accounts $accounts)
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($root in $roots) {
+        $base = Join-Path $root.Path 'Control Panel\NotifyIconSettings'
+        if (-not (Test-Path -LiteralPath $base -ErrorAction SilentlyContinue)) { continue }
+        foreach ($k in @(Get-ChildItem -LiteralPath $base -ErrorAction SilentlyContinue)) {
+            $out.Add((Join-Path $base $k.PSChildName))
+        }
+    }
+    ,$out.ToArray()
+}
+
+Register-WDHandler 'PromoteTrayIcons' {
+    # Windows 11 22H2 and later ignore EnableAutoTray. What decides whether an
+    # icon sits on the taskbar or behind the chevron is IsPromoted on that app's
+    # entry - the value each switch under Settings > Personalization > Taskbar >
+    # Other system tray icons writes. Handed to the registry executor, so every
+    # value is backed up, journalled, and answered AlreadySet like a manifest
+    # one. SystemTrayChevronVisibility was considered and left alone: the
+    # sources disagree about whether 0 shows the hidden icons or hides them.
+    param($Action, $Context)
+
+    # Assigned, never wrapped: the function ends in ,@(...).
+    $keys = Get-WDTrayIconKeys -Context $Context
+    if (-not $keys.Count) { return New-WDResult -Status NotPresent -Message 'No app has shown a tray icon yet' }
+    $values = foreach ($k in $keys) { [pscustomobject]@{ path = $k; name = 'IsPromoted'; kind = 'DWord'; value = 1 } }
+    Invoke-WDRegistryAction -Action ([pscustomobject]@{ type = 'registry'; scope = 'machine'; values = @($values) }) -Context $Context
+}
+
 Register-WDHandler 'SetNoSoundScheme' {
     # "No Sounds" is not one value: the scheme name lives at the default of
     # AppEvents\Schemes, and every event under AppEvents\Schemes\Apps carries
@@ -2329,20 +3095,33 @@ Register-WDHandler 'ClearActivityTraces' {
         }
     }
 
-    # Jump lists: per-application binaries with no meaningful per-file undo, so
-    # they go to the Recycle Bin when the run is reversible and are hard-deleted
-    # when it is not.
+    # Jump lists and the Recent folder: per-application binaries and shortcuts
+    # with no meaningful per-file undo, so they are deleted outright and the
+    # risk note says so. For the same accounts as the registry half - this read
+    # $env:APPDATA alone, so an elevated run from a separate admin account
+    # cleared the admin's lists and left the person's own. The default profile
+    # has no files of this kind to clear.
     $files = 0
-    $jump = @(
-        (Join-Path ([string]$env:APPDATA) 'Microsoft\Windows\Recent\AutomaticDestinations')
-        (Join-Path ([string]$env:APPDATA) 'Microsoft\Windows\Recent\CustomDestinations')
-        (Join-Path ([string]$env:APPDATA) 'Microsoft\Windows\Recent')
-    )
-    foreach ($dir in $jump) {
-        if (-not (Test-Path -LiteralPath $dir -ErrorAction SilentlyContinue)) { continue }
-        foreach ($f in @(Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue)) {
-            if ($Context.Preview) { $files++; continue }
-            try { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; $files++ } catch { }
+    $profiles = New-Object System.Collections.Generic.List[string]
+    foreach ($root in $roots) {
+        if ([bool](Get-Prop $root 'Mounted' $false)) { continue }
+        $dir = ''
+        if ([string]$root.Name -eq 'CurrentUser') { $dir = [string]$env:USERPROFILE }
+        else {
+            try { $dir = [Environment]::ExpandEnvironmentVariables([string](Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$($root.Name)" -Name 'ProfileImagePath' -ErrorAction Stop).ProfileImagePath) } catch { }
+        }
+        if ($dir -and -not $profiles.Contains($dir)) { $profiles.Add($dir) }
+    }
+    foreach ($p in $profiles) {
+        $recent = Join-Path $p 'AppData\Roaming\Microsoft\Windows\Recent'
+        foreach ($dir in @((Join-Path $recent 'AutomaticDestinations'), (Join-Path $recent 'CustomDestinations'), $recent)) {
+            if (-not (Test-Path -LiteralPath $dir -ErrorAction SilentlyContinue)) { continue }
+            # No -Force on the listing: Recent carries a hidden desktop.ini that
+            # names the folder, and that is not a record of anything.
+            foreach ($f in @(Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue)) {
+                if ($Context.Preview) { $files++; continue }
+                try { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; $files++ } catch { }
+            }
         }
     }
 
@@ -2426,12 +3205,33 @@ Register-WDHandler 'SetShortcutArrow' {
         return New-WDResult -Status AlreadySet -Message 'The shortcut overlay already points at the blank icon' `
                             -Detail "Shell Icons\29 is $ico,0"
     }
+    # A blank overlay from an earlier build can point into a data folder this
+    # toolkit no longer uses - C:\ProgramData\WinDebloat on machines that ran it
+    # before the rename - and deleting that folder would leave the overlay
+    # pointing at nothing. Moving it here is the change, and the message says so.
+    $was = ''
+    try {
+        $was = [string](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Icons' `
+                                         -Name '29' -ErrorAction Stop).'29'
+    } catch { }
+    $moving = ($was -match '\\blank-arrow\.ico,0$') -and ($was -ne "$ico,0")
     if ($Context.Preview) {
+        if ($moving) {
+            return New-WDResult -Status Changed -Message 'Would move the blank overlay icon into the toolkit''s current folder' `
+                                -Detail "Shell Icons\29 points at $was; writes $ico and points it there instead."
+        }
         return New-WDResult -Status Changed -Message 'Would point the shortcut overlay at a blank icon' `
                             -Detail "Writes $ico and sets Shell Icons\29 to it."
     }
+    $hadIcon = Test-Path -LiteralPath $ico
     if (-not (New-WDBlankIcon -Path $ico)) {
         return New-WDResult -Status Failed -Message 'Could not create the blank icon the overlay needs'
+    }
+    # The icon is this run's file, so undoing the run takes it away again rather
+    # than leaving a stray .ico in the data folder.
+    if (-not $hadIcon) {
+        Add-WDJournal -ItemId $Context.ItemId -Type 'file' -Target $ico -Status 'Changed' `
+                      -Undo @{ method = 'file-restore'; file = $null; target = $ico }
     }
 
     $res = Invoke-WDRegistryAction -Context $Context -Action $act
@@ -2482,16 +3282,116 @@ Register-WDHandler 'SetUpdateDeferral' {
         [pscustomobject]@{ path = $base; name = [string]$spec.Flag; kind = 'DWord'; value = 1 }
         [pscustomobject]@{ path = $base; name = [string]$spec.Days; kind = 'DWord'; value = $days }
     )
-    if ($kind -eq 'feature') {
-        # Semi-Annual Channel. Without it the period is measured from a release
-        # ring the machine may not be on, and the deferral reads as ignored.
-        $vals += [pscustomobject]@{ path = $base; name = 'BranchReadinessLevel'; kind = 'DWord'; value = 20 }
-    }
+    # No BranchReadinessLevel. It used to be written as 20 ("Semi-Annual
+    # Channel"), and on 25H2 it is no element of this policy at all: it moved to
+    # Manage preview builds, whose list is 2, 4, 8, and 64 - 20 is not one of
+    # them - and with that policy not configured Windows offers no preview
+    # builds anyway, so general availability is already what is measured from.
     $res = Invoke-WDRegistryAction -Action ([pscustomobject]@{ type = 'registry'; scope = 'machine'; values = $vals }) -Context $Context
     if ([string]$res.Status -in @('Changed','Removed')) {
         $unit = $(if ($days -eq 1) { 'day' } else { 'days' })
         return New-WDResult -Status Changed -Message "$kind updates held back for $days $unit" `
-                            -Detail "Change or clear it in Settings > Windows Update > Advanced options, or undo this run."
+                            -Detail 'Settings has no page for this - it is a policy. Undo this option from the toolkit to clear it.'
+    }
+    $res
+}
+
+# "Receive updates for other Microsoft products" is a service registration, not
+# a value: Microsoft Update (this id) registered with Automatic Updates is what
+# makes Windows Update scan for Office and the rest. The AllowMUUpdateService
+# policy can only force it ON - Microsoft's Update CSP says setting it back to 0
+# "doesn't revert the configuration" and names RemoveService as the way out - so
+# the item used to write a 0 into a key the policy does not even live under, and
+# did nothing either way.
+$script:WDMicrosoftUpdateId = '7971f918-a847-4430-9279-4a52d1efe18d'
+
+function Test-WDMicrosoftUpdateOn {
+    # $null when the update agent cannot be asked.
+    try {
+        $sm = New-Object -ComObject 'Microsoft.Update.ServiceManager'
+        foreach ($s in @($sm.Services)) {
+            if ([string]$s.ServiceID -eq $script:WDMicrosoftUpdateId) { return [bool]$s.IsRegisteredWithAU }
+        }
+        return $false
+    } catch { return $null }
+}
+
+Register-WDHandler 'DisableMicrosoftUpdateService' {
+    param($Action, $Context)
+
+    $on = Test-WDMicrosoftUpdateOn
+    if ($null -eq $on) {
+        return New-WDResult -Status Obstruction -Message 'The Windows Update agent could not be asked whether Microsoft Update is registered'
+    }
+    # The toggle's own record of the choice, through the executor so the
+    # previous value is journalled. Written whichever way the registration was,
+    # so the Settings page cannot read one answer while the service says another.
+    $ux = [pscustomobject]@{ type = 'registry'; scope = 'machine'; values = @(
+        [pscustomobject]@{ path = 'HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings'; name = 'AllowMUUpdateService'; kind = 'DWord'; value = 0 }) }
+    # Off already is the answer whatever the record says; in an apply the record
+    # is brought into line on the way past, journalled like any value.
+    if (-not $on) {
+        if (-not $Context.Preview) { $null = Invoke-WDRegistryAction -Action $ux -Context $Context }
+        return New-WDResult -Status AlreadySet -Message 'Updates for other Microsoft products are already off'
+    }
+    if ($Context.Preview) {
+        return New-WDResult -Status Changed -Message 'Would turn off updates for other Microsoft products' `
+                            -Detail 'Unregisters the Microsoft Update service from Automatic Updates, as the Settings switch does.'
+    }
+    try {
+        $sm = New-Object -ComObject 'Microsoft.Update.ServiceManager'
+        $sm.RemoveService($script:WDMicrosoftUpdateId)
+    } catch {
+        $why = $_.Exception.Message
+        if (Test-WDElevationError -Message $why) { return New-WDResult -Status Blocked -Message 'Needs administrator rights' -Detail $why }
+        return New-WDResult -Status Failed -Message 'Microsoft Update could not be unregistered' -Detail $why
+    }
+    Add-WDJournal -ItemId $Context.ItemId -Type 'update-service' -Target $script:WDMicrosoftUpdateId -Status 'Changed' `
+                  -Undo @{ method = 'mu-service'; name = $script:WDMicrosoftUpdateId }
+    $null = Invoke-WDRegistryAction -Action $ux -Context $Context
+    if (Test-WDMicrosoftUpdateOn) {
+        return New-WDResult -Status Failed -Message 'Microsoft Update is still registered after removing it'
+    }
+    New-WDResult -Status Changed -Message 'Updates for other Microsoft products turned off'
+}
+
+# Windows' own answer to "how long may a restart be put off": the quality-update
+# deadline policy, which Microsoft names as the replacement for the
+# no-auto-restart-with-users policy. Before the deadline Windows may restart
+# only outside active hours, which is what the restart hold moves; once it
+# passes, Windows restarts after a fifteen-minute warning, active hours or not.
+# The quality half only: a feature-update deadline would force the annual
+# upgrade the deferral option exists to hold back.
+Register-WDHandler 'SetRestartDeadline' {
+    param($Action, $Context)
+
+    $days  = [int](Get-Prop $Action 'days' 7)
+    $grace = [int](Get-Prop $Action 'grace' 2)
+    $root = ''
+    try { $root = [string]$Context.Session.Root } catch { }
+    $chosen = Get-WDRunOption -Root $root -Name 'restartDeadlineDays' -Default $null
+    if ($null -ne $chosen) { $days = [int]$chosen }
+    # Windows' own ranges, and a value outside one is silently ignored.
+    if ($days -lt 0)  { $days = 0 }
+    if ($days -gt 30) { $days = 30 }
+    if ($grace -lt 0) { $grace = 0 }
+    if ($grace -gt 7) { $grace = 7 }
+
+    $base = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
+    $vals = @(
+        [pscustomobject]@{ path = $base; name = 'SetComplianceDeadlineForQU';         kind = 'DWord'; value = 1 }
+        [pscustomobject]@{ path = $base; name = 'ConfigureDeadlineForQualityUpdates'; kind = 'DWord'; value = $days }
+        [pscustomobject]@{ path = $base; name = 'ConfigureDeadlineGracePeriod';       kind = 'DWord'; value = $grace }
+        # Off, so before the deadline Windows may still restart outside active
+        # hours - which is when nobody is signed in, while the hold runs.
+        [pscustomobject]@{ path = $base; name = 'ConfigureDeadlineNoAutoRebootForQualityUpdates'; kind = 'DWord'; value = 0 }
+    )
+    $res = Invoke-WDRegistryAction -Action ([pscustomobject]@{ type = 'registry'; scope = 'machine'; values = $vals }) -Context $Context
+    if ([string]$res.Status -in @('Changed', 'Removed')) {
+        $unit = $(if ($days -eq 1) { 'day' } else { 'days' })
+        return New-WDResult -Status Changed -Message "Overdue security updates restart after $days $unit" `
+                            -Detail ("Counted from when Windows Update first finds the update, and never sooner than $grace " +
+                                     "day(s) after it is ready to restart. Windows warns fifteen minutes before. Undo this run to remove it.")
     }
     $res
 }
@@ -2715,6 +3615,8 @@ Register-WDHandler 'WriteRollbackScript' {
 
 Export-ModuleMember -Function Register-WDHandler, Invoke-WDScriptAction, Get-WDHandlerNames,
                               Set-WDPowerToysRemap, Set-WDNativeCopilotKey, Get-WDResidueTokens,
+                              Get-WDResidueFlat, New-WDResidueMatcher, New-WDResidueKeep, Test-WDResidueName,
+                              Write-WDJsonNoBom, Test-WDFileHasBom,
                               Get-WDPowerToysRoot, Set-WDPowerToysJson, New-WDBlankIcon,
                               Test-WDPowerToysModuleSet, Test-WDActionSatisfied,
                               Test-WDItemSatisfied,

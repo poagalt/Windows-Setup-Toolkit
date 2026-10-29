@@ -8,11 +8,11 @@
                            "items":  [
                                          {
                                              "id":  "copilot-app",
-                                             "settingsPath": "Reinstall Copilot from the Microsoft Store, or undo the run.",
+                                             "settingsPath": "Undo the run, then reinstall Copilot from the Microsoft Store if it does not come back on its own.",
                                              "symptoms": ["copilot missing", "copilot gone", "no copilot", "copilot not working", "copilot uninstalled", "win+c not working", "copilot button missing", "copilot taskbar gone", "cannot find copilot", "copilot removed", "ai assistant missing"],
                                              "bloat": 3,
                                              "name":  "Copilot app and taskbar entry",
-                                             "desc":  "The Copilot appx package, its taskbar button, and Win+C, plus the machine-wide policy that keeps it gone in Windows, Edge, and Game Bar.",
+                                             "desc":  "The Copilot app, its taskbar button, and Win+C. Windows' own Copilot policy is set too, but it is deprecated and now only stops the app being installed again during an upgrade.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  20,
@@ -24,9 +24,18 @@
                                                                                "Microsoft.Copilot.*",
                                                                                "Microsoft.Windows.Ai.Copilot.Provider",
                                                                                "MicrosoftWindows.Client.CoPilot",
-                                                                               "Microsoft.Windows.Copilot*",
-                                                                               "Microsoft.549981C3F5F10"
+                                                                               "Microsoft.Windows.Copilot*"
                                                                            ]
+                                                             },
+                                                             {
+                                                                 "type":  "appxPolicy",
+                                                                 "guards":  [
+                                                                                "edition:enterprise",
+                                                                                "build:>=26100"
+                                                                            ],
+                                                                 "packages":  [
+                                                                                  "Microsoft.Copilot_8wekyb3d8bbwe"
+                                                                              ]
                                                              },
                                                              {
                                                                  "type":  "registry",
@@ -37,43 +46,7 @@
                                                                                     "name":  "ShowCopilotButton",
                                                                                     "kind":  "DWord",
                                                                                     "value":  0
-                                                                                }
-                                                                            ]
-                                                             },
-                                                             {
-                                                                 "type":  "registry",
-                                                                 "scope":  "machine",
-                                                                 "values":  [
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsCopilot",
-                                                                                    "name":  "TurnOffWindowsCopilot",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  1
                                                                                 },
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge",
-                                                                                    "name":  "HubsSidebarEnabled",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  0
-                                                                                },
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge",
-                                                                                    "name":  "CopilotPageContext",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  0
-                                                                                },
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge",
-                                                                                    "name":  "ShowRecommendationsEnabled",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  0
-                                                                                }
-                                                                            ]
-                                                             },
-                                                             {
-                                                                 "type":  "registry",
-                                                                 "scope":  "allusers",
-                                                                 "values":  [
                                                                                 {
                                                                                     "path":  "SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsCopilot",
                                                                                     "name":  "TurnOffWindowsCopilot",
@@ -87,11 +60,11 @@
                                          },
                                          {
                                              "id":  "copilot-key",
-                                             "settingsPath": "Settings > Personalization > Text input > Customize Copilot key, or undo the run.",
+                                             "settingsPath": "PowerToys > Keyboard Manager > Remap a shortcut, and delete the Win+Shift+F23 remap; on builds with the native setting, Settings > Personalization > Text input > Customize Copilot key. Or undo the run.",
                                              "symptoms": ["copilot key not working", "copilot key does nothing", "keyboard copilot button", "right ctrl instead of copilot", "wrong key behavior"],
                                              "bloat": 3,
                                              "name":  "Copilot key acts as Right Ctrl",
-                                             "desc":  "Uses the native setting where the build has it, otherwise writes a PowerToys chord remap for Win+Shift+F23.",
+                                             "desc":  "Uses the native setting where the build has it, otherwise a PowerToys remap for Win+Shift+F23 - which needs PowerToys installed (tick it under Add) and does not reach windows running as administrator.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  96,
@@ -105,11 +78,11 @@
                                          },
                                          {
                                              "id":  "recall",
-                                             "settingsPath": "Settings > Privacy and security > Recall and snapshots, and turn snapshots back on.",
+                                             "settingsPath": "Undo the run. These are policies, so Settings > Privacy and security > Recall and snapshots cannot turn snapshots back on while they are in place; afterwards the switch is there.",
                                              "symptoms": ["recall not working", "recall missing", "no snapshots", "recall empty", "timeline empty", "recall gone", "cannot find recall", "recall disabled", "snapshots not saving"],
                                              "bloat": 1,
                                              "name":  "Recall (screen snapshots)",
-                                             "desc":  "Removes the optional feature, its scheduled tasks, and any stored snapshot database.",
+                                             "desc":  "Turns snapshots off by policy, removes the Recall feature, and deletes every account's stored snapshot database. Takes a restart.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  22,
@@ -152,15 +125,9 @@
                                                                            ]
                                                              },
                                                              {
-                                                                 "type":  "task",
-                                                                 "tasks":  [
-                                                                               "\\Microsoft\\Windows\\WindowsAI\\*"
-                                                                           ]
-                                                             },
-                                                             {
                                                                  "type":  "file",
                                                                  "paths":  [
-                                                                               "%LOCALAPPDATA%\\CoreAIPlatform.00\\UKP"
+                                                                               "%SystemDrive%\\Users\\*\\AppData\\Local\\CoreAIPlatform.00\\UKP"
                                                                            ]
                                                              }
                                                          ],
@@ -168,7 +135,7 @@
                                          },
                                          {
                                              "id":  "click-to-do",
-                                             "settingsPath": "Undo the run, or turn Click to Do back on in Settings > Privacy and security.",
+                                             "settingsPath": "Undo the run. It is a policy, so the Click to Do switch in Settings > Privacy and security is locked while it is in place; afterwards it is there.",
                                              "symptoms": ["click to do not working", "click to do missing", "win+click not working", "no click to do"],
                                              "bloat": 1,
                                              "name":  "Click to Do",
@@ -206,30 +173,27 @@
                                          },
                                          {
                                              "id":  "ai-explorer",
-                                             "settingsPath": "Undo the run to put the AI actions entry back in the right-click menu.",
+                                             "settingsPath": "Undo the run. Each action can also be switched off one by one in Settings > Apps > Actions.",
                                              "symptoms": ["ai actions missing", "no ai in explorer", "right click menu missing option", "ai option gone", "explorer ai missing"],
                                              "bloat": 3,
                                              "name":  "AI actions in File Explorer",
-                                             "desc":  "Right-click AI actions and AI image search in Explorer.",
+                                             "desc":  "Hides the AI actions entry in Explorer's right-click menu, on every account. Builds before 26220 have no switch for it, so this is not offered there.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  23,
+                                             "guards":  [
+                                                            "build:>=26220"
+                                                        ],
                                              "actions":  [
                                                              {
                                                                  "type":  "registry",
-                                                                 "scope":  "allusers",
+                                                                 "scope":  "machine",
                                                                  "values":  [
                                                                                 {
-                                                                                    "path":  "SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer",
-                                                                                    "name":  "DisableAIFileAnalysis",
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer",
+                                                                                    "name":  "HideAIActionsMenu",
                                                                                     "kind":  "DWord",
                                                                                     "value":  1
-                                                                                },
-                                                                                {
-                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
-                                                                                    "name":  "AiActionsEnabled",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  0
                                                                                 }
                                                                             ]
                                                              }
@@ -242,20 +206,20 @@
                                              "symptoms": ["ai agent missing", "settings search gone", "no ai in settings", "settings ai missing"],
                                              "bloat": 3,
                                              "name":  "AI agent in Settings",
-                                             "desc":  "The natural-language agent in Settings search.",
+                                             "desc":  "The natural-language agent in Settings search, which only Copilot+ PCs have. Set by policy.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  23,
                                              "actions":  [
                                                              {
                                                                  "type":  "registry",
-                                                                 "scope":  "allusers",
+                                                                 "scope":  "machine",
                                                                  "values":  [
                                                                                 {
-                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\SettingsAgent",
-                                                                                    "name":  "IsAgentEnabled",
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsAI",
+                                                                                    "name":  "DisableSettingsAgent",
                                                                                     "kind":  "DWord",
-                                                                                    "value":  0
+                                                                                    "value":  1
                                                                                 }
                                                                             ]
                                                              }
@@ -265,10 +229,10 @@
                                          {
                                              "id":  "paint-ai",
                                              "settingsPath": "Undo the run.",
-                                             "symptoms": ["paint cocreator missing", "paint ai missing", "no generative fill", "remove background missing", "paint ai not working", "paint background removal gone"],
+                                             "symptoms": ["paint cocreator missing", "paint ai missing", "no generative fill", "paint ai not working", "paint image creator missing"],
                                              "bloat": 3,
                                              "name":  "Paint AI features",
-                                             "desc":  "Cocreator, Image Creator, Generative Fill, Generative Erase and Remove Background. Paint itself stays.",
+                                             "desc":  "Cocreator, Image Creator, and Generative Fill. Generative Erase and Remove Background have no off switch. Paint itself stays.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  24,
@@ -291,18 +255,6 @@
                                                                                 },
                                                                                 {
                                                                                     "path":  "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Paint",
-                                                                                    "name":  "DisableGenerativeErase",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  1
-                                                                                },
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Paint",
-                                                                                    "name":  "DisableRemoveBackground",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  1
-                                                                                },
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Paint",
                                                                                     "name":  "DisableGenerativeFill",
                                                                                     "kind":  "DWord",
                                                                                     "value":  1
@@ -314,7 +266,7 @@
                                          },
                                          {
                                              "id":  "notepad-ai",
-                                             "settingsPath": "Undo the run, or sign in again in Notepad.",
+                                             "settingsPath": "Undo the run. It is a policy, so signing in to Notepad does not bring the features back while it is in place.",
                                              "symptoms": ["notepad rewrite missing", "notepad ai missing", "no rewrite button", "notepad summarize missing", "notepad ai not working"],
                                              "bloat": 3,
                                              "name":  "Notepad AI features",
@@ -339,50 +291,12 @@
                                              "tier":  1
                                          },
                                          {
-                                             "id":  "photos-ai",
-                                             "settingsPath": "Undo the run.",
-                                             "symptoms": ["photos ai missing", "generative erase missing", "photos restyle missing", "photos ai not working", "magic eraser gone"],
-                                             "bloat": 3,
-                                             "name":  "Photos AI features",
-                                             "desc":  "Restyle, Generative Erase, and Image Creator.",
-                                             "risk":  0,
-                                             "default":  true,
-                                             "order":  24,
-                                             "actions":  [
-                                                             {
-                                                                 "type":  "registry",
-                                                                 "scope":  "machine",
-                                                                 "values":  [
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsAI",
-                                                                                    "name":  "DisableGenerativeErase",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  1
-                                                                                },
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsAI",
-                                                                                    "name":  "DisableRestyleImage",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  1
-                                                                                },
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsAI",
-                                                                                    "name":  "DisableImageCreatorInPhotos",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  1
-                                                                                }
-                                                                            ]
-                                                             }
-                                                         ],
-                                             "tier":  1
-                                         },
-                                         {
                                              "id":  "writing-assistant",
-                                             "settingsPath": "Undo the run.",
-                                             "symptoms": ["writing assistant missing", "writing suggestions gone", "no writing help"],
+                                             "settingsPath": "Nothing to do by hand: the next Microsoft 365 update installs both again on its own.",
+                                             "symptoms": ["writing assistant missing", "writing suggestions gone", "no writing help", "office ai not working", "word rewrite missing", "copilot in word not working"],
                                              "bloat": 3,
-                                             "name":  "Writing Assistant package",
-                                             "desc":  "System-wide AI rewrite and suggestion service.",
+                                             "name":  "Office's AI add-ons",
+                                             "desc":  "Writing Assistance and the Local AI Manager, which Microsoft 365 Apps installs as Store packages. Office puts both back at its next update; Re-apply this selection at every logon keeps them off.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  25,
@@ -391,144 +305,20 @@
                                                                  "type":  "appx",
                                                                  "names":  [
                                                                                "Microsoft.WritingAssistant",
-                                                                               "Microsoft.Windows.WritingAssistant*"
+                                                                               "Microsoft.Windows.WritingAssistant*",
+                                                                               "aimgr"
                                                                            ]
                                                              }
                                                          ],
                                              "tier":  1
                                          },
                                          {
-                                             "id":  "augloop",
-                                             "settingsPath": "Undo the run.",
-                                             "symptoms": ["no text suggestions", "office suggestions missing", "outlook suggestions gone", "autocomplete not working", "inline suggestions missing", "typing suggestions gone"],
-                                             "bloat": 3,
-                                             "name":  "AugLoop text service",
-                                             "desc":  "AI text prediction plumbing shared with Office. It ships as an in-box component that Windows refuses to uninstall, so only the deprovisioning route reaches it.",
-                                             "risk":  1,
-                                             "default":  true,
-                                             "order":  25,
-                                             "actions":  [
-                                                             {
-                                                                 "type":  "appx",
-                                                                 "names":  [
-                                                                               "Microsoft.Windows.AugLoop.CBS"
-                                                                           ]
-                                                             },
-                                                             {
-                                                                 "type":  "appxPolicy",
-                                                                 "guards":  [
-                                                                                "edition:enterprise",
-                                                                                "build:\u003e=26200"
-                                                                            ],
-                                                                 "packages":  [
-                                                                                  "Microsoft.Windows.AugLoop.CBS"
-                                                                              ]
-                                                             }
-                                                         ],
-                                             "tier":  2,
-                                             "riskNote":  "Inline text suggestions in Office, and some Store apps, stop working. The Copilot policy blocks already stop it being used, so this is the difference between blocked and gone."
-                                         },
-                                         {
-                                             "id":  "aifabric",
-                                             "settingsPath": "Undo the run.",
-                                             "symptoms": ["ai runtime missing", "local ai not working", "app cannot load model", "ai model error", "app says missing runtime", "on device ai broken"],
-                                             "bloat": 3,
-                                             "name":  "AI Fabric / Windows AI Foundry runtime",
-                                             "desc":  "The on-device AI model runtime, including Phi Silica. It ships as an in-box component that Windows refuses to uninstall, so only the deprovisioning route reaches it; the AI policy blocks stop it being used either way.",
-                                             "risk":  1,
-                                             "default":  false,
-                                             "order":  26,
-                                             "actions":  [
-                                                             {
-                                                                 "type":  "appx",
-                                                                 "names":  [
-                                                                               "Microsoft.AIFabric*",
-                                                                               "Microsoft.Windows.AI*",
-                                                                               "MicrosoftWindows.AI*"
-                                                                           ]
-                                                             },
-                                                             {
-                                                                 "type":  "appxPolicy",
-                                                                 "guards":  [
-                                                                                "edition:enterprise",
-                                                                                "build:\u003e=26200"
-                                                                            ],
-                                                                 "packages":  [
-                                                                                  "Microsoft.AIFabric.CBS.1.6"
-                                                                              ]
-                                                             }
-                                                         ],
-                                             "tier":  3,
-                                             "riskNote":  "Where the package can be removed, Store apps that ask Windows for local inference lose those features. Recall and Click to Do are handled by their own items."
-                                         },
-                                         {
-                                             "id":  "coreai",
-                                             "settingsPath": "Undo the run. The package is serviced by Windows Update and cannot be reinstalled from the Store.",
-                                             "symptoms": ["app will not start", "missing component", "app crashes on launch", "studio effects not working", "background blur missing", "eye contact missing", "camera effects missing", "ai not working", "app says missing dll", "windows ai broken"],
-                                             "bloat": 3,
-                                             "name":  "CoreAI system package",
-                                             "desc":  "The shell\u0027s core AI integration package.",
-                                             "risk":  2,
-                                             "default":  false,
-                                             "order":  27,
-                                             "actions":  [
-                                                             {
-                                                                 "type":  "appx",
-                                                                 "names":  [
-                                                                               "MicrosoftWindows.Client.CoreAI",
-                                                                               "Microsoft.Client.CoreAI*",
-                                                                               "aimgr"
-                                                                           ]
-                                                             },
-                                                             {
-                                                                 "type":  "script",
-                                                                 "handler":  "VerifyShellHealth"
-                                                             }
-                                                         ],
-                                             "tier":  3,
-                                             "riskNote":  "The deepest AI hook in the shell. On some builds removing it destabilises Explorer or the Settings app, so a health check runs immediately after, and reports if the shell broke."
-                                         },
-                                         {
-                                             "id":  "studio-effects",
-                                             "settingsPath": "Undo the run.",
-                                             "symptoms": ["background blur missing", "no camera effects", "eye contact missing", "auto framing missing", "teams effects gone", "webcam effects not working", "camera filters missing"],
-                                             "bloat": 3,
-                                             "name":  "Windows Studio Effects",
-                                             "desc":  "AI webcam background blur, eye contact correction, and auto-framing.",
-                                             "risk":  1,
-                                             "default":  false,
-                                             "order":  26,
-                                             "actions":  [
-                                                             {
-                                                                 "type":  "registry",
-                                                                 "scope":  "machine",
-                                                                 "values":  [
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsAI",
-                                                                                    "name":  "DisableWindowsStudioEffects",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  1
-                                                                                }
-                                                                            ]
-                                                             },
-                                                             {
-                                                                 "type":  "appx",
-                                                                 "names":  [
-                                                                               "Microsoft.WindowsStudioEffects*",
-                                                                               "Microsoft.Windows.CameraEffects*"
-                                                                           ]
-                                                             }
-                                                         ],
-                                             "tier":  3,
-                                             "riskNote":  "If you use background blur or eye contact on video calls, keep this. Nothing else in Windows replaces them."
-                                         },
-                                         {
                                              "id":  "bing-search",
-                                             "settingsPath": "Settings > Privacy and security > Search permissions, and turn cloud content search back on. Some of it also needs the run undone.",
-                                             "symptoms": ["no web results in start", "start menu search not working", "search not finding anything", "bing missing from search", "start search broken", "cannot search the web from start", "search results missing", "windows search not working"],
+                                             "settingsPath": "Undo the run. Cloud content search is set by policy, so Settings > Privacy and security > Search permissions is locked while it is in place.",
+                                             "symptoms": ["no web results in start", "start menu search not working", "search not finding anything", "bing missing from search", "start search broken", "cannot search the web from start", "search results missing", "windows search not working", "explorer search history gone", "explorer search suggestions missing"],
                                              "bloat": 2,
                                              "name":  "Bing and AI results in Start search",
-                                             "desc":  "Local search stays; web and AI answers go.",
+                                             "desc":  "Local search stays; web and AI answers go. File Explorer's search box stops suggesting earlier searches too.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  28,
@@ -538,6 +328,16 @@
                                                                  "names":  [
                                                                                "Microsoft.BingSearch"
                                                                            ]
+                                                             },
+                                                             {
+                                                                 "type":  "appxPolicy",
+                                                                 "guards":  [
+                                                                                "edition:enterprise",
+                                                                                "build:>=26100"
+                                                                            ],
+                                                                 "packages":  [
+                                                                                  "Microsoft.BingSearch_8wekyb3d8bbwe"
+                                                                              ]
                                                              },
                                                              {
                                                                  "type":  "registry",
@@ -560,21 +360,9 @@
                                                                  "values":  [
                                                                                 {
                                                                                     "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search",
-                                                                                    "name":  "DisableWebSearch",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  1
-                                                                                },
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search",
                                                                                     "name":  "AllowCloudSearch",
                                                                                     "kind":  "DWord",
                                                                                     "value":  0
-                                                                                },
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer",
-                                                                                    "name":  "DisableSearchBoxSuggestions",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  1
                                                                                 }
                                                                             ]
                                                              },
@@ -582,6 +370,12 @@
                                                                  "type":  "registry",
                                                                  "scope":  "allusers",
                                                                  "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer",
+                                                                                    "name":  "DisableSearchBoxSuggestions",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                },
                                                                                 {
                                                                                     "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Search",
                                                                                     "name":  "BingSearchEnabled",
@@ -622,11 +416,11 @@
                                          },
                                          {
                                              "id":  "edge-copilot",
-                                             "settingsPath": "Undo the run, or turn the sidebar back on in Edge settings.",
-                                             "symptoms": ["edge copilot missing", "edge sidebar gone", "discover button missing"],
+                                             "settingsPath": "Undo the run. These are Edge policies, so edge://settings shows them as managed while they are in place.",
+                                             "symptoms": ["edge copilot missing", "edge sidebar gone", "discover button missing", "edge rewrite missing", "edge history search missing"],
                                              "bloat": 3,
                                              "name":  "Edge Copilot and Discover",
-                                             "desc":  "Sidebar, Copilot mode, Discover, and AI features in Edge.",
+                                             "desc":  "The sidebar, AI history search, Rewrite, page access for Copilot, and the on-device model. In a profile signed in with a personal Microsoft account, Edge ignores all of these except the on-device model.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  28,
@@ -638,6 +432,24 @@
                                                                                 {
                                                                                     "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge",
                                                                                     "name":  "HubsSidebarEnabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge",
+                                                                                    "name":  "CopilotPageContext",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge",
+                                                                                    "name":  "EdgeEntraCopilotPageContext",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge",
+                                                                                    "name":  "Microsoft365CopilotChatIconEnabled",
                                                                                     "kind":  "DWord",
                                                                                     "value":  0
                                                                                 },
@@ -665,100 +477,12 @@
                                              "tier":  2
                                          },
                                          {
-                                             "id":  "gaming-copilot",
-                                             "settingsPath": "Undo the run.",
-                                             "symptoms": ["gaming copilot missing", "game bar copilot gone", "no copilot in games"],
-                                             "bloat": 3,
-                                             "name":  "Gaming Copilot",
-                                             "desc":  "The Copilot surface inside Game Bar.",
-                                             "risk":  0,
-                                             "default":  true,
-                                             "order":  28,
-                                             "actions":  [
-                                                             {
-                                                                 "type":  "appx",
-                                                                 "names":  [
-                                                                               "Microsoft.XboxGamingOverlay.Copilot*",
-                                                                               "Microsoft.GamingApp.Copilot*"
-                                                                           ]
-                                                             },
-                                                             {
-                                                                 "type":  "registry",
-                                                                 "scope":  "allusers",
-                                                                 "values":  [
-                                                                                {
-                                                                                    "path":  "SOFTWARE\\Microsoft\\GameBar",
-                                                                                    "name":  "AutoGameModeEnabled",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  1
-                                                                                },
-                                                                                {
-                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\GameDVR",
-                                                                                    "name":  "AppCaptureEnabled",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  0
-                                                                                }
-                                                                            ]
-                                                             }
-                                                         ],
-                                             "tier":  1
-                                         },
-                                         {
-                                             "id":  "ai-blocker",
-                                             "settingsPath": "Undo the run.",
-                                             "symptoms": ["cannot install ai features", "ai will not install", "store blocks ai app", "ai policy blocked"],
-                                             "bloat": 3,
-                                             "name":  "Block AI packages from returning",
-                                             "desc":  "Sets machine policy so removed AI components are not re-delivered.",
-                                             "risk":  1,
-                                             "default":  true,
-                                             "order":  29,
-                                             "actions":  [
-                                                             {
-                                                                 "type":  "registry",
-                                                                 "scope":  "machine",
-                                                                 "guards":  [
-                                                                                "edition:enterprise"
-                                                                            ],
-                                                                 "values":  [
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent",
-                                                                                    "name":  "DisableWindowsConsumerFeatures",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  1
-                                                                                },
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent",
-                                                                                    "name":  "DisableCloudOptimizedContent",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  1
-                                                                                }
-                                                                            ]
-                                                             },
-                                                             {
-                                                                 "type":  "appxPolicy",
-                                                                 "guards":  [
-                                                                                "edition:enterprise",
-                                                                                "build:\u003e=26200"
-                                                                            ],
-                                                                 "packages":  [
-                                                                                  "Microsoft.Copilot",
-                                                                                  "Microsoft.BingSearch",
-                                                                                  "Microsoft.WritingAssistant",
-                                                                                  "Microsoft.M365Companions"
-                                                                              ]
-                                                             }
-                                                         ],
-                                             "tier":  1,
-                                             "riskNote":  "Sets machine-wide policy. A Windows feature update can reset it, so re-check after major updates."
-                                         },
-                                         {
                                              "id":  "ai-fabric-service",
-                                             "settingsPath": "services.msc, find the AI fabric service, and set it back to Manual.",
+                                             "settingsPath": "services.msc, open Windows AI Components Host, set Startup type back to Automatic, and start it.",
                                              "symptoms": ["ai service missing", "ai slow to start", "app waiting for ai service", "ai runtime error"],
                                              "bloat": 3,
                                              "name":  "Windows AI fabric service",
-                                             "desc":  "The background service the on-device AI features run on. Removing the apps leaves it behind and it starts anyway.",
+                                             "desc":  "The background service the on-device AI features run on, listed in services.msc as Windows AI Components Host. Removing the apps leaves it behind and it starts anyway.",
                                              "risk":  1,
                                              "default":  true,
                                              "order":  32,
@@ -767,8 +491,7 @@
                                                                  "type":  "service",
                                                                  "startupType":  "Disabled",
                                                                  "names":  [
-                                                                               "WSAIFabricSvc",
-                                                                               "AIFabricService*"
+                                                                               "WSAIFabricSvc"
                                                                            ]
                                                              }
                                                          ],

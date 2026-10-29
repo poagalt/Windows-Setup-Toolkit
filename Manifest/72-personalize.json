@@ -12,8 +12,8 @@
           "settingsPath": "There is no Settings page for this. Undo the run, or open Registry Editor at HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Icons, delete the value named 29, and sign out and back in.",
           "symptoms": ["shortcut arrow", "no shortcut arrow", "arrow missing from icons", "cannot tell shortcuts apart", "desktop icons changed", "shortcut overlay missing", "icons look wrong", "arrow gone from shortcuts"],
           "name": "Remove the arrow from shortcut icons",
-          "desc": "Takes the small overlay arrow off desktop and Start shortcuts. The shortcuts themselves are untouched.",
-          "risk": 0, "tier": 0, "default": false, "order": 90,
+          "desc": "Takes the small overlay arrow off shortcut icons, on the desktop and everywhere else in File Explorer. The shortcuts themselves are untouched.",
+          "risk": 0, "tier": 0, "default": false, "order": 90, "revert": "full",
           "actions": [
             { "type": "script", "handler": "SetShortcutArrow" }
           ]
@@ -40,7 +40,7 @@
           "settingsPath": "Settings > Personalization > Colors, and turn Transparency effects back on.",
           "symptoms": ["no transparency", "taskbar solid", "frosted glass gone"],
           "name": "Turn off transparency effects",
-          "desc": "The taskbar, Start, and Settings become solid instead of frosted. Costs the GPU nothing to draw, which shows on laptops and integrated graphics.",
+          "desc": "The taskbar, Start, and Settings become solid instead of frosted, which saves the GPU a little work.",
           "risk": 0, "tier": 0, "default": false, "order": 90,
           "actions": [
             {
@@ -53,11 +53,11 @@
         },
         {
           "id": "animations-off",
-          "settingsPath": "Settings > Accessibility > Visual effects, and turn Animation effects back on.",
+          "settingsPath": "Undo the run. The Animation effects switch in Settings > Accessibility > Visual effects still reads On afterwards; switching it off and on again brings window animations back, but not the menu delay.",
           "symptoms": ["no animations", "windows not animating", "menus instant"],
           "name": "Turn off window animations and the menu delay",
-          "desc": "Windows stop sliding when minimized and menus open the moment you point at them instead of 400 ms later. Nothing about the layout changes; it only stops waiting.",
-          "risk": 0, "tier": 0, "default": false, "order": 90,
+          "desc": "Windows stop animating when minimized and maximized, the taskbar stops animating, and classic cascading menus open their submenus without the 400 ms wait. Takes full effect at the next sign-in.",
+          "risk": 0, "tier": 0, "default": false, "order": 90, "reboot": true,
           "actions": [
             {
               "type": "registry", "scope": "allusers",
@@ -87,10 +87,10 @@
         },
         {
           "id": "taskbar-seconds",
-          "settingsPath": "Undo the run.",
+          "settingsPath": "Settings > Time & language > Date & time > Show time and date in the System tray, and turn off Show seconds in system tray clock.",
           "symptoms": ["seconds on clock", "clock showing seconds"],
           "name": "Seconds on the taskbar clock",
-          "desc": "Shows the seconds beside the time.",
+          "desc": "Shows the seconds beside the time. Windows labels this as using a little more power, which counts on a laptop.",
           "risk": 0, "tier": 0, "default": false, "order": 91,
           "actions": [
             {
@@ -103,18 +103,20 @@
         },
         {
           "id": "taskbar-tray-all",
-          "settingsPath": "Settings > Personalization > Taskbar > Other system tray icons.",
-          "symptoms": ["too many tray icons", "system tray full"],
+          "settingsPath": "Settings > Personalization > Taskbar > Other system tray icons, and turn off the apps you want back behind the chevron.",
+          "symptoms": ["too many tray icons", "system tray full", "all tray icons showing"],
           "name": "Show every tray icon",
-          "desc": "Stops Windows hiding tray icons behind the chevron, so everything running is visible at a glance.",
+          "desc": "Puts every app's tray icon on the taskbar instead of behind the chevron. An app that shows its first icon later starts hidden again - Windows decides that per app.",
           "risk": 0, "tier": 0, "default": false, "order": 91,
           "actions": [
             {
               "type": "registry", "scope": "allusers",
+              "guards": ["build:<22621"],
               "values": [
                 { "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer", "name": "EnableAutoTray", "kind": "DWord", "value": 0 }
               ]
-            }
+            },
+            { "type": "script", "handler": "PromoteTrayIcons", "guards": ["build:>=22621"] }
           ]
         },
         {
@@ -136,9 +138,12 @@
         },
         {
           "id": "start-more-pins",
+          "settingsPath": "Settings > Personalization > Start, and set Layout back to Default.",
+          "symptoms": ["more pinned apps in start", "recommended smaller in start"],
           "name": "More pins in Start",
-          "desc": "Gives the pinned apps three rows instead of two by shrinking the Recommended strip.",
+          "desc": "Gives the pinned apps three rows instead of two by shrinking the Recommended strip. Windows 11 22H2 and 23H2 only - the redesigned Start in 24H2 and later sizes its sections itself.",
           "risk": 0, "tier": 0, "default": false, "order": 91,
+          "guards": ["build:>=22621", "build:<26100"],
           "actions": [
             {
               "type": "registry", "scope": "allusers",
@@ -153,7 +158,7 @@
           "settingsPath": "Undo the run.",
           "symptoms": ["home missing from sidebar", "gallery missing", "explorer sidebar changed"],
           "name": "Remove Home and Gallery from the Explorer sidebar",
-          "desc": "Takes the two cloud-backed entries out of the navigation pane, leaving This PC and your drives.",
+          "desc": "Takes both entries out of the navigation pane, leaving This PC and your drives.",
           "risk": 0, "tier": 2, "default": false, "order": 92,
           "actions": [
             {
@@ -167,10 +172,10 @@
         },
         {
           "id": "quick-access-tracking",
-          "settingsPath": "File Explorer > View > Options > Privacy, and turn the two recent-items boxes back on.",
-          "symptoms": ["quick access empty", "no recent folders", "recent files not showing", "explorer not remembering"],
+          "settingsPath": "File Explorer > View > Options > Privacy, and tick the recent-files, frequent-folders, and Office.com boxes again; then Settings > Personalization > Start, and turn Show recent items in jump lists and File Explorer back on.",
+          "symptoms": ["quick access empty", "no recent folders", "recent files not showing", "explorer not remembering", "jump lists empty", "no recent files in start"],
           "name": "Stop Quick Access tracking what you open",
-          "desc": "Explorer stops listing recently used files and frequently used folders, and stops surfacing files from Office.com.",
+          "desc": "Explorer stops listing recently used files and frequently used folders, and stops surfacing files from Office.com. Jump lists and Start stop listing recent files too.",
           "risk": 0, "tier": 2, "default": false, "order": 92,
           "actions": [
             {
@@ -189,8 +194,9 @@
           "settingsPath": "Undo the run.",
           "symptoms": ["folders missing from this pc", "documents missing from this pc"],
           "name": "Remove the media folders from This PC",
-          "desc": "Takes Desktop, Documents, Downloads, Music, Pictures, Videos, and 3D Objects out of This PC, leaving the drives. The folders themselves are untouched and still in the sidebar.",
+          "desc": "Takes Desktop, Documents, Downloads, Music, Pictures, Videos, and 3D Objects out of This PC, leaving the drives. The folders themselves are untouched and still in the sidebar. Windows 10 and Windows 11 21H2 only - from 22H2 Windows no longer lists them under This PC at all.",
           "risk": 0, "tier": 0, "default": false, "order": 92,
+          "guards": ["build:<22621"],
           "actions": [
             {
               "type": "registryKey",
@@ -232,7 +238,7 @@
         },
         {
           "id": "autoplay-off",
-          "settingsPath": "Settings > Bluetooth and devices > AutoPlay, and turn it back on.",
+          "settingsPath": "Undo the run. AutoRun is a policy, so the AutoPlay switch in Settings > Bluetooth and devices > AutoPlay can show as managed while it is in place.",
           "symptoms": ["usb does not open", "autoplay not working", "sd card not opening", "nothing happens when i plug in usb", "autorun off"],
           "name": "Turn off AutoPlay and AutoRun",
           "desc": "Nothing runs or prompts when you plug in a drive, a phone, or a disc. You open it yourself in Explorer.",
@@ -247,8 +253,7 @@
             {
               "type": "registry", "scope": "machine",
               "values": [
-                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer", "name": "NoAutorun", "kind": "DWord", "value": 1 },
-                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer", "name": "NoDriveTypeAutoRun", "kind": "DWord", "value": 255 },
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer", "name": "NoAutorun", "kind": "DWord", "value": 1 },
                 { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer", "name": "NoDriveTypeAutoRun", "kind": "DWord", "value": 255 }
               ]
             }
@@ -275,7 +280,7 @@
           "settingsPath": "Right-click a picture, Open with, Choose another app, and pick what you want.",
           "symptoms": ["photo viewer not default", "pictures open in wrong app", "windows photo viewer missing"],
           "name": "Bring back Windows Photo Viewer",
-          "desc": "Windows still ships the old viewer but no longer registers it. This registers it again, so it appears under Open with and can be set as the default for images.",
+          "desc": "Windows still ships the old viewer but registers it for TIFF files only. This registers it for JPEG, PNG, GIF, and BMP too, so it appears under Open with and can be set as the default for images.",
           "riskNote": "This only re-registers the viewer; it does not change your file associations. Windows 11 will not let a script set a default app, so you pick it once per file type under Open with, Choose another app.",
           "risk": 1, "tier": 0, "default": false, "order": 93,
           "actions": [
@@ -285,7 +290,7 @@
                 { "path": "HKLM:\\SOFTWARE\\Classes\\Applications\\photoviewer.dll\\shell\\open", "name": "MuiVerb", "kind": "String", "value": "@photoviewer.dll,-3043" },
                 { "path": "HKLM:\\SOFTWARE\\Classes\\Applications\\photoviewer.dll\\shell\\open\\command", "name": "(default)", "kind": "ExpandString", "value": "%SystemRoot%\\System32\\rundll32.exe \"%ProgramFiles%\\Windows Photo Viewer\\PhotoViewer.dll\", ImageView_Fullscreen %1" },
                 { "path": "HKLM:\\SOFTWARE\\Classes\\Applications\\photoviewer.dll\\shell\\open\\DropTarget", "name": "Clsid", "kind": "String", "value": "{FFE2A43C-56B9-4bf5-9A79-CC6D4285608A}" },
-                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities", "name": "ApplicationName", "kind": "String", "value": "@%ProgramFiles%\\Windows Photo Viewer\\photoviewer.dll,-3043" },
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities", "name": "ApplicationName", "kind": "String", "value": "@%ProgramFiles%\\Windows Photo Viewer\\photoviewer.dll,-3009" },
                 { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities", "name": "ApplicationDescription", "kind": "String", "value": "@%ProgramFiles%\\Windows Photo Viewer\\photoviewer.dll,-3069" },
                 { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities\\FileAssociations", "name": ".jpg", "kind": "String", "value": "PhotoViewer.FileAssoc.Tiff" },
                 { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities\\FileAssociations", "name": ".jpeg", "kind": "String", "value": "PhotoViewer.FileAssoc.Tiff" },
@@ -296,7 +301,7 @@
                 { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities\\FileAssociations", "name": ".bmp", "kind": "String", "value": "PhotoViewer.FileAssoc.Tiff" },
                 { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities\\FileAssociations", "name": ".tif", "kind": "String", "value": "PhotoViewer.FileAssoc.Tiff" },
                 { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities\\FileAssociations", "name": ".tiff", "kind": "String", "value": "PhotoViewer.FileAssoc.Tiff" },
-                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities\\FileAssociations", "name": ".wdp", "kind": "String", "value": "PhotoViewer.FileAssoc.Wdp" },
+                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities\\FileAssociations", "name": ".wdp", "kind": "String", "value": "PhotoViewer.FileAssoc.Tiff" },
                 { "path": "HKLM:\\SOFTWARE\\RegisteredApplications", "name": "Windows Photo Viewer", "kind": "String", "value": "SOFTWARE\\Microsoft\\Windows Photo Viewer\\Capabilities" }
               ]
             }

@@ -73,8 +73,25 @@ function Get-WDRecurringEffects {
         Name     = 'Feature update guard'
         Detail   = ('Re-applies your saved selection after Windows upgrades itself, and only then.' +
                     $(if ($stamped) { " Last recorded build $stamped." } else { '' }))
-        Overhead = 'Nothing on a normal boot - one registry read, well under a second. Only after the build changes does it do real work, roughly 20-60 s in the background five minutes after that boot.'
+        Overhead = 'Nothing on a normal sign-in - one registry read, well under a second. Only after a feature update changes the build does it do real work, roughly 20-60 s in the background five minutes after the next sign-in.'
         Present  = [bool]$upd
+    })
+
+    $hold = Test-WDTaskPresent 'Windows Setup Toolkit Restart Hold'
+    $holdNow = ''
+    $holdState = Join-Path (Join-Path $env:ProgramData 'WinSetupToolkit') 'restart-hold-state.json'
+    if ($hold -and (Test-Path -LiteralPath $holdState)) {
+        try {
+            $s = Get-Content -LiteralPath $holdState -Raw | ConvertFrom-Json
+            $holdNow = " Last checked $(([datetime]$s.when).ToString('g')): $($s.why), so restarts were $(if ($s.hold) { 'held' } else { 'allowed' })."
+        } catch { }
+    }
+    $effects.Add([pscustomobject]@{
+        Id       = 'restart-hold'
+        Name     = 'Update restart hold'
+        Detail   = "Keeps Windows Update's active hours around the current hour while anyone is signed in, so no update restarts the computer under them.$holdNow"
+        Overhead = 'Under a second every 15 minutes, and at sign-in, unlock, and wake. Nothing at all in between.'
+        Present  = [bool]$hold
     })
 
     $ptCfg = Join-Path $env:LOCALAPPDATA 'Microsoft\PowerToys\Keyboard Manager\default.json'
@@ -145,6 +162,26 @@ function Remove-WDRecurringEffect {
                 New-WDResult -Status Failed -Message 'Could not remove the update guard' -Detail $_.Exception.Message
             }
         }
+        'restart-hold' {
+            if ($Preview) { return New-WDResult -Status Changed -Message 'Would unregister the update restart hold and delete its files' }
+            try {
+                Unregister-ScheduledTask -TaskName 'Windows Setup Toolkit Restart Hold' -Confirm:$false -ErrorAction Stop
+                $root = Join-Path $env:ProgramData 'WinSetupToolkit'
+                foreach ($f in @('Invoke-WDRestartHold.ps1', 'restart-hold-state.json',
+                                 'restart-hold-anyway.json', 'restart-hold-only.json')) {
+                    foreach ($p in @((Join-Path $root $f), (Join-Path $root "$f.wdbak"))) {
+                        if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+                    }
+                }
+                # Removing the task is not undoing the run, so the journal's
+                # record of your own active hours is not consulted here.
+                New-WDResult -Status Removed -Message 'Update restart hold removed' `
+                             -Detail ('Active hours stay where it last left them. Set your own in Settings > Windows Update > ' +
+                                      'Advanced options, or undo the run that set it up to have them put back.')
+            } catch {
+                New-WDResult -Status Failed -Message 'Could not remove the restart hold' -Detail $_.Exception.Message
+            }
+        }
         'copilot-remap' {
             if ($Preview) { return New-WDResult -Status Changed -Message 'Would remove the Copilot key mapping from PowerToys' }
             $cfg = Join-Path $env:LOCALAPPDATA 'Microsoft\PowerToys\Keyboard Manager\default.json'
@@ -195,18 +232,49 @@ function Remove-WDRecurringEffect {
     }
 }
 
+function Test-WDUndoScriptDrivable {
+    # Whether a rollback script can be told which options to put back. The
+    # Revert page passes -Console and -Only; a script whose param block
+    # declares neither ignores both and puts back the WHOLE run, so it is read
+    # rather than assumed - the builds from before the rename wrote both kinds.
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $false }
+    try {
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$null, [ref]$null)
+        if (-not $ast.ParamBlock) { return $false }
+        $names = @($ast.ParamBlock.Parameters | ForEach-Object { [string]$_.Name.VariablePath.UserPath })
+        return (($names -contains 'Only') -and ($names -contains 'Console'))
+    } catch { return $false }
+}
+
 function Get-WDPastRuns {
     param([string]$Root, [switch]$AllMachines)
 
-    if (-not $Root) { $Root = Join-Path $env:ProgramData 'WinSetupToolkit' }
-    if (-not (Test-Path -LiteralPath $Root)) { return @() }
+    $default = Join-Path $env:ProgramData 'WinSetupToolkit'
+    if (-not $Root) { $Root = $default }
+
+    # Where each run folder may be. The toolkit was called WinDebloat until
+    # late August 2026 and kept its runs in ProgramData\WinDebloat; nothing read that
+    # folder after the rename, so the applies made there - on the machine this
+    # was built on, the only two it has - vanished from the page that exists to
+    # undo them. Only beside the real data root: a scratch root asks about
+    # itself.
+    $roots = New-Object System.Collections.Generic.List[psobject]
+    if (Test-Path -LiteralPath $Root) { $roots.Add(@{ Path = $Root; Legacy = $false }) }
+    $legacyRoot = Join-Path $env:ProgramData 'WinDebloat'
+    $isDefault = $false
+    try { $isDefault = ([IO.Path]::GetFullPath($Root).TrimEnd('\') -ieq [IO.Path]::GetFullPath($default).TrimEnd('\')) } catch { }
+    if ($isDefault -and (Test-Path -LiteralPath $legacyRoot)) { $roots.Add(@{ Path = $legacyRoot; Legacy = $true }) }
+    if (-not $roots.Count) { return @() }
 
     $byId = [ordered]@{}
 
-    foreach ($d in (Get-ChildItem -LiteralPath $Root -Directory -Filter 'run-*' -ErrorAction SilentlyContinue)) {
+    foreach ($rt in $roots) {
+    foreach ($d in (Get-ChildItem -LiteralPath $rt.Path -Directory -Filter 'run-*' -ErrorAction SilentlyContinue)) {
         $report  = Join-Path $d.FullName 'report.json'
         $journal = Join-Path $d.FullName 'journal.jsonl'
         $undo    = Join-Path $d.FullName 'Undo-WinSetupToolkit.ps1'
+        if ($rt.Legacy) { $undo = Join-Path $d.FullName 'Undo-WinDebloat.ps1' }
         $envf    = Join-Path $d.FullName 'environment.json'
         $preview = $true; $removed = 0; $changed = 0; $when = $d.CreationTime
         if (Test-Path -LiteralPath $report) {
@@ -231,6 +299,17 @@ function Get-WDPastRuns {
             } catch { }
         }
 
+        # A script that is there but cannot be told which options to put back
+        # is not handed to the page at all: driven with -Only it would put back
+        # everything. ScriptNote says which of the two absences it is.
+        $undoFile = $null; $note = ''
+        if (Test-Path -LiteralPath $undo) {
+            if (-not $rt.Legacy -or (Test-WDUndoScriptDrivable -Path $undo)) { $undoFile = $undo }
+            else { $note = "Its rollback script is from an earlier build and can only put the whole run back - run $(Split-Path -Leaf $undo) from $($d.FullName) to do that." }
+        } else {
+            $note = 'Its rollback script has been deleted, so nothing from it can be put back.'
+        }
+
         # Keyed on the bare stamp, not the folder name: the session calls itself
         # 20260817-001047 and its folder is run-20260817-001047, so keying on
         # the directory would list every run twice.
@@ -242,12 +321,15 @@ function Get-WDPastRuns {
             Removed     = $removed
             Changed     = $changed
             Journal     = $(if (Test-Path -LiteralPath $journal) { $journal } else { $null })
-            UndoFile    = $(if (Test-Path -LiteralPath $undo) { $undo } else { $null })
+            UndoFile    = $undoFile
+            ScriptNote  = $note
+            Legacy      = [bool]$rt.Legacy
             Machine     = $machine
             SameMachine = (Test-WDSameMachine $machine)
             LogPresent  = (Test-Path -LiteralPath $journal)
             Source      = 'folder'
         }
+    }
     }
 
     foreach ($rec in (Get-WDRunIndex -Root $Root)) {
@@ -274,6 +356,8 @@ function Get-WDPastRuns {
             Changed     = $(if ($rec.counts) { [int]$rec.counts.changed } else { 0 })
             Journal     = $null
             UndoFile    = $null
+            ScriptNote  = 'Its run folder has been deleted, so nothing from it can be put back.'
+            Legacy      = $false
             Machine     = $mach
             SameMachine = (Test-WDSameMachine $mach)
             LogPresent  = $false
@@ -485,6 +569,49 @@ function Get-WDUndoStepState {
             if ($null -eq $on) { return 'done' }
             return 'todo'
         }
+        # Deleted by the run; back once a task of that name exists again.
+        'register-task' {
+            $on = Get-WDTaskEnabledState -Path ([string]$Step.Path) -Name ([string]$Step.Name)
+            if ($null -eq $on) { return 'todo' }
+            return 'done'
+        }
+        'power-scheme' {
+            $now = Get-WDActivePowerScheme
+            if (-not $now) { return 'unknown' }
+            if ($now -eq [string]$Step.Previous) { return 'done' }
+            return 'todo'
+        }
+        'hibernate' {
+            # Absent means the machine's default, which is what the second value
+            # records.
+            $on = $null
+            try {
+                $pw = Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Power' -ErrorAction Stop
+                if ($pw.PSObject.Properties['HibernateEnabled'])            { $on = [int]$pw.HibernateEnabled }
+                elseif ($pw.PSObject.Properties['HibernateEnabledDefault']) { $on = [int]$pw.HibernateEnabledDefault }
+            } catch { }
+            if ($null -eq $on) { return 'unknown' }
+            if ([bool]$on -eq ([string]$Step.Previous -eq 'on')) { return 'done' }
+            return 'todo'
+        }
+        'mu-service' {
+            $reg = Get-WDUpdateServiceRegistered -Id ([string]$Step.Name)
+            if ($null -eq $reg) { return 'unknown' }
+            if ($reg) { return 'done' }
+            return 'todo'
+        }
+        'system-protection-off' {
+            $on = Test-WDSystemProtectionOn -Drive ([string]$Step.Name)
+            if ($null -eq $on) { return 'unknown' }
+            if ($on) { return 'todo' }
+            return 'done'
+        }
+        'remove-firewall-rule' {
+            $rule = $null
+            try { $rule = Get-NetFirewallRule -Name ([string]$Step.Name) -ErrorAction SilentlyContinue } catch { return 'unknown' }
+            if ($rule) { return 'todo' }
+            return 'done'
+        }
         'rename' {
             if (Test-Path -LiteralPath ([string]$Step.To))   { return 'done' }
             if (Test-Path -LiteralPath ([string]$Step.From)) { return 'todo' }
@@ -529,6 +656,30 @@ function Get-WDTaskEnabledState {
         $script:SchedSvc = $null
         return $null
     }
+}
+
+function Get-WDActivePowerScheme {
+    # The GUID alone, which is the one part of powercfg's answer that is the
+    # same in every display language.
+    try {
+        $out = [string](& powercfg.exe /getactivescheme 2>$null)
+        if ($out -match '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') { return $Matches[1].ToLower() }
+    } catch { }
+    $null
+}
+
+function Get-WDUpdateServiceRegistered {
+    # Whether an update service - Microsoft Update, for "updates for other
+    # Microsoft products" - is registered with Automatic Updates. $null when
+    # the update agent cannot be asked.
+    param([string]$Id)
+    try {
+        $sm = New-Object -ComObject 'Microsoft.Update.ServiceManager'
+        foreach ($s in @($sm.Services)) {
+            if ([string]$s.ServiceID -eq $Id) { return [bool]$s.IsRegisteredWithAU }
+        }
+        return $false
+    } catch { return $null }
 }
 
 function Invoke-WDReinstall {
@@ -626,8 +777,19 @@ function Invoke-WDRevertPlan {
                     # script is the tested one, and a copy means two answers to
                     # "how is a step put back".
                     $only = @(@($op.Only) | Where-Object { $_ })
-                    $cmdArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$($op.Path)`"", '-Console')
-                    if ($only.Count) { $cmdArgs += @('-Only', ($only -join ',')) }
+                    # -Command with a quoted list, never -File: under -File,
+                    # "-Only a,b,c" reaches the script's [string[]] as ONE
+                    # string, matches no option, and the script puts back
+                    # nothing and exits 0 - every revert of two or more options
+                    # did exactly that and was reported as completed. Fixed here
+                    # rather than in the script, because the scripts already on
+                    # disk are the ones being driven. No double quotes can occur:
+                    # a Windows path cannot hold one and ids are manifest names.
+                    $sq  = { param([string]$s) "'" + (ConvertTo-WDQuotedBody $s) + "'" }
+                    $cmd = "& $(& $sq ([string]$op.Path)) -Console"
+                    if ($only.Count) { $cmd += ' -Only ' + (@($only | ForEach-Object { & $sq ([string]$_) }) -join ',') }
+                    $cmd += '; exit $LASTEXITCODE'
+                    $cmdArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', "`"$cmd`"")
                     if ($Preview) {
                         $r = New-WDResult -Status Changed -Message $(if ($only.Count) {
                                 "Would put back $($only.Count) option(s) from $($op.Path)"
@@ -680,7 +842,7 @@ function ConvertTo-WDPsLiteral {
         if (-not @($Value).Count) { return '@()' }
         return '@(' + ((@($Value) | ForEach-Object { ConvertTo-WDPsLiteral $_ }) -join ',') + ')'
     }
-    "'" + ([string]$Value -replace "'", "''") + "'"
+    "'" + (ConvertTo-WDQuotedBody ([string]$Value)) + "'"
 }
 
 function ConvertFrom-WDUndoPrevious {
@@ -720,8 +882,20 @@ function Get-WDUndoStepKey {
         'service'         { "svc|$([string]$Step.Name)" }
         'task'            { "task|$([string]$Step.Path)|$([string]$Step.Name)" }
         'recycle'         { "bin|$([string]$Step.Path)" }
-        'powercfg'        { "pwr|$([string]$Step.Sub)|$([string]$Step.Setting)" }
+        # The scheme is part of the target: the same setting in two plans is two
+        # values. An older journal has none, and keys exactly as it always did.
+        'powercfg'        {
+            if ($Step.Scheme) { "pwr|$([string]$Step.Scheme)|$([string]$Step.Sub)|$([string]$Step.Setting)" }
+            else              { "pwr|$([string]$Step.Sub)|$([string]$Step.Setting)" }
+        }
         'unregister-task' { "untask|$([string]$Step.Name)" }
+        'register-task'   { "regtask|$([string]$Step.Path)|$([string]$Step.Name)" }
+        'power-scheme'    { 'pwrscheme' }
+        'hibernate'       { 'hiber' }
+        'reserved-storage' { 'reserve' }
+        'mu-service'      { "musvc|$([string]$Step.Name)" }
+        'remove-firewall-rule' { "fwrule|$([string]$Step.Name)" }
+        'system-protection-off' { "sysprot|$([string]$Step.Name)" }
         'feature'         { "feat|$([string]$Step.Name)" }
         'feature-off'     { "featoff|$([string]$Step.Name)" }
         'capability-off'  { "capoff|$([string]$Step.Name)" }
@@ -797,12 +971,45 @@ function Get-WDUndoPlan {
                 $step = [pscustomobject]@{ Method = 'service'; Name = $name; Previous = [string]$e.undo.previous }
             }
             'powercfg' {
+                # Scheme is the plan the values were read from. Journals written
+                # before it was recorded have none, and their undo goes to the
+                # current plan as it always did.
                 $step = [pscustomobject]@{ Method = 'powercfg'; Sub = [string]$e.undo.sub; Setting = [string]$e.undo.setting
-                                           Ac = [int]$e.undo.ac; Dc = [int]$e.undo.dc }
+                                           Ac = [int]$e.undo.ac; Dc = [int]$e.undo.dc
+                                           Scheme = [string](Get-Prop $e.undo 'scheme' '') }
+            }
+            'power-scheme' {
+                # Created is a plan the run added from Windows' template because
+                # the machine had none of the kind it wanted; undoing removes it.
+                $step = [pscustomobject]@{ Method = 'power-scheme'; Previous = [string]$e.undo.previous
+                                           Label = [string](Get-Prop $e.undo 'label' '')
+                                           Created = [string](Get-Prop $e.undo 'created' '') }
+            }
+            'hibernate' {
+                $step = [pscustomobject]@{ Method = 'hibernate'; Previous = [string]$e.undo.previous }
+            }
+            'reserved-storage' {
+                $step = [pscustomobject]@{ Method = 'reserved-storage'; Previous = [string]$e.undo.previous }
+            }
+            'mu-service' {
+                $step = [pscustomobject]@{ Method = 'mu-service'; Name = [string]$e.undo.name }
+            }
+            'remove-firewall-rule' {
+                $step = [pscustomobject]@{ Method = 'remove-firewall-rule'; Name = [string]$e.undo.name }
+            }
+            # Switched on by the run so that a restore point could be taken.
+            'system-protection-off' {
+                $step = [pscustomobject]@{ Method = 'system-protection-off'; Name = [string]$e.undo.name }
             }
             'task' {
                 $p = [string]$e.undo.path; $n = [string]$e.undo.name
                 $step = [pscustomobject]@{ Method = 'task'; Path = $p; Name = $n }
+            }
+            # Deleted by the run with its definition exported first, so undoing
+            # it is registering that definition again.
+            'register-task' {
+                $step = [pscustomobject]@{ Method = 'register-task'; Path = [string]$e.undo.path
+                                           Name = [string]$e.undo.name; Xml = [string]$e.undo.xml }
             }
             # Registered by the run, so undoing it means taking it off again.
             # This had no case at all, so a run that installed a persistence
@@ -886,14 +1093,21 @@ function Get-WDUndoStepKind {
         'service'         { 'Services' }
         'task'            { 'Scheduled tasks' }
         'unregister-task' { 'Scheduled tasks' }
+        'register-task'   { 'Scheduled tasks' }
         'feature'         { 'Windows features' }
         'feature-off'     { 'Windows features' }
         'capability-off'  { 'Windows features' }
+        'reserved-storage' { 'Windows features' }
         'file-restore'    { 'Files and folders' }
         'rename'          { 'Files and folders' }
         'recycle'         { 'Files and folders' }
         'powercfg'        { 'Power settings' }
+        'power-scheme'    { 'Power settings' }
+        'hibernate'       { 'Power settings' }
         'uninstall'       { 'Installed programs' }
+        'mu-service'      { 'Windows Update' }
+        'remove-firewall-rule' { 'Firewall rules' }
+        'system-protection-off' { 'System Protection' }
         default           { 'Other' }
     }
 }
@@ -980,10 +1194,24 @@ function Get-WDUndoStepText {
         'service'         { return "Set the $($Step.Name) service back to $($Step.Previous) startup" }
         'task'            { return "Re-enable the scheduled task $($Step.Path)$($Step.Name)" }
         'unregister-task' { return "Remove the scheduled task $($Step.Name), which this run registered" }
+        'register-task'   { return "Register the scheduled task $($Step.Path)$($Step.Name) again, from the definition saved before the run deleted it" }
         'feature'         { return "Turn the Windows feature $($Step.Name) back on" }
         'feature-off'     { return "Turn the Windows feature $($Step.Name) back off" }
         'capability-off'  { return "Remove the Windows capability $($Step.Name), which this run added" }
-        'powercfg'        { return "Put the power setting $($Step.Sub)\$($Step.Setting) back to $($Step.Ac) on mains, and $($Step.Dc) on battery" }
+        'powercfg'        {
+            $plan = $(if ($Step.Scheme) { " in power plan $($Step.Scheme)" } else { '' })
+            return "Put the power setting $($Step.Sub)\$($Step.Setting)$plan back to $($Step.Ac) on mains, and $($Step.Dc) on battery"
+        }
+        'power-scheme'    {
+            $label = $(if ($Step.Label) { "$($Step.Label) ($($Step.Previous))" } else { [string]$Step.Previous })
+            $extra = $(if ($Step.Created) { ", and delete the plan $($Step.Created) the run added" } else { '' })
+            return "Make the power plan $label active again$extra"
+        }
+        'hibernate'       { if ($Step.Previous -eq 'on') { return 'Turn hibernation back on' } else { return 'Turn hibernation back off' } }
+        'reserved-storage' { return 'Turn Reserved Storage back on' }
+        'mu-service'      { return 'Turn updates for other Microsoft products back on' }
+        'remove-firewall-rule' { return "Remove the firewall rule $($Step.Name), which installing this added" }
+        'system-protection-off' { return "Turn System Protection back off for $($Step.Name) - the run switched it on to take a restore point, and turning it off deletes the restore points on that drive, that one included" }
         'regfile'         { return "Import $($Step.File), which is the whole of $($Step.Target) as it was before the run" }
         'file-restore'    { if ($Step.File) { return "Restore $($Step.Target) from the copy taken before the run" }
                             return "Delete $($Step.Target), which this run created" }
@@ -1172,7 +1400,7 @@ function Export-WDUndoScript {
     $when = ''
     try { $when = ([datetime]$sess.Started).ToString('d MMMM yyyy') + ' at ' + ([datetime]$sess.Started).ToString('HH:mm') } catch { }
 
-    $q = { param($s) "'" + ([string]$s -replace "'", "''") + "'" }
+    $q = { param($s) "'" + (ConvertTo-WDQuotedBody ([string]$s)) + "'" }
 
     $sb = New-Object System.Text.StringBuilder
     $null = $sb.AppendLine('<#')
@@ -1251,11 +1479,19 @@ function Export-WDUndoScript {
             'service'         { $f.Add("N=$(& $q $s.Name)"); $f.Add("V=$(& $q $s.Previous)") }
             'task'            { $f.Add("P=$(& $q $s.Path)"); $f.Add("N=$(& $q $s.Name)") }
             'unregister-task' { $f.Add("N=$(& $q $s.Name)") }
+            'register-task'   { $f.Add("P=$(& $q $s.Path)"); $f.Add("N=$(& $q $s.Name)"); $f.Add("X=$(& $q $s.Xml)") }
             'feature'         { $f.Add("N=$(& $q $s.Name)") }
             'feature-off'     { $f.Add("N=$(& $q $s.Name)") }
             'capability-off'  { $f.Add("N=$(& $q $s.Name)") }
             'powercfg'        { $f.Add("Sub=$(& $q $s.Sub)"); $f.Add("Set=$(& $q $s.Setting)")
-                                $f.Add("Ac=$([int]$s.Ac)"); $f.Add("Dc=$([int]$s.Dc)") }
+                                $f.Add("Ac=$([int]$s.Ac)"); $f.Add("Dc=$([int]$s.Dc)")
+                                $f.Add("Sch=$(& $q $s.Scheme)") }
+            'power-scheme'    { $f.Add("V=$(& $q $s.Previous)"); $f.Add("L=$(& $q $s.Label)"); $f.Add("C=$(& $q $s.Created)") }
+            'hibernate'       { $f.Add("V=$(& $q $s.Previous)") }
+            'reserved-storage' { $f.Add("V=$(& $q $s.Previous)") }
+            'mu-service'      { $f.Add("N=$(& $q $s.Name)") }
+            'remove-firewall-rule' { $f.Add("N=$(& $q $s.Name)") }
+            'system-protection-off' { $f.Add("N=$(& $q $s.Name)") }
             'regfile'         { $f.Add("F=$(& $q $s.File)"); $f.Add("T=$(& $q $s.Target)") }
             'file-restore'    { $f.Add("T=$(& $q $s.Target)"); $f.Add("F=$(& $q $s.File)") }
             'rename'          { $f.Add("From=$(& $q $s.From)"); $f.Add("To=$(& $q $s.To)") }
@@ -1440,6 +1676,6 @@ Export-ModuleMember -Function Get-WDRecurringEffects, Remove-WDRecurringEffect, 
                               Get-WDUndoStatus, Export-WDUndoScript, Get-WDUndoPlan,
                               Get-WDCombinedUndoPlan, Get-WDUndoStepKey, Get-WDUndoStepState,
                               Get-WDUndoStepKind, Get-WDUndoStepText, Get-WDRevertDescription,
-                              Get-WDTaskEnabledState,
+                              Get-WDTaskEnabledState, Get-WDActivePowerScheme, Get-WDUpdateServiceRegistered,
                               Export-WDUndoLauncher, Get-WDUndoIconData, Get-WDIcoSubset,
                               ConvertTo-WDPsLiteral, ConvertFrom-WDUndoPrevious

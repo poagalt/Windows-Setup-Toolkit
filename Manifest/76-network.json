@@ -29,7 +29,7 @@
       "items": [
         {
           "id": "net-remote-assist",
-          "settingsPath": "Control Panel > System > Remote settings, and allow Remote Assistance connections.",
+          "settingsPath": "System Properties (sysdm.cpl) > Remote, and tick Allow Remote Assistance connections to this computer.",
           "symptoms": ["remote assistance not working", "cannot get remote help", "remote support blocked"],
           "name": "Turn off Remote Assistance",
           "desc": "Stops anyone connecting to this machine through the Windows Remote Assistance invitation path. Remote Desktop is a separate feature and is not affected.",
@@ -39,8 +39,7 @@
               "type": "registry", "scope": "machine",
               "values": [
                 { "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Remote Assistance", "name": "fAllowToGetHelp", "kind": "DWord", "value": 0 },
-                { "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Remote Assistance", "name": "fAllowFullControl", "kind": "DWord", "value": 0 },
-                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows NT\\Terminal Services", "name": "fAllowToGetHelp", "kind": "DWord", "value": 0 }
+                { "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Remote Assistance", "name": "fAllowFullControl", "kind": "DWord", "value": 0 }
               ]
             }
           ]
@@ -51,7 +50,7 @@
           "symptoms": ["cannot reach pc by name", "network name not resolving", "computer not found on network", "hostname not working"],
           "name": "Turn off LLMNR name resolution",
           "desc": "Windows falls back to shouting a name across the local network when DNS has no answer. That broadcast is trivially answered by anyone else on the network, which is how credential relay attacks start.",
-          "riskNote": "Devices with no DNS entry - some printers, some NAS boxes, other PCs on a router that does not register names - may stop being reachable by name. Reaching them by IP address still works, and mDNS handles most modern devices.",
+          "riskNote": "Devices with no DNS entry - some printers, some NAS boxes, other PCs on a router that does not register names - may stop being reachable by name. Reaching them by IP address still works.",
           "risk": 1, "tier": 0, "default": false, "order": 89,
           "actions": [
             {
@@ -69,7 +68,7 @@
           "name": "Prefer IPv4 and turn off IPv6 tunnels",
           "desc": "Leaves IPv6 itself working on real network adapters, but stops the Teredo, 6to4, and ISATAP tunnel interfaces and puts IPv4 first when a site answers on both. Takes effect after a restart.",
           "riskNote": "Teredo is what some peer-to-peer features use to reach each other through a router, Xbox multiplayer among them. If party chat or matchmaking breaks after this, that is why.",
-          "risk": 1, "tier": 0, "default": false, "order": 89,
+          "risk": 1, "tier": 0, "default": false, "order": 89, "reboot": true,
           "actions": [
             {
               "type": "registry", "scope": "machine",

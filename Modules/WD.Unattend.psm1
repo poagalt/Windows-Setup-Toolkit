@@ -199,6 +199,10 @@ function Get-WDUnattendPayload {
                     foreach ($v in @(Get-Prop $a 'values' @())) {
                         $path = [string](Get-Prop $v 'path' '')
                         if (-not $path) { continue }
+                        # Only meaningful on a key that already exists, which a
+                        # machine not yet installed cannot answer - and writing
+                        # it would create the key.
+                        if ([bool](Get-Prop $v 'ifKeyExists' $false)) { continue }
                         $reg.Add([pscustomobject]@{
                             ItemId = $id
                             Scope  = $scope
@@ -350,7 +354,7 @@ function New-WDUnattendCommands {
         $ps  = "`$p='C:\Windows\Temp\wd-wifi.xml';" +
                "[IO.File]::WriteAllBytes(`$p,[Convert]::FromBase64String('$b64'));" +
                "netsh wlan add profile filename=`$p user=all;" +
-               "netsh wlan connect name='$([string]$Options.WifiSsid -replace "'", "''")';" +
+               "netsh wlan connect name='$(ConvertTo-WDQuotedBody ([string]$Options.WifiSsid))';" +
                "Remove-Item `$p -Force -ErrorAction SilentlyContinue"
         $cmds.Add("powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `"$ps`"")
     }
@@ -392,6 +396,20 @@ function New-WDUnattendCommands {
             'Automatic' { 'auto';     break }
             default     { 'disabled' }
         }
+        if ([string]$s.Name -match '[\*\?]') {
+            # sc.exe takes no wildcards, and the failure was swallowed by the
+            # "exit /b 0" every line carries - so a pattern did nothing at all.
+            # Matched against the Services key rather than Get-Service, which
+            # answers with per-user INSTANCES for a per-user service and never
+            # the template; on a machine nobody has signed into yet only the
+            # template exists, and it is what every instance is copied from.
+            $lit = ConvertTo-WDQuotedBody ([string]$s.Name)
+            $num = switch ($start) { 'disabled' { 4 } 'demand' { 3 } default { 2 } }
+            $cmds.Add("powershell.exe -NoProfile -ExecutionPolicy Bypass -Command " +
+                      "`"Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Services' | Where-Object{`$_.PSChildName -like '$lit'} | " +
+                      "ForEach-Object{Set-ItemProperty -LiteralPath `$_.PSPath -Name Start -Value $num -Type DWord -ErrorAction SilentlyContinue}`"")
+            continue
+        }
         if ($s.Stop) {
             $cmds.Add("cmd /c sc.exe stop `"$($s.Name)`" ^& exit /b 0")
         }
@@ -401,7 +419,7 @@ function New-WDUnattendCommands {
         $verb = $(if ($t.Delete) { '/Delete /F' } else { '/Change /Disable' })
         if ($t.Path -match '[\*\?]') {
             # schtasks takes no wildcards, so a pattern needs an enumeration.
-            $lit = ($t.Path -replace "'", "''")
+            $lit = ConvertTo-WDQuotedBody $t.Path
             $act = $(if ($t.Delete) { 'Unregister-ScheduledTask -Confirm:$false' } else { 'Disable-ScheduledTask' })
             $cmds.Add("powershell.exe -NoProfile -ExecutionPolicy Bypass -Command " +
                       "`"Get-ScheduledTask | Where-Object{(`$_.TaskPath+`$_.TaskName) -like '$lit'} | " +
@@ -415,10 +433,34 @@ function New-WDUnattendCommands {
     # name fails the whole install rather than one line. /NoRestart everywhere,
     # or DISM returns 3010 and Setup reads a reboot request as failure.
     foreach ($f in @($Payload.Feature)) {
+        if ([string]$f.Name -match '[\*\?]') {
+            # DISM takes no wildcards either, so a pattern is resolved on the
+            # machine being installed.
+            $lit  = ConvertTo-WDQuotedBody ([string]$f.Name)
+            $want = $(if ($f.Enable) { "-ne 'Enabled'" } else { "-eq 'Enabled'" })
+            $act  = $(if ($f.Enable) { 'Enable-WindowsOptionalFeature -Online -All -NoRestart' } else { 'Disable-WindowsOptionalFeature -Online -NoRestart' })
+            $cmds.Add("powershell.exe -NoProfile -ExecutionPolicy Bypass -Command " +
+                      "`"Get-WindowsOptionalFeature -Online | Where-Object{`$_.FeatureName -like '$lit' -and [string]`$_.State $want} | " +
+                      "ForEach-Object{`$null=$act -FeatureName `$_.FeatureName -ErrorAction SilentlyContinue}`"")
+            continue
+        }
         $verb = $(if ($f.Enable) { '/Enable-Feature /All' } else { '/Disable-Feature' })
         $cmds.Add("cmd /c dism.exe /online $verb /FeatureName:$($f.Name) /NoRestart /Quiet ^& exit /b 0")
     }
     foreach ($c in @($Payload.Capability)) {
+        if ([string]$c.Name -match '[\*\?]') {
+            # A capability's name for DISM is its whole identity -
+            # App.StepsRecorder~~~~0.0.1.0 - and the manifest names it by
+            # pattern. Passed through as it was, every capability line here
+            # failed, and the failure was swallowed.
+            $lit  = ConvertTo-WDQuotedBody ([string]$c.Name)
+            $want = $(if ($c.Install) { "-ne 'Installed'" } else { "-eq 'Installed'" })
+            $act  = $(if ($c.Install) { 'Add-WindowsCapability -Online' } else { 'Remove-WindowsCapability -Online' })
+            $cmds.Add("powershell.exe -NoProfile -ExecutionPolicy Bypass -Command " +
+                      "`"Get-WindowsCapability -Online | Where-Object{`$_.Name -like '$lit' -and [string]`$_.State $want} | " +
+                      "ForEach-Object{`$null=$act -Name `$_.Name -ErrorAction SilentlyContinue}`"")
+            continue
+        }
         $verb = $(if ($c.Install) { '/Add-Capability' } else { '/Remove-Capability' })
         $cmds.Add("cmd /c dism.exe /online $verb /CapabilityName:$($c.Name) /NoRestart /Quiet ^& exit /b 0")
     }
@@ -426,7 +468,7 @@ function New-WDUnattendCommands {
     # One command for the lot: a RunSynchronousCommand per package would put a
     # hundred PowerShell startups in the specialize pass.
     if (@($Payload.Appx).Count) {
-        $list = (@($Payload.Appx) | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ','
+        $list = (@($Payload.Appx) | ForEach-Object { "'" + (ConvertTo-WDQuotedBody $_) + "'" }) -join ','
         $ps = "`$p=@($list);`$all=Get-AppxProvisionedPackage -Online;" +
               "foreach(`$n in `$p){`$all|Where-Object{`$_.DisplayName -like `$n}|" +
               "ForEach-Object{Remove-AppxProvisionedPackage -Online -PackageName `$_.PackageName -ErrorAction SilentlyContinue}}"
@@ -434,6 +476,44 @@ function New-WDUnattendCommands {
     }
 
     $cmds.ToArray()
+}
+
+# Windows Setup takes at most 259 characters for a RunSynchronousCommand Path
+# (Microsoft's reference for the setting). Anything longer - the Wi-Fi profile,
+# the package list, the wildcard enumerations, the auto-debloat launcher - was
+# written as one Path and could not run. A command over the limit is carried
+# instead: its text, base64, echoed in short pieces into a file under
+# Windows\Temp, then one short command that decodes and runs it. In place, so
+# the order the commands depend on - the default hive loaded before its values,
+# unloaded after - is the order they run in.
+$script:WDSetupPathMax = 259
+
+function Split-WDSetupCommand {
+    param([Parameter(Mandatory)][string]$Command, [Parameter(Mandatory)][int]$Tag)
+    if ($Command.Length -le $script:WDSetupPathMax) { return ,@($Command) }
+
+    # The script to run. A PowerShell command is unwrapped to its own script;
+    # anything else - an operator's own long command - goes to cmd /c with its
+    # command line handed over verbatim, which a single -ArgumentList string is.
+    $body = ''
+    if ($Command -match '^powershell\.exe -NoProfile -ExecutionPolicy Bypass -Command "(.*)"$') { $body = $Matches[1] }
+    else { $body = "Start-Process -FilePath `$env:ComSpec -ArgumentList '/c $(ConvertTo-WDQuotedBody $Command)' -Wait -WindowStyle Hidden" }
+
+    $b64  = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($body))
+    $file = "C:\Windows\Temp\wd-setup-$Tag.b64"
+    $out  = New-Object System.Collections.Generic.List[string]
+    # Base64 holds nothing cmd treats specially, and a space goes before the
+    # redirection: a piece ending in 1 or 2 would otherwise read as a stream
+    # number. Pieces are a multiple of four long, so the last can never be a
+    # bare ON or OFF for echo to take as a switch.
+    $size = 200
+    for ($i = 0; $i -lt $b64.Length; $i += $size) {
+        $piece = $b64.Substring($i, [Math]::Min($size, $b64.Length - $i))
+        $op = $(if ($i -eq 0) { '>' } else { '>>' })
+        $out.Add("cmd /c echo $piece $op$file")
+    }
+    $out.Add("powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `"`$f='$file';`$t=([IO.File]::ReadAllText(`$f)) -replace '\s','';Remove-Item `$f;& ([scriptblock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(`$t))))`"")
+    ,$out.ToArray()
 }
 
 function New-WDRegCommand {
@@ -608,13 +688,16 @@ function New-WDUnattendXml {
     if ($cmds.Count) {
         & $add "    <component name=`"Microsoft-Windows-Deployment`" processorArchitecture=`"$arch`" publicKeyToken=`"31bf3856ad364e35`" language=`"neutral`" versionScope=`"nonSxS`">"
         & $add '      <RunSynchronous>'
-        $n = 1
+        $n = 1; $tag = 0
         foreach ($c in $cmds) {
-            & $add '        <RunSynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">'
-            & $add "          <Order>$n</Order>"
-            & $add "          <Path>$(ConvertTo-WDXmlText $c)</Path>"
-            & $add '        </RunSynchronousCommand>'
-            $n++
+            $tag++
+            foreach ($part in (Split-WDSetupCommand -Command $c -Tag $tag)) {
+                & $add '        <RunSynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">'
+                & $add "          <Order>$n</Order>"
+                & $add "          <Path>$(ConvertTo-WDXmlText $part)</Path>"
+                & $add '        </RunSynchronousCommand>'
+                $n++
+            }
         }
         & $add '      </RunSynchronous>'
         & $add '    </component>'
@@ -732,6 +815,40 @@ function New-WDUnattendXml {
     $sb.ToString()
 }
 
+function Expand-WDUnattendCommands {
+    # The file's text with every carried command appended in the form Setup
+    # will run it, decoded from the pieces Split-WDSetupCommand wrote. Anything
+    # asking "does the file do X" reads this rather than the XML, because a
+    # long command travels as base64 and is in no Path element as itself. The
+    # self test's form checks ask it for the same reason the validator does.
+    param([Parameter(Mandatory)][string]$Xml, $Document)
+
+    $problems = New-Object System.Collections.Generic.List[string]
+    $doc = $Document
+    if (-not $doc) {
+        try { $doc = New-Object System.Xml.XmlDocument; $doc.LoadXml($Xml) } catch {
+            $problems.Add("the file is not valid XML: $($_.Exception.Message)")
+            return [pscustomobject]@{ Text = $Xml; Problems = $problems.ToArray() }
+        }
+    }
+
+    $pieces = @{}
+    foreach ($p in @($doc.GetElementsByTagName('Path'))) {
+        if ([string]$p.InnerText -match '^cmd /c echo (\S+) >>?C:\\Windows\\Temp\\wd-setup-(\d+)\.b64$') {
+            $k = [int]$Matches[2]
+            if (-not $pieces.ContainsKey($k)) { $pieces[$k] = New-Object System.Text.StringBuilder }
+            $null = $pieces[$k].Append($Matches[1])
+        }
+    }
+    $text = $Xml
+    foreach ($k in @($pieces.Keys | Sort-Object)) {
+        try { $text += "`n" + [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($pieces[$k].ToString())) }
+        catch { $problems.Add("carried command $k does not decode: $($_.Exception.Message)") }
+        if ($Xml -notmatch [regex]::Escape("wd-setup-$k.b64';")) { $problems.Add("carried command $k is written out and never run") }
+    }
+    [pscustomobject]@{ Text = $text; Problems = $problems.ToArray() }
+}
+
 function Test-WDUnattendXml {
     param([Parameter(Mandatory)][string]$Xml, $Options)
 
@@ -748,8 +865,24 @@ function Test-WDUnattendXml {
     if ($doc.DocumentElement.Name -ne 'unattend') { $problems.Add('the root element is not <unattend>') }
     if ($doc.DocumentElement.NamespaceURI -ne $script:WDUnattendNs) { $problems.Add('the unattend namespace is wrong') }
 
+    # Setup refuses a Path over 259 characters, so every one is measured - the
+    # check that would have caught the Wi-Fi profile and the auto-debloat
+    # launcher, both written as one Path several times that long.
+    foreach ($p in @($doc.GetElementsByTagName('Path'))) {
+        $len = ([string]$p.InnerText).Length
+        if ($len -gt $script:WDSetupPathMax) { $problems.Add("a command is $len characters long and Windows Setup takes at most $($script:WDSetupPathMax)") }
+    }
+
+    # What the carried commands say, decoded, so the content checks below read
+    # the commands Setup will actually run rather than the base64 they travel in.
+    # Every presence check reads $text: a command long enough to be carried is
+    # in no Path element as itself.
+    $carried = Expand-WDUnattendCommands -Xml $Xml -Document $doc
+    foreach ($cp in $carried.Problems) { $problems.Add($cp) }
+    $text = $carried.Text
+
     if ($Options) {
-        if ($Options.BypassInternet -and $Xml -notmatch 'BypassNRO') {
+        if ($Options.BypassInternet -and $text -notmatch 'BypassNRO') {
             $problems.Add('the internet requirement bypass was asked for and is not in the file')
         }
         if ($Options.BypassMicrosoftAccount) {
@@ -760,10 +893,10 @@ function Test-WDUnattendXml {
                 $problems.Add('the Microsoft account bypass needs a local account and none was written')
             }
         }
-        if ($Options.BypassHardwareChecks -and $Xml -notmatch 'BypassTPMCheck') {
+        if ($Options.BypassHardwareChecks -and $text -notmatch 'BypassTPMCheck') {
             $problems.Add('the hardware requirement bypasses were asked for and are not in the file')
         }
-        if ($Options.PrivacyOff -and $Xml -notmatch 'AllowTelemetry') {
+        if ($Options.PrivacyOff -and $text -notmatch 'AllowTelemetry') {
             $problems.Add('data collection was to be turned off and no telemetry policy was written')
         }
         # Asserted from the other direction: a file that wipes a disk nobody
@@ -773,22 +906,22 @@ function Test-WDUnattendXml {
         }
         # Every field that reaches the file is checked here, or the form grows a
         # control that collects an answer nothing acts on.
-        if ($Options.WifiSsid -and $Xml -notmatch 'wlan add profile') {
+        if ($Options.WifiSsid -and $text -notmatch 'wlan add profile') {
             $problems.Add('a Wi-Fi network was given and no profile is written')
         }
         # RunToolkit as well as RunPreset: RunPreset holds a mode whether or not
         # the section is on, so checking it alone reports every default file as
         # broken.
-        if ([bool]$Options.RunToolkit -and [string]$Options.RunPreset -and $Xml -notmatch 'WinSetupToolkit\.ps1') {
+        if ([bool]$Options.RunToolkit -and [string]$Options.RunPreset -and $text -notmatch 'WinSetupToolkit\.ps1') {
             $problems.Add('the toolkit was to run after Setup and nothing runs it')
         }
         # The copy step and the thing that runs it are two halves, either
         # droppable by an edit to the other. Asserted on the path because the
         # body is base64.
-        if ([bool]$Options.RunToolkit -and [string]$Options.RunPreset -and $Xml -notmatch 'SetupComplete\.cmd') {
+        if ([bool]$Options.RunToolkit -and [string]$Options.RunPreset -and $text -notmatch 'SetupComplete\.cmd') {
             $problems.Add('the toolkit was to run after Setup and no SetupComplete.cmd is written')
         }
-        if (-not [bool]$Options.RunToolkit -and $Xml -match 'Setup\\Scripts\\WinSetupToolkit') {
+        if (-not [bool]$Options.RunToolkit -and $text -match 'Setup\\Scripts\\WinSetupToolkit') {
             $problems.Add('auto-debloat is off and the file runs the toolkit anyway')
         }
         if ([bool]$Options.RunToolkit -and [string]$Options.RunPreset -eq 'profile' -and
@@ -798,7 +931,7 @@ function Test-WDUnattendXml {
         if ($Options.AutoLogon -and $Options.AccountName -and $Xml -notmatch '<AutoLogon>') {
             $problems.Add('automatic sign-in was asked for and is not in the file')
         }
-        if ($Options.EnableRdp -and $Xml -notmatch 'fDenyTSConnections') {
+        if ($Options.EnableRdp -and $text -notmatch 'fDenyTSConnections') {
             $problems.Add('Remote Desktop was to be enabled and nothing enables it')
         }
     }

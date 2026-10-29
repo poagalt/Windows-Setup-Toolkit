@@ -108,6 +108,9 @@ param(
     [string]$UnattendComputer,
     [string]$UnattendLocale,
     [switch]$SetupRun,
+    # A re-apply guard's run: unattended, as SYSTEM, at every sign-in or after
+    # an update. See the console path for what it leaves out.
+    [switch]$GuardRun,
     [string]$SetupResult,
     [string]$ShowRun,
     [string]$LogRoot
@@ -375,7 +378,7 @@ if ($SelfTest) {
     $probe = Resolve-WDPlan -Categories $categories -Selected $allIds -Profile $profileInfo
     # The plan is the selection plus the two steps nobody ticks, counted apart
     # so the line below still says how much of the manifest applies here.
-    $autoSteps = @('close-resurrection', 'restart-explorer')
+    $autoSteps = @('close-resurrection', 'clear-stale-shortcuts', 'restart-explorer')
     $auto  = @($probe | Where-Object { [string]$_.Id -in $autoSteps })
     $probe = @($probe | Where-Object { [string]$_.Id -notin $autoSteps })
     Write-Host "  $(@($probe).Count) of $($allIds.Count) items apply here"
@@ -386,9 +389,35 @@ if ($SelfTest) {
             Write-Host "  PLAN    '$want' was not appended to the plan" -ForegroundColor Red; $failures++
         }
     }
-    # And they are last, after the items whose work they finish.
-    $tail = @($probe | Where-Object { $_.Order -ge 9998 })
-    if ($tail.Count) { Write-Host "  PLAN    a manifest item claims the closing orders" -ForegroundColor Red; $failures++ }
+    # After the items whose work they finish, and - the half that went wrong -
+    # before the two documents, or the rollback script is written from a
+    # journal that does not hold their changes yet. Only the Explorer restart,
+    # which journals nothing, may come after.
+    $tail = @($probe | Where-Object { $_.Order -ge 9980 -and [string]$_.Id -notin @('issues-doc', 'rollback-script') })
+    if ($tail.Count) { Write-Host "  PLAN    $(@($tail.Id) -join ', ') claim the closing orders" -ForegroundColor Red; $failures++ }
+    $orderOf = @{}
+    foreach ($pi in @($auto) + @($probe | Where-Object { [string]$_.Id -in @('issues-doc', 'rollback-script') })) { $orderOf[[string]$pi.Id] = [double]$pi.Order }
+    foreach ($step in @('close-resurrection', 'clear-stale-shortcuts')) {
+        foreach ($doc in @('issues-doc', 'rollback-script')) {
+            if ($orderOf.ContainsKey($step) -and $orderOf.ContainsKey($doc) -and $orderOf[$step] -ge $orderOf[$doc]) {
+                Write-Host "  PLAN    '$step' runs after '$doc', so its changes are missing from it" -ForegroundColor Red; $failures++
+            }
+        }
+    }
+    if ($orderOf.ContainsKey('restart-explorer') -and $orderOf['restart-explorer'] -le [double]$orderOf['rollback-script']) {
+        Write-Host "  PLAN    the Explorer restart is no longer last" -ForegroundColor Red; $failures++
+    }
+    # The replacement browser has to exist before Edge goes, before the default
+    # is handed to it, and before the sweep of installer shortcuts. It ran at 99,
+    # after all three, so on the one machine it exists for - Edge and nothing
+    # else - Edge was removed with nothing to hand the links to.
+    $ord = @{}
+    foreach ($c in $categories) { foreach ($i in @($c.items)) { $ord[[string]$i.id] = [double](Get-Prop $i 'order' 50) } }
+    foreach ($after in @('remove-edge', 'set-default-browser', 'install-no-shortcuts')) {
+        if ($ord.ContainsKey('install-browser') -and $ord.ContainsKey($after) -and $ord['install-browser'] -ge $ord[$after]) {
+            Write-Host "  PLAN    the replacement browser installs at $($ord['install-browser']), after '$after' at $($ord[$after])" -ForegroundColor Red; $failures++
+        }
+    }
     if (@(Resolve-WDPlan -Categories $categories -Selected @('nothing-matches-this') -Profile $profileInfo).Count) {
         Write-Host "  PLAN    an empty selection still produced a plan" -ForegroundColor Red; $failures++
     }
@@ -656,6 +685,150 @@ if ($SelfTest) {
         if (Test-Path -LiteralPath $gp) { Remove-Item -LiteralPath $gp -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    # The residue sweep decides by NAME what to recycle and delete, so its
+    # matcher is asked the cases that went wrong: a vendor's own folder, and a
+    # different product sharing a word.
+    try {
+        $installed = @(
+            [pscustomobject]@{ DisplayName = 'Lenovo Vantage Service'; Publisher = 'Lenovo Group Ltd.'; InstallLocation = 'C:\Program Files\Lenovo\VantageService' }
+            [pscustomobject]@{ DisplayName = 'Microsoft OneDrive';     Publisher = 'Microsoft Corporation'; InstallLocation = '' }
+            [pscustomobject]@{ DisplayName = 'Google Chrome';          Publisher = 'Google LLC'; InstallLocation = '' }
+        )
+        $keep = New-WDResidueKeep -Programs $installed
+        $badR = @()
+        foreach ($case in @(
+            @{ P = 'Lenovo Now';   Pub = 'Lenovo';      Name = 'Lenovo';             Want = $false }
+            @{ P = 'Lenovo Now';   Pub = 'Lenovo';      Name = 'Lenovo Now';         Want = $true }
+            @{ P = 'Lenovo Now';   Pub = 'Lenovo';      Name = 'LenovoNow';          Want = $true }
+            @{ P = 'Google Drive'; Pub = 'Google LLC';  Name = 'Microsoft OneDrive'; Want = $false }
+            @{ P = 'Google Drive'; Pub = 'Google LLC';  Name = 'Google';             Want = $false }
+            @{ P = 'Google Drive'; Pub = 'Google LLC';  Name = 'Google Drive';       Want = $true }
+            @{ P = 'Spotify';      Pub = 'Spotify AB';  Name = 'Spotify';            Want = $true }
+            @{ P = 'Intel(R) Computing Improvement Program'; Pub = 'Intel Corporation'; Name = 'Programs'; Want = $false })) {
+            $m = New-WDResidueMatcher -Program ([pscustomobject]@{ Name = $case.P; Publisher = $case.Pub }) -KeepWords $keep.Words
+            $got = [bool](Test-WDResidueName -Name $case.Name -Matcher $m -KeepWords $keep.Words)
+            if ($got -ne $case.Want) { $badR += "'$($case.Name)' for $($case.P) read as $(if ($got) { 'its leftover' } else { 'not its leftover' })" }
+        }
+        if (-not @($keep.Roots | Where-Object { 'c:\program files\lenovo\vantageservice'.StartsWith($_) -or $_.StartsWith('c:\program files\lenovo\') }).Count) {
+            $badR += 'a still-installed program''s folder is not on the keep list'
+        }
+        if ($badR.Count) {
+            foreach ($b in $badR) { Write-Host "  RESIDUE $b" -ForegroundColor Red }
+            $failures += $badR.Count
+        } else {
+            Write-Host '  OK      residue    vendor folders and other products sharing a word are left alone; a program''s own folder still matches'
+        }
+    } catch {
+        Write-Host "  RESIDUE matcher check failed: $($_.Exception.Message)" -ForegroundColor Red
+        $failures++
+    }
+
+    # The restart hold runs unattended every fifteen minutes for as long as it
+    # is installed, so its decision is asked every case here, and the script it
+    # writes is run for real - against a scratch key, since this changes
+    # nothing.
+    $hp = Join-Path $env:TEMP "wd-selftest-hold-$PID"
+    $hk = "HKCU:\Software\WinSetupToolkitSelfTest\Hold-$PID"
+    try {
+        $bad = New-Object System.Collections.Generic.List[string]
+        $span = { param($w) (($w.End - $w.Start) + 24) % 24 }
+        $covers = { param($w, [int]$h) $s = $w.Start; $e = $w.End
+                    if ($s -lt $e) { ($h -ge $s -and $h -lt $e) } else { ($h -ge $s -or $h -lt $e) } }
+        $rule = { param([int]$f, [int]$t) [pscustomobject]@{ From = $f; To = $t } }
+        for ($h = 0; $h -lt 24; $h++) {
+            foreach ($case in @(
+                @{ In = $true;  A = $null;              O = $null;              Hold = $true }
+                @{ In = $true;  A = (& $rule $h ($h+1)); O = $null;             Hold = $false }
+                @{ In = $true;  A = (& $rule ($h+1) ($h+3)); O = $null;         Hold = $true }
+                @{ In = $false; A = $null;              O = $null;              Hold = $false }
+                @{ In = $false; A = $null;              O = (& $rule $h ($h+2)); Hold = $false }
+                @{ In = $false; A = $null;              O = (& $rule ($h+2) ($h+4)); Hold = $true }
+                @{ In = $true;  A = (& $rule $h $h);     O = $null;             Hold = $true })) {
+                $a = $case.A; $o = $case.O
+                foreach ($r in @($a, $o)) { if ($r) { $r.From = $r.From % 24; $r.To = $r.To % 24 } }
+                $w = Get-WDRestartHoldWindow -Hour $h -SignedIn $case.In -Anyway $a -Only $o
+                if ($w.Hold -ne $case.Hold) { $bad.Add("hour $h signedIn=$($case.In): hold=$($w.Hold), expected $($case.Hold)") }
+                if ((& $span $w) -ne 18) { $bad.Add("hour $h spans $(& $span $w) hours, not 18") }
+                if ((& $covers $w $h) -ne $w.Hold) { $bad.Add("hour $h hold=$($w.Hold) but the window $($w.Start)-$($w.End) says otherwise") }
+                # Windows will not attempt a restart within 65 minutes of active
+                # hours starting, so a release has to keep that start further off
+                # than that at every minute of the hour - 59 past included.
+                if (-not $w.Hold -and (((($w.Start - $h) + 24) % 24) * 60 - 59) -le 65) {
+                    $bad.Add("hour $h released with active hours starting at $($w.Start):00, inside Windows' 65-minute restart buffer")
+                }
+            }
+        }
+        # Past midnight, both ways round.
+        $wrap = & $rule 22 2
+        foreach ($t in @(@{ H = 23; In = $true }, @{ H = 1; In = $true }, @{ H = 2; In = $false }, @{ H = 21; In = $false })) {
+            $w = Get-WDRestartHoldWindow -Hour $t.H -SignedIn $true -Anyway $wrap -Only $null
+            if ($w.Hold -eq $t.In) { $bad.Add("a 22:00-02:00 window at $($t.H):00 read as $(if ($t.In) { 'outside' } else { 'inside' })") }
+        }
+
+        $null = New-Item -ItemType Directory -Path $hp -Force
+        $paths = Get-WDRestartHoldPaths -Root $hp
+        $gen = New-WDRestartHoldRunner -Paths $paths -UxPath $hk
+        Set-Content -LiteralPath $paths.Runner -Value $gen -Encoding UTF8
+        $e = $null
+        [void][System.Management.Automation.Language.Parser]::ParseFile($paths.Runner, [ref]$null, [ref]$e)
+        if ($e -and $e.Count) { $bad.Add("the runner does not parse: $($e[0].Message)") }
+        else {
+            $runHold = {
+                & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $paths.Runner | Out-Null
+                $s = Get-Content -LiteralPath $paths.State -Raw | ConvertFrom-Json
+                $v = Get-ItemProperty -LiteralPath $hk
+                [pscustomobject]@{ S = $s; Start = [int]$v.ActiveHoursStart; End = [int]$v.ActiveHoursEnd
+                                   Smart = [int]$v.SmartActiveHoursState; Hour = ([datetime]$s.when).Hour }
+            }
+            # This session is somebody signed in, unless the test is running
+            # where nobody is - so the expectation is asked, not assumed.
+            $here = (@(Get-WDSignedInSessions).Count -gt 0)
+            $r1 = & $runHold
+            if ([bool]$r1.S.hold -ne $here) { $bad.Add("the runner decided hold=$($r1.S.hold) with sessions=$($r1.S.sessions)") }
+            if ((& $covers ([pscustomobject]@{ Start = $r1.Start; End = $r1.End }) $r1.Hour) -ne [bool]$r1.S.hold) {
+                $bad.Add("the runner wrote $($r1.Start)-$($r1.End), which disagrees with hold=$($r1.S.hold) at $($r1.Hour):00")
+            }
+            if ($r1.Smart -ne 0) { $bad.Add('the runner left automatic active hours on') }
+            # A rule covering this hour has to release a signed-in hold.
+            if ($here) {
+                $h0 = (Get-Date).Hour
+                Set-Content -LiteralPath $paths.Anyway -Value (([pscustomobject]@{ from = $h0; to = ($h0 + 1) % 24 }) | ConvertTo-Json) -Encoding UTF8
+                $r2 = & $runHold
+                if ($r2.Hour -eq $h0 -and [bool]$r2.S.hold) { $bad.Add('an allowed-anyway hour did not release the hold') }
+                if ((& $covers ([pscustomobject]@{ Start = $r2.Start; End = $r2.End }) $r2.Hour) -ne [bool]$r2.S.hold) {
+                    $bad.Add("released, the runner wrote $($r2.Start)-$($r2.End), which still covers $($r2.Hour):00")
+                }
+            }
+        }
+
+        [xml]$tx = New-WDRestartHoldTaskXml -Runner $paths.Runner
+        $trg = @($tx.Task.Triggers.ChildNodes | Where-Object { $_.NodeType -eq 'Element' } | ForEach-Object { $_.LocalName })
+        foreach ($want in @('BootTrigger', 'LogonTrigger', 'SessionStateChangeTrigger', 'EventTrigger', 'TimeTrigger')) {
+            if ($trg -notcontains $want) { $bad.Add("the task has no $want") }
+        }
+        if ([string]$tx.Task.Triggers.EventTrigger.Subscription -notmatch 'Power-Troubleshooter') { $bad.Add('the wake trigger does not listen for a resume') }
+        if ([string]$tx.Task.Triggers.TimeTrigger.Repetition.Interval -ne 'PT15M') { $bad.Add('the task does not repeat every 15 minutes') }
+        if ([string]$tx.Task.Principals.Principal.UserId -ne 'S-1-5-18') { $bad.Add('the task does not run as SYSTEM') }
+        if ([string]$tx.Task.Actions.Exec.Arguments -notlike "*$($paths.Runner)*") { $bad.Add('the task does not run the runner') }
+
+        if ($bad.Count) {
+            foreach ($b in $bad | Select-Object -First 6) { Write-Host "  HOLD    $b" -ForegroundColor Red }
+            $failures += $bad.Count
+        } else {
+            Write-Host "  OK      hold       every hour decides right, the runner holds while signed in and releases on an allowed hour, task wakes on resume"
+        }
+    } catch {
+        Write-Host "  HOLD    restart hold check failed: $($_.Exception.Message)" -ForegroundColor Red
+        $failures++
+    } finally {
+        if (Test-Path -LiteralPath $hp) { Remove-Item -LiteralPath $hp -Recurse -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $hk) { Remove-Item -LiteralPath $hk -Recurse -Force -ErrorAction SilentlyContinue }
+        $parent = 'HKCU:\Software\WinSetupToolkitSelfTest'
+        if ((Test-Path -LiteralPath $parent) -and -not @(Get-ChildItem -LiteralPath $parent).Count) {
+            Remove-Item -LiteralPath $parent -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     # The leftover sweep and the extension removals are only defensible because
     # they go to the Recycle Bin, so prove the round trip rather than trusting
     # it.
@@ -907,7 +1080,12 @@ if ($SelfTest) {
         if (-not (Test-Path -LiteralPath $ptFile)) { $ptBad += 'the file was not created' }
         $ptJson = Get-Content -LiteralPath $ptFile -Raw | ConvertFrom-Json
         if (-not $ptJson.enabled.'PowerToys Run') { $ptBad += 'the module was not switched on' }
-        if (Test-Path -LiteralPath "$ptFile.wdbak") { $ptBad += 'a backup was invented for a file that did not exist' }
+        # One copy per run and option now, named "<file>.<run>.<item>.wdbak".
+        $ptBaks = { @(Get-ChildItem -LiteralPath $ptDir -Filter 'settings.json.*.wdbak' -ErrorAction SilentlyContinue) }
+        if (@(& $ptBaks).Count) { $ptBad += 'a backup was invented for a file that did not exist' }
+        # PowerToys' parser refuses a byte order mark and falls back to defaults,
+        # so a file with one is a setting that was never made.
+        if (Test-WDFileHasBom $ptFile) { $ptBad += 'the file was written with a byte order mark, which PowerToys cannot read' }
 
         # 2. file exists: the second write must leave the first setting alone.
         Set-WDPowerToysJson -Path $ptFile -Context $ptCtx -Seed ([pscustomobject]@{ enabled = [pscustomobject]@{} }) -Edit {
@@ -916,7 +1094,8 @@ if ($SelfTest) {
         $ptJson = Get-Content -LiteralPath $ptFile -Raw | ConvertFrom-Json
         if (-not $ptJson.enabled.'FancyZones')    { $ptBad += 'the second module was not written' }
         if (-not $ptJson.enabled.'PowerToys Run') { $ptBad += 'the second write clobbered the first' }
-        if (-not (Test-Path -LiteralPath "$ptFile.wdbak")) { $ptBad += 'an existing file was replaced without a backup' }
+        if (-not @(& $ptBaks).Count) { $ptBad += 'an existing file was replaced without a backup' }
+        if (Test-WDFileHasBom $ptFile) { $ptBad += 'the rewrite has a byte order mark, which PowerToys cannot read' }
 
         # 3. preview writes nothing at all.
         $ptPrev = Join-Path $ptDir 'preview-only.json'
@@ -985,8 +1164,27 @@ if ($SelfTest) {
         $ctxNone = [pscustomobject]@{ Preview = $true; ItemId = 'selftest-acc'; DefaultHive = $null; Accounts = @() }
         $rAll  = Invoke-WDRegistryAction -Action $act -Context $ctxAll
         $rNone = Invoke-WDRegistryAction -Action $act -Context $ctxNone
-        if ($rAll.Status -eq 'NotPresent') { $acBad += 'an unrestricted per-user write reached no hive' }
-        if ($rNone.Status -ne 'NotPresent') { $acBad += "restricting to no accounts still reported '$($rNone.Status)'" }
+        if ($rAll.Status -in @('NotPresent', 'Skipped')) { $acBad += 'an unrestricted per-user write reached no hive' }
+        # Skipped and saying why, never NotPresent: "nothing to change" is the
+        # success an absent value earns, and a run told to write to no account
+        # once reported fifty per-user options that way while writing nothing.
+        if ($rNone.Status -ne 'Skipped' -or [string]$rNone.Message -notmatch 'account') {
+            $acBad += "restricting to no accounts reported '$($rNone.Status): $($rNone.Message)' rather than saying no account was selected"
+        }
+
+        # How the account boxes start. A machine that has never saved a choice
+        # stores accounts = null, and @(Get-Prop ...) of that is a one-element
+        # list holding nothing - which read as "a choice was saved" and started
+        # every box unticked, so a first run wrote per-user settings nowhere.
+        foreach ($tc in @(
+            @{ N = 'nothing saved';            S = [pscustomobject]@{ theme = 'dark' };                         Want = 'CurrentUser,DefaultProfile' }
+            @{ N = 'a saved null';             S = [pscustomobject]@{ accounts = $null };                       Want = 'CurrentUser,DefaultProfile' }
+            @{ N = 'a saved empty list';       S = ('{"accounts":[]}' | ConvertFrom-Json);                      Want = 'CurrentUser,DefaultProfile' }
+            @{ N = 'a list naming no account here'; S = ('{"accounts":["S-1-5-21-gone"]}' | ConvertFrom-Json); Want = 'CurrentUser,DefaultProfile' }
+            @{ N = 'a deliberate choice';      S = ('{"accounts":["DefaultProfile"]}' | ConvertFrom-Json);      Want = 'DefaultProfile' })) {
+            $got = @(Get-WDInitialAccountTicks -UiState $tc.S -Keys @('CurrentUser', 'DefaultProfile')) -join ','
+            if ($got -ne $tc.Want) { $acBad += "with $($tc.N) the account boxes start as '$got', expected '$($tc.Want)'" }
+        }
 
         if ($acBad.Count) {
             foreach ($b in $acBad) { Write-Host "  ACCOUNTS $b" -ForegroundColor Red }
@@ -1173,9 +1371,11 @@ if ($SelfTest) {
         if ($lost.Count) { $unBad.Add("$($lost.Count) item(s) neither carried nor reported: $(($lost | Select-Object -First 3 | ForEach-Object { $_.id }) -join ', ')") }
 
         # The default hive must be unloaded exactly as often as it is loaded, or
-        # the specialize pass strands the mount.
-        $loads   = ([regex]::Matches($xml, 'reg load ')).Count
-        $unloads = ([regex]::Matches($xml, 'reg unload ')).Count
+        # the specialize pass strands the mount. Counted over the decoded
+        # commands, since a long one travels as base64.
+        $unText  = (Expand-WDUnattendCommands -Xml $xml).Text
+        $loads   = ([regex]::Matches($unText, 'reg load ')).Count
+        $unloads = ([regex]::Matches($unText, 'reg unload ')).Count
         if ($loads -ne $unloads) { $unBad.Add("the default user hive is loaded $loads time(s) and unloaded $unloads") }
 
         # Disks, from both directions: the default must produce no wipe, and
@@ -1766,6 +1966,33 @@ if ($SelfTest) {
                 if ($ugHandled -notcontains $m) { $undoGenBad += "the rollback generator has no case for undo method '$m'" }
             }
             if (@($ugWritten).Count -lt 12) { $undoGenBad += "only $(@($ugWritten).Count) undo methods were found in the modules, so the sweep is not finding them" }
+            # And the script has to be able to DO each one. The generator
+            # emitting a step the script's own executor has no case for is a
+            # line in the journal that is a promise nothing keeps - which is how
+            # register-task, power-scheme, and five others would have shipped.
+            # Read off the AST of Invoke-WDStep's switch, so a case written
+            # anywhere else in the file cannot stand in for it.
+            $ugWinTok = $null; $ugWinErr = $null
+            $ugWinAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $modulePath 'WD.UndoWindow.ps1'), [ref]$ugWinTok, [ref]$ugWinErr)
+            $ugStepFn = $ugWinAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -match '(^|:)Invoke-WDStep$' }, $true)
+            $ugDoable = @()
+            if ($ugStepFn) {
+                foreach ($sw in @($ugStepFn.FindAll({ param($n) $n -is [System.Management.Automation.Language.SwitchStatementAst] }, $true))) {
+                    foreach ($cl in $sw.Clauses) {
+                        if ($cl.Item1 -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $ugDoable += [string]$cl.Item1.Value }
+                    }
+                }
+            } else { $undoGenBad += 'the rollback script has no Invoke-WDStep to check its cases against' }
+            # Listed, not performed, by design: an owner needs the privilege the
+            # standalone script does not take, and a removed Store app has no
+            # route back but the Store.
+            $ugListOnly = @('owner', 'reinstall')
+            # Over what the modules journal, not over $ugHandled: that regex also
+            # catches the state words other switches in WD.Revert return.
+            foreach ($m in $ugWritten) {
+                if ($ugListOnly -contains $m) { continue }
+                if ($ugDoable -notcontains $m) { $undoGenBad += "the rollback script cannot perform undo method '$m' - Invoke-WDStep has no case for it" }
+            }
             # A stranded mount rides along in every later boot, so the two have
             # to balance.
             $ugLoad   = ([regex]::Matches($ugText, 'reg\.exe load')).Count
@@ -1996,6 +2223,20 @@ if ($SelfTest) {
             if (($ugAgain -join ' ') -notmatch '0 change\(s\) put back, 3 were already back') {
                 $undoGenBad += 'running it a second time did not report the changes as already back'
             }
+
+            # Two or more options, the way the Revert page asks. Under -File a
+            # comma list reached -Only as one string, matched nothing, and the
+            # script put nothing back and exited 0 - so every multi-option
+            # revert reported success having done nothing. Both routes now: the
+            # page's own driver, and a hand-typed comma list.
+            Set-ItemProperty -Path $ugKey -Name 'Restore' -Value 9 -Type DWord -Force
+            $null = Invoke-WDRevertPlan -Ops @(@{ Kind = 'rollback'; Path = $ugRun; Only = @('x', 'not-in-this-run'); Name = 'self test' }) -Session (Get-WDSession)
+            $ugMulti = (Get-ItemProperty -LiteralPath $ugKey -Name 'Restore' -ErrorAction SilentlyContinue).Restore
+            if ([int]$ugMulti -ne 1) { $undoGenBad += "the Revert page's driver, asked for two options, left the value at $ugMulti - the ids did not reach the script as a list" }
+            Set-ItemProperty -Path $ugKey -Name 'Restore' -Value 9 -Type DWord -Force
+            $null = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $ugRun -Console -Only 'x,not-in-this-run' 2>&1
+            $ugComma = (Get-ItemProperty -LiteralPath $ugKey -Name 'Restore' -ErrorAction SilentlyContinue).Restore
+            if ([int]$ugComma -ne 1) { $undoGenBad += "a comma list typed after -Only left the value at $ugComma - the script does not split it" }
         } finally {
             Remove-Item -LiteralPath $ugKey -Recurse -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $ugRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -2269,7 +2510,9 @@ if ($SelfTest) {
         if (-not $keepRes -or -not (Test-Path -LiteralPath $keepRes.Path)) {
             Write-Host '  KEEP   the run folder was not created on the desktop' -ForegroundColor Red; $failures++
         } else {
-            if ((Split-Path -Leaf $keepRes.Path) -notlike 'WinSetupToolkit apply *') {
+            # The displayed name, not the identifier: this is a folder somebody
+            # finds on their desktop.
+            if ((Split-Path -Leaf $keepRes.Path) -notlike 'Windows Setup Toolkit apply *') {
                 Write-Host "  KEEP   the folder is called '$(Split-Path -Leaf $keepRes.Path)'" -ForegroundColor Red; $failures++
             }
             # The preview quotes this path rather than the run directory, and
@@ -2524,6 +2767,149 @@ if ($SelfTest) {
         }
     }
 
+    # What a first run on an offline laptop got wrong, asked so it cannot come
+    # back: the internet check answered "Ok" in 0 ms because a name lookup that
+    # fails also finishes the wait, and winget's failures were bare negative
+    # numbers. An .invalid name never resolves, online or off.
+    try {
+        $netBad = @()
+        $nx = Test-WDTcpReachable -HostName 'wd-selftest.invalid' -Port 443 -TimeoutMs 3000
+        if ($nx.Ok) { $netBad += 'a host that cannot exist was reported reachable, so an offline machine reads as online' }
+        if (-not $nx.Why) { $netBad += 'an unreachable host came back with no reason' }
+        $wf = Format-WDWingetFailure -Id 'Google.Chrome' -Result ([pscustomobject]@{
+                  ExitCode = -1978335157; Output = "Failed when opening source(s); try the 'source reset' command`r`n"; Error = '' })
+        if ($wf -notmatch '0x8A15004B' -or $wf -notmatch 'FAILED_TO_OPEN_ALL_SOURCES') { $netBad += "winget's -1978335157 was not named: $wf" }
+        if ($wf -notmatch 'source reset') { $netBad += "winget's own last words were not kept: $wf" }
+        if ($netBad.Count) {
+            foreach ($b in $netBad) { Write-Host "  OFFLINE $b" -ForegroundColor Red }
+            $failures += $netBad.Count
+        } else {
+            Write-Host "  offline      : an unreachable host says so ($($nx.Why)); winget failures carry their name and winget's words"
+        }
+    } catch {
+        Write-Host "  OFFLINE check failed: $($_.Exception.Message)" -ForegroundColor Red
+        $failures++
+    }
+
+    # Unmounting the default profile runs in Invoke-WDPlan's finally, so
+    # anything it emits joins the results. It emitted a $true, and an elevated
+    # run's report counted two entries with every total zero. Unelevated the
+    # hive never mounts, so the path is driven here with a hive that is not
+    # there: the unload is refused, harmlessly, and the function must say nothing.
+    try {
+        $ghost = [pscustomobject]@{ Mounted = $true; HiveKey = 'WD_SELFTEST_NOT_MOUNTED' }
+        $said = @(Dismount-WDDefaultHive -Hive $ghost)
+        $null = Use-WDUserHiveDrive
+        if ($said.Count) {
+            Write-Host "  RESULTS unmounting the default profile emitted $($said.Count) value(s) ($($said -join ', ')), which would join a run's results" -ForegroundColor Red
+            $failures++
+        } else {
+            Write-Host '  results      : unmounting the default profile adds nothing to a run''s results'
+        }
+    } catch {
+        Write-Host "  RESULTS check failed: $($_.Exception.Message)" -ForegroundColor Red
+        $failures++
+    }
+
+    # Turning updates off on a machine that is months behind leaves it on old
+    # security fixes indefinitely - a new laptop is exactly that machine - so the
+    # options that would do it wait until it has caught up. How far behind comes
+    # from the calendar and Windows' own record of its newest update, and these
+    # are the cases that decide it.
+    try {
+        $upBad = @()
+        foreach ($tc in @(
+            @{ N = 'May''s update at the end of October';  B = '2026-05-08'; T = '2026-10-28'; D = 0;  Want = 5 }
+            @{ N = 'September''s update on October 28';     B = '2026-09-05'; T = '2026-10-28'; D = 0;  Want = 1 }
+            @{ N = 'September''s update on November 11';    B = '2026-09-05'; T = '2026-11-11'; D = 0;  Want = 2 }
+            @{ N = 'the same on a 30-day deferral';         B = '2026-09-05'; T = '2026-11-11'; D = 30; Want = 0 }
+            @{ N = 'its own release day';                   B = '2026-10-10'; T = '2026-10-13'; D = 0;  Want = 0 }
+            @{ N = 'a late-month preview';                  B = '2026-09-18'; T = '2026-10-13'; D = 0;  Want = 1 }
+            @{ N = 'a new year';                            B = '2026-12-04'; T = '2027-02-10'; D = 0;  Want = 2 })) {
+            $got = Get-WDUpdatesMissed -Built ([datetime]$tc.B) -Now ([datetime]$tc.T) -DeferDays $tc.D
+            if ($got -ne $tc.Want) { $upBad += "$($tc.N) counted $got missed, expected $($tc.Want)" }
+        }
+
+        # This machine's own record, when there is one. Nothing found is not a
+        # failure - Windows 10, or media with no cumulative update in it - and
+        # reads as unknown, which refuses nothing.
+        $here = Get-WDLatestUpdate
+        $hereText = 'no cumulative update record on this machine'
+        if ($here) {
+            if (-not $here.Kb) { $upBad += 'the newest update was found but carries no KB number' }
+            if ($here.Built -gt (Get-Date).ToUniversalTime().AddDays(2)) { $upBad += "the newest update claims to be built in the future ($($here.Built))" }
+            $hereText = "newest here $($here.Kb), built $($here.Built.ToString('yyyy-MM-dd')), $([string]$profileInfo.UpdatesMissed) missed"
+        }
+
+        $withLag = {
+            param($Missed)
+            $p = $profileInfo.PSObject.Copy()
+            $p | Add-Member -NotePropertyName LatestUpdate      -NotePropertyValue 'KB5089549'  -Force
+            $p | Add-Member -NotePropertyName LatestUpdateBuilt -NotePropertyValue '2026-05-08' -Force
+            $p | Add-Member -NotePropertyName UpdatesMissed     -NotePropertyValue $Missed      -Force
+            $p
+        }
+        $behind = & $withLag 5
+        $caught = & $withLag 1
+        $blind  = & $withLag $null
+        if (Test-WDGuard -Guards @('current') -Profile $behind)        { $upBad += 'a machine five updates behind passed current' }
+        if (-not (Test-WDGuard -Guards @('current') -Profile $caught)) { $upBad += 'a machine one update behind failed current' }
+        if (-not (Test-WDGuard -Guards @('current') -Profile $blind))  { $upBad += 'a machine whose lag is unknown failed current' }
+
+        $held = @()
+        foreach ($c in $categories) {
+            foreach ($it in @($c.items)) { if (@(Get-Prop $it 'refuseUnless' @()).Count) { $held += $it } }
+        }
+        if (-not $held.Count) { $upBad += 'no option is held back on a machine that is behind' }
+        foreach ($it in $held) {
+            $w = [string](Get-WDRefusal -Item $it -Profile $behind)
+            if ($w -notmatch 'May 2026' -or $w -notmatch '\b5\b') { $upBad += "'$($it.id)' was refused without naming the month and the count: '$w'" }
+            if (Get-WDRefusal -Item $it -Profile $caught) { $upBad += "'$($it.id)' was refused on a machine that is caught up" }
+            if (Get-WDRefusal -Item $it -Profile $blind)  { $upBad += "'$($it.id)' was refused on a machine nothing could measure" }
+        }
+
+        # And a run that names one anyway - the command line, or a selection
+        # saved on an up-to-date machine - reports it rather than dropping it.
+        if ($held.Count) {
+            $hid = [string]$held[0].id
+            $upRoot  = Join-Path ([IO.Path]::GetTempPath()) ('wd-up-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+            $null    = New-Item -ItemType Directory -Path $upRoot -Force
+            $upSaved = Get-WDSession
+            try {
+                $null = Initialize-WDSession -Root $upRoot -Preview -QuickEnvironment
+                # Assigned first: the plan comes back as one array, and piped
+                # straight on it would reach Where-Object whole.
+                $full = Resolve-WDPlan -Categories $categories -Selected @($hid) -Profile $behind
+                $plan = @($full | Where-Object { $_.Id -eq $hid })
+                if (-not $plan.Count) {
+                    $upBad += "'$hid' fell out of the plan, so a run naming it would say nothing about it"
+                } else {
+                    $res = Invoke-WDPlan -Plan $plan -Session (Get-WDSession) -Profile $behind
+                    $r = @($res | Where-Object { $_.Id -eq $hid })
+                    if (-not $r.Count -or $r[0].Status -ne 'Skipped' -or [string]$r[0].Message -notmatch 'caught up') {
+                        $upBad += "a run naming '$hid' on a machine five behind reported '$(@($r | ForEach-Object { "$($_.Status): $($_.Message)" }) -join '; ')'"
+                    }
+                }
+                $full2 = Resolve-WDPlan -Categories $categories -Selected @($hid) -Profile $caught
+                $plan2 = @($full2 | Where-Object { $_.Id -eq $hid })
+                if (-not $plan2.Count -or [string]$plan2[0].Refused) { $upBad += "'$hid' was refused in the plan of a machine that is caught up" }
+            } finally {
+                Remove-Item -LiteralPath $upRoot -Recurse -Force -ErrorAction SilentlyContinue
+                if ($upSaved) { $null = Initialize-WDSession -Root $upSaved.Root -Preview -QuickEnvironment }
+            }
+        }
+
+        if ($upBad.Count) {
+            foreach ($b in $upBad) { Write-Host "  UPDATES $b" -ForegroundColor Red }
+            $failures += $upBad.Count
+        } else {
+            Write-Host "  updates      : $($held.Count) option(s) wait while a machine is 2+ monthly updates behind; $hereText"
+        }
+    } catch {
+        Write-Host "  UPDATES check failed: $($_.Exception.Message)" -ForegroundColor Red
+        $failures++
+    }
+
     # GetNewClosure copies the scope the closure is written in and nothing above
     # it, so a handler built inside another scriptblock captures $null.
     Write-Host "`n[6] Closure captures" -ForegroundColor Cyan
@@ -2676,8 +3062,14 @@ if ($SelfTest) {
         foreach ($k in @('DiskUsers','Flat'))             { $null = $have.Add($k) }
 
         # Every palette colour has to become a brush. This is the direction that
-        # actually broke.
-        foreach ($pk in @((Get-WDPalette -Theme 'dark').Keys)) {
+        # actually broke. WD.UI is not imported until [7], so the palette is
+        # built from its own source text rather than from the loaded module -
+        # Get-WDPalette is pure, and this is the function, not a copy of it.
+        $palAst = [System.Management.Automation.Language.Parser]::ParseInput($uiSrc, [ref]$null, [ref]$null)
+        $palFn  = $palAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-WDPalette' }, $false)
+        if (-not $palFn) { throw 'WD.UI.psm1 defines no Get-WDPalette' }
+        $palDark = & ([scriptblock]::Create($palFn.Extent.Text + "`nGet-WDPalette -Theme 'dark'"))
+        foreach ($pk in @($palDark.Keys)) {
             if ($pk -eq 'Dark') { continue }
             if (-not $have.Contains([string]$pk)) { $themeBad += "the palette has '$pk' and `$paintTheme never makes a brush from it" }
         }
@@ -2880,6 +3272,47 @@ if ($SelfTest) {
         else { Write-Host "  OK      theme      dark and light both resolve; unset follows Windows ($(if ($auto.Dark) { 'dark' } else { 'light' }))" }
     } catch {
         Write-Host "  THEME check failed: $($_.Exception.Message)" -ForegroundColor Red
+        $failures++
+    }
+
+    # The window opens inside whatever screen it lands on. Asked of screens this
+    # machine does not have, because the one that went wrong - a laptop at 150%,
+    # 1280 x 672 to work with - is not this one.
+    try {
+        $fitBad = @()
+        $screens = @(
+            @{ Name = 'a large display';            Area = (New-Object Windows.Rect 0, 0, 1706.67, 912) }
+            @{ Name = 'a 1080p laptop at 150%';     Area = (New-Object Windows.Rect 0, 0, 1280, 672) }
+            @{ Name = 'a 1280 x 720 screen at 125%'; Area = (New-Object Windows.Rect 0, 0, 1024, 538) }
+            @{ Name = 'a second monitor to the right'; Area = (New-Object Windows.Rect 1706.67, 0, 1280, 672) }
+        )
+        foreach ($sc in $screens) {
+            $a = $sc.Area
+            $f = Get-WDWindowFit -Width 1320 -Height 860 -MinWidth 1060 -MinHeight 680 -WorkArea $a
+            if ($f.Width -gt $a.Width -or $f.Height -gt $a.Height) { $fitBad += "on $($sc.Name) the window is $($f.Width) x $($f.Height), bigger than the $($a.Width) x $($a.Height) it has" }
+            if ($f.MinWidth -gt $a.Width -or $f.MinHeight -gt $a.Height) { $fitBad += "on $($sc.Name) the minimum size is bigger than the screen, so it can never be made to fit" }
+            if ($f.Width -lt $f.MinWidth -or $f.Height -lt $f.MinHeight) { $fitBad += "on $($sc.Name) the window opens below its own minimum" }
+            if ($f.Left -lt $a.Left -or $f.Top -lt $a.Top -or ($f.Left + $f.Width) -gt $a.Right -or ($f.Top + $f.Height) -gt $a.Bottom) {
+                $fitBad += "on $($sc.Name) the window opens partly off the screen"
+            }
+            if ([Math]::Abs(($f.Left - $a.Left) - ($a.Right - $f.Left - $f.Width)) -gt 1) { $fitBad += "on $($sc.Name) the window is not centred" }
+        }
+        # Where there is room it opens at the size it was designed at.
+        $big = Get-WDWindowFit -Width 1320 -Height 860 -MinWidth 1060 -MinHeight 680 -WorkArea (New-Object Windows.Rect 0, 0, 2560, 1400)
+        if ($big.Width -ne 1320 -or $big.Height -ne 860 -or $big.MinWidth -ne 1060 -or $big.MinHeight -ne 680) {
+            $fitBad += "on a screen with room the window opens at $($big.Width) x $($big.Height) (minimum $($big.MinWidth) x $($big.MinHeight)) rather than as designed"
+        }
+        $here = Get-WDOpeningWorkArea
+        if ($here.Width -le 0 -or $here.Height -le 0) { $fitBad += 'the screen this would open on has no size' }
+        if ($fitBad.Count) {
+            foreach ($b in $fitBad) { Write-Host "  WINDOW  $b" -ForegroundColor Red }
+            $failures++
+        } else {
+            $hf = Get-WDWindowFit -Width 1320 -Height 860 -MinWidth 1060 -MinHeight 680 -WorkArea $here
+            Write-Host ("  OK      window     fits every screen asked about; here it opens at {0} x {1} of {2:n0} x {3:n0}" -f $hf.Width, $hf.Height, $here.Width, $here.Height)
+        }
+    } catch {
+        Write-Host "  WINDOW check failed: $($_.Exception.Message)" -ForegroundColor Red
         $failures++
     }
 
@@ -3120,6 +3553,22 @@ if ($Console) {
     }
 
     $selected = Resolve-Selection
+
+    # A saved selection carries the choices it was saved with - ownership,
+    # vendor downloads, which accounts - and the command line ignored them, so
+    # every re-apply guard (which hands its plan over this way) re-applied
+    # without ownership and to every account whatever the operator had chosen.
+    # A switch named on the command line still wins.
+    $planArgs = @{}
+    if ($ProfilePath) {
+        $saved = Get-WDSelectionOptions -Path $ProfilePath
+        if ($saved) {
+            if (-not $PSBoundParameters.ContainsKey('TakeOwnership')) { $takeOwn = [bool]$saved.TakeOwnership }
+            if (-not $PSBoundParameters.ContainsKey('NoDownloads'))   { $allowDl = [bool]$saved.VendorDownloads }
+            if ($null -ne $saved.Accounts) { $planArgs['Accounts'] = [string[]]@($saved.Accounts) }
+        }
+    }
+
     $session  = Initialize-WDSession -Root $LogRoot -Preview:$Preview
     $plan     = Resolve-WDPlan -Categories $categories -Selected $selected -Profile $profileInfo
 
@@ -3141,7 +3590,13 @@ if ($Console) {
     }
 
     $restorePointState = ''
-    if ($Apply) {
+    if ($Apply -and $GuardRun) {
+        # A guard runs at every sign-in. A restore point each time lifts the
+        # once-a-day throttle and, under the shadow-storage cap, pushes out the
+        # older points - the one taken before the original run among them. A
+        # guard only re-removes what was already chosen, and journals it.
+        $restorePointState = 'skipped'
+    } elseif ($Apply) {
         Write-Host 'Creating a system restore point before making changes...' -ForegroundColor Yellow
         # Reported, not swallowed. System Protection is off on most consumer
         # images, so this fails often enough that a silent skip would leave the
@@ -3156,7 +3611,7 @@ if ($Console) {
         }
     }
 
-    $results = Invoke-WDPlan -Plan $plan -Session $session -Profile $profileInfo `
+    $results = Invoke-WDPlan -Plan $plan -Session $session -Profile $profileInfo @planArgs `
                              -AllowDownloads:$allowDl -AllowOwnership:$takeOwn -Progress {
         param($p)
         if ($p.Phase -eq 'Item' -and $p.Item) {
@@ -3167,12 +3622,28 @@ if ($Console) {
     }
     Write-Progress -Activity 'Done' -Completed
 
-    # No Export-WDUndoScript here: the rollback script is written by the
-    # rollback-script plan item, so it is previewable.
-    $report = Export-WDReport -Results $results -Session $session -Profile $profileInfo -PresetName $Preset
+    # Whether this run changed anything at all: the journal holds a line for
+    # every change and nothing else.
+    $didChange = $false
+    if (-not $Preview) {
+        $jf = [string]$session.JournalFile
+        $didChange = [bool]($jf -and (Test-Path -LiteralPath $jf) -and (Get-Item -LiteralPath $jf).Length -gt 0)
+    }
+
+    # A guard's plan is removals only, so the rollback-script item never rides
+    # with it, and a guard run that did change something had no way back from
+    # the Revert page, which drives these scripts. Written here instead - and
+    # only when there is something in it.
+    if ($GuardRun -and $didChange) {
+        try { $null = Export-WDUndoScript -Items $plan } catch { Write-WDLog "Could not write the rollback script: $($_.Exception.Message)" -Level Warn }
+    }
+
+    # Otherwise no Export-WDUndoScript here: the rollback script is written by
+    # the rollback-script plan item, so it is previewable.
+    $report = Export-WDReport -Results $results -Session $session -Profile $profileInfo -PresetName $Preset -OnlyIfChanged:$GuardRun
     # Only on an apply. A file called "what this run did" describing a preview
     # is the sort of thing somebody finds three weeks later and believes.
-    if (-not $Preview) { $null = Export-WDRunNotes -Items $plan -PresetName $Preset }
+    if (-not $Preview -and (-not $GuardRun -or $didChange)) { $null = Export-WDRunNotes -Items $plan -PresetName $Preset }
 
     # Counted off the results rather than the plan, so an item that changed
     # nothing does not ask for a restart.
@@ -3194,7 +3665,11 @@ if ($Console) {
                                      -RestartCount $needRestart -RestorePoint $restorePointState
     }
     $keep = $null
-    if (-not $Preview) { $keep = Export-WDRunFolder -Session $session -Public:$SetupRun }
+    # Not for a guard. Run as SYSTEM, the desktop resolves to the PUBLIC one, so
+    # every account on the machine got a new "apply" folder at every sign-in.
+    # The guard's own notice says what it re-applied, and the run folder under
+    # ProgramData holds the rest.
+    if (-not $Preview -and -not $GuardRun) { $keep = Export-WDRunFolder -Session $session -Public:$SetupRun }
     # Written twice on a setup run, and the second is the one that counts: the
     # first had nowhere to record where the desktop copy landed.
     if (-not $Preview -and $SetupRun) {
@@ -3220,6 +3695,13 @@ if ($Console) {
     if ($keep -and $keep.AppPath) { Write-Host "  And beside the toolkit itself: $($keep.AppPath)" -ForegroundColor Gray }
     if ($session.RebootNeeded) { Write-Host '  A restart is required to finish.' -ForegroundColor Yellow }
 
+    # A guard run that found nothing to do leaves nothing behind - no Revert
+    # card, no folder - and says so with an exit code of its own, so the runner
+    # does not raise a toast claiming it re-applied anything.
+    if ($GuardRun -and -not $Preview -and -not $didChange) {
+        try { Remove-Item -LiteralPath $session.RunDir -Recurse -Force -ErrorAction Stop } catch { }
+        exit 6
+    }
     exit $(if ($report.counts.failed -gt 0) { 2 } else { 0 })
 }
 

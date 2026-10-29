@@ -69,6 +69,47 @@ $script:WDRunspaceModules = @{
     Storage = @('WD.Core','WD.Detect','WD.Actions','WD.Custom')
 }
 
+function Get-WDOpeningWorkArea {
+    # The usable part of the screen the window opens on - the one holding the
+    # pointer, which is where WPF itself centres a CenterScreen window - in WPF
+    # units. This process is system-DPI aware, so every screen's pixels are at
+    # the system scale and one factor turns them into units.
+    try {
+        $scr = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position)
+        $px  = [double][System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width
+        $dip = [double][Windows.SystemParameters]::PrimaryScreenWidth
+        $k   = 1.0
+        if ($px -gt 0 -and $dip -gt 0) { $k = $px / $dip }
+        $w = $scr.WorkingArea
+        return (New-Object Windows.Rect ($w.X / $k), ($w.Y / $k), ($w.Width / $k), ($w.Height / $k))
+    } catch {
+        return [Windows.SystemParameters]::WorkArea
+    }
+}
+
+function Get-WDWindowFit {
+    # Where a window opens and how big: the size it was designed at where the
+    # screen has room, most of the screen where it has not, and never a minimum
+    # bigger than the screen - a floor taller than the screen is a window that
+    # cannot be made to fit at all. Centred in the work area. Pure, so the self
+    # test can ask it about screens this machine does not have. The rollback
+    # window carries the same rule as Set-WDUndoWindowFit in WD.UndoWindow.ps1,
+    # because that file imports nothing; change one, change both.
+    param([double]$Width, [double]$Height, [double]$MinWidth, [double]$MinHeight,
+          [Windows.Rect]$WorkArea, [double]$Share = 0.94)
+    $aw = [Math]::Max(1.0, $WorkArea.Width)
+    $ah = [Math]::Max(1.0, $WorkArea.Height)
+    $minW = [Math]::Min($MinWidth, $aw)
+    $minH = [Math]::Min($MinHeight, $ah)
+    $w = [Math]::Floor([Math]::Min($aw, [Math]::Max($minW, [Math]::Min($Width,  $aw * $Share))))
+    $h = [Math]::Floor([Math]::Min($ah, [Math]::Max($minH, [Math]::Min($Height, $ah * $Share))))
+    [pscustomobject]@{
+        Width = $w; Height = $h; MinWidth = $minW; MinHeight = $minH
+        Left  = $WorkArea.Left + [Math]::Floor(($aw - $w) / 2)
+        Top   = $WorkArea.Top  + [Math]::Floor(($ah - $h) / 2)
+    }
+}
+
 function Set-WDDialogHost {
     # Where the themed dialogs get their brushes and their owner.
     param($Dictionary, $Owner, [System.Nullable[bool]]$Dark)
@@ -1511,40 +1552,31 @@ $script:Xaml = @'
       <RowDefinition Height="*"/>
     </Grid.RowDefinitions>
 
-    <!-- Title, machine and drive in three tight rows. The title line carries
-         the machine description on its right rather than under it: the drive
-         had to go somewhere and a header three stacked lines deep pushes the
-         list that people came for off the bottom of the screen. -->
+    <!-- Machine and drive on one line. There is no title: the window's own
+         caption already says Windows Setup Toolkit, and a second copy of it a
+         few pixels lower was a whole row of header spent on nothing. -->
     <Border Name="HeaderBar" Grid.Row="0" Padding="20,9,20,8" BorderThickness="0,0,0,1">
-      <StackPanel>
-        <DockPanel LastChildFill="False">
-          <TextBlock Name="HeaderTitle" Text="Windows Setup Toolkit" FontSize="17" FontWeight="SemiBold"
-                     VerticalAlignment="Center"/>
-          <TextBlock Name="HeaderMachine" DockPanel.Dock="Right" FontSize="11.5" VerticalAlignment="Center"
-                     TextTrimming="CharacterEllipsis" Margin="16,0,0,0"/>
+      <DockPanel LastChildFill="True">
+        <TextBlock Name="HeaderMachine" DockPanel.Dock="Left" FontSize="11.5" VerticalAlignment="Center"
+                   TextTrimming="CharacterEllipsis"/>
+        <!-- Permanently on screen, on every page but home: what a run does to
+             the drive is a consequence of choices made on all of them. A bar the
+             width of the window says nothing a quarter of one does not. -->
+        <DockPanel Name="StorageBlock" LastChildFill="True" Margin="24,0,0,0">
+          <Border Name="DiskBarFrame" DockPanel.Dock="Left" BorderThickness="1" Height="12" Width="220"
+                  VerticalAlignment="Center" SnapsToDevicePixels="True" Margin="0,1,12,0">
+            <Grid Name="DiskBar"/>
+          </Border>
+          <TextBlock Name="DiskCap" DockPanel.Dock="Right" FontSize="11.5" VerticalAlignment="Center"
+                     Margin="12,0,0,0"/>
+          <TextBlock Name="DiskNote" FontSize="11.5" VerticalAlignment="Center"
+                     TextTrimming="CharacterEllipsis"/>
         </DockPanel>
-        <!-- Permanently on screen, on every page: what a run does to the drive
-             is a consequence of choices made on all of them. -->
-        <StackPanel Name="StorageBlock" Margin="0,6,0,0">
-          <!-- Bar and figures on one line. A bar the width of the window says
-               nothing a quarter of one does not, and the row it saves is a row
-               of the list. -->
-          <DockPanel LastChildFill="True">
-            <Border Name="DiskBarFrame" DockPanel.Dock="Left" BorderThickness="1" Height="12" Width="220"
-                    VerticalAlignment="Center" SnapsToDevicePixels="True" Margin="0,1,12,0">
-              <Grid Name="DiskBar"/>
-            </Border>
-            <TextBlock Name="DiskCap" DockPanel.Dock="Right" FontSize="11.5" VerticalAlignment="Center"
-                       Margin="12,0,0,0"/>
-            <TextBlock Name="DiskNote" FontSize="11.5" VerticalAlignment="Center"
-                       TextTrimming="CharacterEllipsis"/>
-          </DockPanel>
-          <!-- The Details popup lived here: per-bucket accounting, the slop
-               band, and a "Not counted at all" list. It was a page of storage
-               forensics hanging off a debloat tool, and the bar plus its one
-               sentence carry everything a decision actually needs. -->
-        </StackPanel>
-      </StackPanel>
+        <!-- The Details popup lived here: per-bucket accounting, the slop
+             band, and a "Not counted at all" list. It was a page of storage
+             forensics hanging off a debloat tool, and the bar plus its one
+             sentence carry everything a decision actually needs. -->
+      </DockPanel>
     </Border>
 
     <!-- ============================== HOME PAGE ============================ -->
@@ -2618,6 +2650,22 @@ function Show-WDWindow {
     # FindName later.
     $shell = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader ([xml]$script:Xaml)))
     $win   = $shell
+    # Sized to the screen it opens on. The XAML's 1320 x 860, with a floor of
+    # 1060 x 680, was drawn on a large display; on a laptop at 150% - about
+    # 1280 x 672 to work with - it opened past both edges and its minimum
+    # height kept it from ever being made to fit. Placed by hand, so the
+    # centring uses the size it actually opens at.
+    try {
+        $fit = Get-WDWindowFit -Width $win.Width -Height $win.Height -MinWidth $win.MinWidth -MinHeight $win.MinHeight `
+                               -WorkArea (Get-WDOpeningWorkArea)
+        $win.MinWidth  = $fit.MinWidth
+        $win.MinHeight = $fit.MinHeight
+        $win.Width     = $fit.Width
+        $win.Height    = $fit.Height
+        $win.WindowStartupLocation = 'Manual'
+        $win.Left = $fit.Left
+        $win.Top  = $fit.Top
+    } catch { Write-WDLog "Could not fit the window to the screen, so it opens at its designed size: $($_.Exception.Message)" -Level Warn }
     # Set before the window is shown, so the taskbar button and the title bar
     # are right on the first frame.
     $appIcon = Get-WDAppIcon
@@ -2748,7 +2796,7 @@ function Show-WDWindow {
     }.GetNewClosure()
 
     $ui = @{}
-    foreach ($n in @('Root','HeaderBar','HeaderTitle','HeaderMachine',
+    foreach ($n in @('Root','HeaderBar','HeaderMachine',
                      'PageHome','HomeScroll','TxtHomeHead','HomeGrid',
                      'PageModes','TxtModeHint','ModeScroll','ModeGrid','WarnBox','TxtModeWarning',
                      'BtnModesBack','TxtModesTitle','CmpPickBar','TxtCmpPick','BtnCmpPickCancel',
@@ -2830,7 +2878,7 @@ function Show-WDWindow {
     & $Ref $ui.LoadBox 'Background' 'Card'
     & $Ref $ui.LoadBox 'BorderBrush' 'Line'
     & $Ref $ui.TxtLoadHint 'Foreground' 'Sub'
-    foreach ($t in @('HeaderTitle','TxtPhase','LblPreset','LblFilter','LblOrder','LblSort','LblGroups','TxtCompareTally',
+    foreach ($t in @('TxtPhase','LblPreset','LblFilter','LblOrder','LblSort','LblGroups','TxtCompareTally',
                      'LblCmpGroup','LblCmpSearch','TxtLoadHead','TxtModeHead')) {
         # 'Text', not 'Accent': bold and a point of size already separate these
         # from the muted lines around them.
@@ -3076,6 +3124,17 @@ function Show-WDWindow {
             Feature = $(if ([int](Get-Prop $UiState 'deferFeatureDays' 0) -gt 0) { [int]$UiState.deferFeatureDays } else { 365 })
             Quality = $(if ([int](Get-Prop $UiState 'deferQualityDays' 0) -gt 0) { [int]$UiState.deferQualityDays } else { 7 })
         }
+        # The restart hold's two ranges, as hours 0-23, and the deadline in days.
+        # Wrapped into range on the way in: a picker handed 24 selects nothing.
+        RestartHours = @{
+            AnywayFrom = (([int](Get-Prop $UiState 'restartAnywayFrom' 3) % 24) + 24) % 24
+            AnywayTo   = (([int](Get-Prop $UiState 'restartAnywayTo'   5) % 24) + 24) % 24
+            OnlyFrom   = (([int](Get-Prop $UiState 'restartOnlyFrom'   1) % 24) + 24) % 24
+            OnlyTo     = (([int](Get-Prop $UiState 'restartOnlyTo'     6) % 24) + 24) % 24
+        }
+        Deadline = @{
+            Days = $(if ([int](Get-Prop $UiState 'restartDeadlineDays' 0) -gt 0) { [int]$UiState.restartDeadlineDays } else { 7 })
+        }
         # Remembered between sessions, because it is a decision rather than a
         # state of the machine.
         DefaultBrowser = [string](Get-Prop $UiState 'defaultBrowser' '')
@@ -3232,6 +3291,7 @@ function Show-WDWindow {
             '"recommendations" in File Explorer, Settings, Start'
             'OneDrive (preserves local leftover folders)'
             'Duolingo, Dropbox, Amazon, Instagram, etc'
+            'Update restarts wait until nobody is signed in'
         )
         Balanced = @(
             'Xbox game bar and Xbox startup services'
@@ -3441,6 +3501,18 @@ function Show-WDWindow {
         foreach ($id in $Layer[$Name].Removed) { $null = $Set.Remove($id) }
         foreach ($id in $Layer[$Name].Added)   { $null = $Set.Add($id) }
     }
+    # Options this machine is offered but must not take yet, by id, with the
+    # sentence the row shows - today, turning updates off on a machine that is
+    # behind on them. Treated as an exclusion that is always in force, and ahead
+    # of every other rule, so unticking whatever else blocks the row cannot hand
+    # its tick back. Asked once, from the profile the window was built with; a
+    # run asks the engine again and gets the same sentence.
+    $refusedWhy = @{}
+    foreach ($id in $knownIds) {
+        $why = [string](Get-WDRefusal -Item $allItems[$id] -Profile $Profile)
+        if ($why) { $refusedWhy[$id] = $why }
+    }
+
     # One-directional and stated as such: When wins, Blocks goes, and Why is
     # printed on the row that went.
     $EXCLUSIONS = @(
@@ -3450,12 +3522,21 @@ function Show-WDWindow {
         @{ When   = 'wu-off'
            Blocks = 'wu-notify-first'
            Why    = 'Unavailable while "Turn Windows Update off completely" is selected: both set the same policy value and turning updates off runs last, so this one would be overwritten rather than applied.' }
+        @{ When   = 'wu-off'
+           Blocks = 'wu-restart-deadline'
+           Why    = 'Unavailable while "Turn Windows Update off completely" is selected: with no updates arriving there is nothing for a deadline to count from.' }
+        # A deadline installs and restarts once it passes, whatever the install
+        # policy says - which is the opposite of being asked first.
+        @{ When   = 'wu-notify-first'
+           Blocks = 'wu-restart-deadline'
+           Why    = 'Unavailable while "Ask before downloading updates" is selected: once a deadline passes Windows installs and restarts without asking, which overrides the choice to be asked.' }
     )
 
     # Applied to both id functions: without the second, a preset selecting both
     # halves of a pair reads as modified for a change nobody made.
     $applyExclusions = {
         param($Set)
+        foreach ($id in @($refusedWhy.Keys)) { $null = $Set.Remove([string]$id) }
         foreach ($x in $EXCLUSIONS) {
             if ($Set.Contains([string]$x.When)) { $null = $Set.Remove([string]$x.Blocks) }
         }
@@ -3605,6 +3686,11 @@ function Show-WDWindow {
             deferFeatureDays = [int]$state.DeferDays.Feature
             deferQualityDays = [int]$state.DeferDays.Quality
             defaultBrowser   = [string]$state.DefaultBrowser
+            restartAnywayFrom   = [int]$state.RestartHours.AnywayFrom
+            restartAnywayTo     = [int]$state.RestartHours.AnywayTo
+            restartOnlyFrom     = [int]$state.RestartHours.OnlyFrom
+            restartOnlyTo       = [int]$state.RestartHours.OnlyTo
+            restartDeadlineDays = [int]$state.Deadline.Days
         }
         foreach ($n in $presetDefaults.Keys) {
             $out.presetDefaults | Add-Member -NotePropertyName $n -NotePropertyValue ([pscustomobject]@{
@@ -3743,8 +3829,11 @@ function Show-WDWindow {
 
     # Kept out of the click handler so the self test can drive it without a
     # MessageBox.
+    # Where an edit's time goes, read by the self test when a hand-over is slow.
+    $editMs = [ordered]@{}
     $setOverride = {
         param([string]$Name, [string[]]$Added, [string[]]$Removed)
+        $sw = [Diagnostics.Stopwatch]::StartNew()
         if (@($Added).Count -or @($Removed).Count) {
             $overrides[$Name] = @{ Added = @($Added); Removed = @($Removed) }
         } else {
@@ -3753,8 +3842,11 @@ function Show-WDWindow {
             $overrides.Remove($Name)
         }
         & $recount
+        $editMs['recount'] = $sw.ElapsedMilliseconds; $sw.Restart()
             & $repaintModeGrid
+        $editMs['repaint'] = $sw.ElapsedMilliseconds; $sw.Restart()
         & $saveUiState
+        $editMs['save'] = $sw.ElapsedMilliseconds
     }
     $clearOverrides = {
         $overrides.Clear()
@@ -3816,9 +3908,10 @@ function Show-WDWindow {
         }
     }
 
-    # It used to end by pointing at two footer buttons, one of which is a
-    # home-page card now.
-    $ui.TxtModeHint.Text = 'Each mode does everything the mode before it does, and more. The count on a card leaves out the opt-in options - your own apps, and the quality-of-life changes - because no mode selects those. Pick a mode, then use Show all options on it to read and change every one of them.'
+    # Nathan's own wording, as written on 2026-08-15. It was rewritten without
+    # being asked for on 2026-08-23 and put back on request: this sentence is
+    # Nathan's, so a change to it is Nathan's to make.
+    $ui.TxtModeHint.Text = 'Each mode contains all the options in the mode before it. Total options listed here represent all options except opt-in ones, like user apps and QoL changes. See Advanced for customization and details; see Windows setup completion file for autounattend generator.'
 
     $modeCols = @{}
 
@@ -5508,20 +5601,23 @@ function Show-WDWindow {
         }
 
         # "Defer for [ 30 ] days (max 365)". The ceiling is a fact about the
-        # field rather than the end of the sentence.
-        foreach ($d in @(@{ Id = 'wu-defer-feature'; Key = 'Feature'; Max = 365 },
-                         @{ Id = 'wu-defer-quality'; Key = 'Quality'; Max = 30 })) {
+        # field rather than the end of the sentence. The restart deadline is the
+        # same shape with a different verb, so it is a third line of this table
+        # rather than a copy of the loop.
+        foreach ($d in @(@{ Id = 'wu-defer-feature';    Key = 'Feature'; Max = 365; Label = 'Defer for';            Table = $state.DeferDays },
+                         @{ Id = 'wu-defer-quality';    Key = 'Quality'; Max = 30;  Label = 'Defer for';            Table = $state.DeferDays },
+                         @{ Id = 'wu-restart-deadline'; Key = 'Days';    Max = 30;  Label = 'Restart anyway after'; Table = $state.Deadline })) {
             if (-not $byId.ContainsKey([string]$d.Id)) { continue }
             $box = & $makeStripBox '30'
             $sp = New-Object Windows.Controls.WrapPanel
             $lbl = New-Object Windows.Controls.TextBlock
-            $lbl.Text = 'Defer for'; $lbl.FontSize = 13; $lbl.VerticalAlignment = 'Center'
+            $lbl.Text = [string]$d.Label; $lbl.FontSize = 13; $lbl.VerticalAlignment = 'Center'
             & $Ref $lbl 'Foreground' 'Text'
             $null = $sp.Children.Add($lbl)
             $tb = New-Object Windows.Controls.TextBox
             $tb.Width = 56; $tb.FontSize = 13; $tb.Padding = '6,3'; $tb.Margin = '8,0,8,0'
             $tb.TextAlignment = 'Center'
-            $tb.Text = [string]$state.DeferDays[[string]$d.Key]
+            $tb.Text = [string]$d.Table[[string]$d.Key]
             $null = $sp.Children.Add($tb)
             $unit = New-Object Windows.Controls.TextBlock
             $unit.Text = 'days'; $unit.FontSize = 13; $unit.VerticalAlignment = 'Center'
@@ -5536,7 +5632,7 @@ function Show-WDWindow {
             # Clamped as it is typed, not on the way to the engine, so the box
             # shows the number that will be written. Windows silently ignores a
             # period outside its range.
-            $tb.Tag = @{ Key = [string]$d.Key; Max = [int]$d.Max; State = $state; Save = $saveUiState }
+            $tb.Tag = @{ Key = [string]$d.Key; Max = [int]$d.Max; Table = $d.Table; Save = $saveUiState }
             $tb.Add_LostFocus({
                 $t = $this.Tag
                 $n = 0
@@ -5544,9 +5640,60 @@ function Show-WDWindow {
                 if ($n -lt 1) { $n = 1 }
                 if ($n -gt $t.Max) { $n = $t.Max }
                 $this.Text = [string]$n
-                $t.State.DeferDays[$t.Key] = $n
+                $t.Table[$t.Key] = $n
                 & $t.Save
             }.GetNewClosure())
+            $rowStrips[[string]$d.Id] = $box
+        }
+
+        # "Between [ 3:00 AM ] and [ 5:00 AM ]". Whole hours, because active
+        # hours are whole hours: a picker offering minutes would promise a
+        # precision the hold cannot keep. Labels in the machine's own clock
+        # format, so they read the way the taskbar does.
+        foreach ($d in @(@{ Id = 'wu-restart-anyway-hours'; Key = 'Anyway' },
+                         @{ Id = 'wu-restart-only-hours';   Key = 'Only' })) {
+            if (-not $byId.ContainsKey([string]$d.Id)) { continue }
+            $box = & $makeStripBox '30'
+            $sp = New-Object Windows.Controls.WrapPanel
+            $combos = @{}
+            foreach ($end in @('From', 'To')) {
+                $word = New-Object Windows.Controls.TextBlock
+                $word.Text = $(if ($end -eq 'From') { 'Between' } else { 'and' })
+                $word.FontSize = 13; $word.VerticalAlignment = 'Center'
+                $word.Margin = $(if ($end -eq 'From') { '0,0,8,0' } else { '8,0,8,0' })
+                & $Ref $word 'Foreground' 'Text'
+                $null = $sp.Children.Add($word)
+                # Items carry no brushes of their own: the popup is drawn on a
+                # surface this file owns, and a local Foreground is how white on
+                # white happened before.
+                $cb = New-Object Windows.Controls.ComboBox
+                $cb.Width = 112; $cb.FontSize = 13
+                for ($h = 0; $h -lt 24; $h++) {
+                    $it = New-Object Windows.Controls.ComboBoxItem
+                    $it.Content = Format-WDHour $h
+                    $null = $cb.Items.Add($it)
+                }
+                $cb.SelectedIndex = [int]$state.RestartHours["$($d.Key)$end"]
+                $combos[$end] = $cb
+                $null = $sp.Children.Add($cb)
+            }
+            $box.Child = $sp
+            # Wired after both exist, since each end has to know the other.
+            foreach ($end in @('From', 'To')) {
+                $other = $(if ($end -eq 'From') { 'To' } else { 'From' })
+                $combos[$end].Tag = @{ Key = "$($d.Key)$end"; Other = $combos[$other]; Hours = $state.RestartHours; Save = $saveUiState }
+                $combos[$end].Add_SelectionChanged({
+                    $t = $this.Tag
+                    if (-not $t -or $this.SelectedIndex -lt 0) { return }
+                    $t.Hours[$t.Key] = [int]$this.SelectedIndex
+                    # Equal ends would be no hours at all, so the other end
+                    # steps forward rather than the pick being refused.
+                    if ([int]$t.Other.SelectedIndex -eq [int]$this.SelectedIndex) {
+                        $t.Other.SelectedIndex = ([int]$this.SelectedIndex + 1) % 24
+                    }
+                    & $t.Save
+                })
+            }
             $rowStrips[[string]$d.Id] = $box
         }
 
@@ -5614,7 +5761,10 @@ function Show-WDWindow {
     # These two follow their row's visibility alone and not its tick: the number
     # is the whole of what the option does, so it is worth setting before
     # deciding whether to take it.
-    $STRIP_ALWAYS = @('wu-defer-feature', 'wu-defer-quality')
+    # The two restart ranges are the same case: "still allow restarts between
+    # set hours" with no hours beside it is half a sentence.
+    $STRIP_ALWAYS = @('wu-defer-feature', 'wu-defer-quality', 'wu-restart-deadline',
+                      'wu-restart-anyway-hours', 'wu-restart-only-hours')
 
     # Every strip follows its own row's tick and visibility. One loop rather
     # than a handler per strip.
@@ -5961,17 +6111,19 @@ function Show-WDWindow {
         })
     }
     if ($accountList.Count) {
-        $savedAccounts = @(Get-Prop $UiState 'accounts' $null)
+        # A stored choice wins; nothing stored means everything. Asked of
+        # Get-WDInitialAccountTicks rather than @(Get-Prop ...), which turned a
+        # fresh machine's null into a one-element list and started every box
+        # unticked - the first run on a new laptop then wrote no per-user
+        # setting anywhere.
+        $startTicked = @(Get-WDInitialAccountTicks -UiState $UiState -Keys @($accountList | ForEach-Object { [string]$_.Key }))
         foreach ($acc in $accountList) {
             $cb = New-Object Windows.Controls.CheckBox
             $cb.Content = $(if ($acc.Kind -eq 'future') { $acc.Name } else { "$($acc.Name)" })
             $cb.FontSize = 13; $cb.Margin = '0,3,0,0'
             & $Ref $cb 'Foreground' 'Text'
             $cb.ToolTip = $acc.Note
-            # A stored choice wins; nothing stored means everything, which is
-            # what this did before the choice existed.
-            $cb.IsChecked = $(if ($null -eq $savedAccounts -or -not @($savedAccounts).Count) { $true }
-                              else { [string]$acc.Key -in @($savedAccounts) })
+            $cb.IsChecked = ([string]$acc.Key -in $startTicked)
             $null = $ui.AccountsBlock.Children.Add($cb)
             $accountChecks.Add([pscustomobject]@{ Key = [string]$acc.Key; Box = $cb; Kind = [string]$acc.Kind })
         }
@@ -6078,12 +6230,12 @@ function Show-WDWindow {
                      '  Runs whenever the rest of the run removes an app, a Windows feature, or a Windows capability.',
                      '',
                      '  Deprovisions what was uninstalled, so a later Windows update cannot stage it again for a new account.',
-                     '  Sets the four ContentDeliveryManager values under HKCU that reinstall bundled apps at the next sign-in.',
-                     '  Sets the DisableWindowsConsumerFeatures policy, which is what re-adds promoted apps after an update.',
+                     '  Sets the four ContentDeliveryManager values that reinstall bundled apps at the next sign-in, for every account and for accounts made later.',
+                     '  On Enterprise and Education only, sets the DisableWindowsConsumerFeatures policy, which re-adds promoted apps after an update. Pro and Home ignore that policy, so it is not written there.',
                      '  Disables the scheduled tasks under \Microsoft\Windows\PushToInstall.',
                      '  Disables the edgeupdate and edgeupdatem services, but only when Edge itself is gone - an un-updating browser is worse than the thing it guards against.',
                      '',
-                     'Revertible: fully') }
+                     'Revertible: partially') }
         @{ Name = 'Restart Explorer to apply shell changes'
            Text  = @('WHAT THIS CHANGES',
                      '  Stops and restarts explorer.exe once, at the end of every run.',
@@ -6600,7 +6752,7 @@ function Show-WDWindow {
         if (-not $snap.Priced) {
             $ui.DiskNote.Text = "Measuring what is on $($snap.Drive)."
         } elseif ($hit.Freed -le 0 -and $hit.Added -le 0) {
-            $ui.DiskNote.Text = "$($snap.Drive) is $($snap.UsedPercent)% full. Nothing selected changes that."
+            $ui.DiskNote.Text = "$($snap.Drive) is $($snap.UsedPercent)% full."
         } else {
             $net    = $hit.Added - $hit.Freed
             $band   = $hit.Slop
@@ -6633,19 +6785,33 @@ function Show-WDWindow {
     # Enforced before anything counts, so the tally, the deltas, and the storage
     # bar all describe the selection that survives the rules.
     $syncExclusions = {
+        # Decided per blocked row, not per rule. Two rules can block one row -
+        # the restart deadline has two - and walked rule by rule, the second,
+        # not in force, handed back the tick the first had just taken away.
+        $why = @{}
+        # First, so a refusal is the reason that sticks: the rules below only
+        # fill a row that has none yet.
+        foreach ($rid in @($refusedWhy.Keys)) {
+            if ($rowById[[string]$rid]) { $why[[string]$rid] = [string]$refusedWhy[$rid] }
+        }
         foreach ($x in $EXCLUSIONS) {
             $src = $rowById[[string]$x.When]
-            $dst = $rowById[[string]$x.Blocks]
-            if (-not $src -or -not $dst) { continue }
-            $off = [bool]$src.Check.IsChecked
-            if ($off -eq [bool]$dst.Gated) { continue }
+            $b   = [string]$x.Blocks
+            if (-not $src -or -not $rowById[$b]) { continue }
+            if (-not $why.ContainsKey($b)) { $why[$b] = '' }
+            if (-not $why[$b] -and [bool]$src.Check.IsChecked) { $why[$b] = [string]$x.Why }
+        }
+        foreach ($b in @($why.Keys)) {
+            $dst = $rowById[$b]
+            $off = [bool]$why[$b]
+            if ($off -eq [bool]$dst.Gated -and (-not $off -or [string]$dst.Gate.Text -eq [string]$why[$b])) { continue }
             $dst.Gated = $off
             if ($off) {
                 $dst.Check.IsChecked = $false
                 $dst.Check.IsEnabled = $false
                 $dst.Panel.Cursor    = 'Arrow'
                 $dst.Panel.Opacity   = 0.75
-                $dst.Gate.Text       = [string]$x.Why
+                $dst.Gate.Text       = [string]$why[$b]
                 $dst.Gate.Visibility = 'Visible'
             } else {
                 # Absent wins: a row with nothing to act on stays inert whatever
@@ -8027,23 +8193,41 @@ function Show-WDWindow {
     }.GetNewClosure())
 
     $ui.BtnTheme.Add_Click({
+        # Where the time goes, kept on the window: the self test reports it when
+        # a switch is slow, so the answer to "why" is a reading, not a guess.
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        $ms = [ordered]@{}
+        $mark = { param([string]$Step) $ms[$Step] = $sw.ElapsedMilliseconds; $sw.Restart() }
         $state.Theme = $(if ($state.Theme -eq 'dark') { 'light' } else { 'dark' })
         & $saveUiState
+        & $mark 'save'
 
         $pal = Get-WDPalette -Theme $state.Theme
         & $paintTheme $pal
+        & $mark 'paint'
         # The dialogs read the same dictionary, so their brushes follow on their
         # own; what they cannot work out is the title bar.
         Set-WDDialogHost -Dark ([bool]$pal.Dark)
         $ui.BtnTheme.Content = $(if ($pal.Dark) { 'Switch to light theme' } else { 'Switch to dark theme' })
-        # The icon follows the palette, so it is rebuilt and reassigned here.
-        # Cached per theme, so switching back is free.
-        try {
-            $newIcon = Get-WDAppIcon -Theme $state.Theme
-            if ($newIcon) { $win.Icon = $newIcon }
-        } catch {
-            Write-WDLog "Could not re-theme the window icon: $($_.Exception.Message)" -Level Warn
-        }
+        & $mark 'dialogs'
+        # The icon follows the palette, so it is rebuilt and reassigned - after
+        # the repaint rather than in front of it. The first build for a theme is
+        # most of a second (it was half of a 2-second switch), the page is what
+        # somebody is watching, and the taskbar button catching up a moment
+        # later is the right way round. Cached per theme, so switching back is
+        # free either way.
+        $themeNow = [string]$state.Theme
+        $winNow   = $win
+        $setIcon  = {
+            try {
+                $newIcon = Get-WDAppIcon -Theme $themeNow
+                if ($newIcon) { $winNow.Icon = $newIcon }
+            } catch {
+                Write-WDLog "Could not re-theme the window icon: $($_.Exception.Message)" -Level Warn
+            }
+        }.GetNewClosure()
+        $null = $win.Dispatcher.BeginInvoke([Windows.Threading.DispatcherPriority]::Background, [Action]$setIcon)
+        & $mark 'icon'
         $win.Tag.Mica = [bool](Set-WDWindowBackdrop -Window $win -Dark ([bool]$pal.Dark))
         if ($win.Tag.Mica) {
             $win.Background     = [Windows.Media.Brushes]::Transparent
@@ -8051,7 +8235,10 @@ function Show-WDWindow {
         } else {
             & $Ref $ui.Root 'Background' 'Bg'
         }
+        & $mark 'backdrop'
         if ($win.Tag.Busy) { & $win.Tag.Busy.Retheme $pal }
+        & $mark 'overlay'
+        $win.Tag.ThemeMs = $ms
     }.GetNewClosure())
 
     # Two doors into the item list, so what opening it means lives in one place.
@@ -8301,9 +8488,12 @@ function Show-WDWindow {
 
     $compareAdd = {
         param([string]$Id, [string]$Target, [string]$From)
+        $sw = [Diagnostics.Stopwatch]::StartNew()
         & $compareEdit $Id $Target $false
+        $tEdit = $sw.ElapsedMilliseconds; $sw.Restart()
         $cmpDone.Add(@{ Id = $Id; From = $From; Target = $Target })
         & $cmpRefs.Build
+        $cmpRefs.Ms = "edit $tEdit ($(@($editMs.Keys | ForEach-Object { "$_ $($editMs[$_])" }) -join ', ')), compare rebuild $($sw.ElapsedMilliseconds)"
         $nm = [string]$(if ($itemName.ContainsKey($Id)) { $itemName[$Id] } else { $Id })
         & $cmpSayNote "Added $nm to $Target." 'Ok'
     }.GetNewClosure()
@@ -10724,12 +10914,24 @@ function Show-WDWindow {
         # used to switch to it as well, which dropped somebody into two hundred
         # rows before the confirmation.
         if (-not $RunItNow) { & $showPage 'PageRevert' }
-        & $revertBusy
-        & $pumpFrame
+        # Cleared only when it is about to be rebuilt. $revertBuildBusy returns
+        # early on a cached reading, so clearing first left the second visit
+        # to the same run an empty page - no rows, and Revert disabled.
+        if (-not ($revCache.Built -and $revCache.Sel -eq [string]$revertPick.Sel)) {
+            & $revertBusy
+            & $pumpFrame
+        }
         & $revertBuildBusy
-        # Rows arrive ticked, so "revert everything" is the page as it stands.
-        # $startRevert asks for confirmation itself.
-        if ($RunItNow) { & $startRevert }
+        # Rows arrive ticked, so "revert everything" is the page as it stands -
+        # on a fresh build. A cached one keeps whatever was unticked on an
+        # earlier visit, so every row that can be put back is ticked again
+        # first: the button says everything. $startRevert asks for
+        # confirmation itself.
+        if ($RunItNow) {
+            foreach ($rr in $revertRows) { if ($rr.Check.IsEnabled) { $rr.Check.IsChecked = $true } }
+            & $revPaintCounts
+            & $startRevert
+        }
     }
     $revHomeRef = @{ Paint = $null }
     $buildRevertHome = {
@@ -10856,7 +11058,12 @@ function Show-WDWindow {
             # to change it back.
             if (-not $s.Can) {
                 $why = New-Object Windows.Controls.TextBlock
-                $why.Text = 'Its rollback script has been deleted, so nothing from it can be put back.'
+                # The run's own reason: deleted, or from an earlier build whose
+                # script cannot be told which options to put back.
+                $note = ''
+                if (@($s.Runs).Count -eq 1) { $note = [string](@($s.Runs)[0].ScriptNote) }
+                if (-not $note) { $note = 'Its rollback script has been deleted, so nothing from it can be put back.' }
+                $why.Text = $note
                 $why.FontSize = 12; $why.TextWrapping = 'Wrap'; $why.Margin = '0,8,0,0'
                 & $refFn $why 'Foreground' 'Warn'
                 $null = $foot.Children.Add($why)
@@ -12336,7 +12543,11 @@ function Show-WDWindow {
         $pay = $null
         if ($items) { $pay = Get-WDUnattendPayload -Items $items }
         $xml = New-WDUnattendXml -Options $o -Payload $pay
-        [pscustomobject]@{ Options = $o; Xml = $xml; Check = (Test-WDUnattendXml -Xml $xml -Options $o) }
+        # Text is the file with every long command decoded out of the base64
+        # it is carried in - what to search when asking whether the file does
+        # something, since a carried command is in no Path element as itself.
+        [pscustomobject]@{ Options = $o; Xml = $xml; Text = (Expand-WDUnattendCommands -Xml $xml).Text
+                           Check = (Test-WDUnattendXml -Xml $xml -Options $o) }
     }.GetNewClosure()
 
     # Built before the page is shown, not after. It used to swap pages, pump a
@@ -13319,6 +13530,27 @@ function Show-WDWindow {
             } catch {
                 Write-WDLog "The tool check could not run before the apply: $($_.Exception.Message)" -Level Warn
             }
+            # Said before the button, not discovered in the report: with no
+            # account ticked, every per-user setting in the selection writes
+            # nothing. A first run on a new laptop did exactly that to fifty of
+            # them, silently.
+            try {
+                if (-not @(& $accountKeys).Count) {
+                    $selSet = New-WDStringSet $Selection
+                    $perUser = 0
+                    foreach ($c in $Categories) {
+                        foreach ($it in @($c.items)) {
+                            if (-not $selSet.Contains([string]$it.id)) { continue }
+                            if (@(@($it.actions) | Where-Object { [string](Get-Prop $_ 'scope' '') -ieq 'allusers' }).Count) { $perUser++ }
+                        }
+                    }
+                    if ($perUser) {
+                        $msg += "`n`nNO ACCOUNT IS TICKED under which accounts per-user settings are written to, so $perUser selected option$(if ($perUser -ne 1) { 's' }) will change nothing. Tick an account under How the run behaves on the Advanced page first."
+                    }
+                }
+            } catch {
+                Write-WDLog "Could not count the per-user options before the apply: $($_.Exception.Message)" -Level Warn
+            }
             # Asked of the selection rather than asserted: "a rollback script
             # will be created" stopped being unconditionally true when it became
             # a row.
@@ -13356,6 +13588,11 @@ function Show-WDWindow {
                 # The handler falls back to picking one itself when this is
                 # absent, so the command line behaves as it always did.
                 defaultBrowser   = [string]$state.DefaultBrowser
+                restartAnywayFrom   = [int]$state.RestartHours.AnywayFrom
+                restartAnywayTo     = [int]$state.RestartHours.AnywayTo
+                restartOnlyFrom     = [int]$state.RestartHours.OnlyFrom
+                restartOnlyTo       = [int]$state.RestartHours.OnlyTo
+                restartDeadlineDays = [int]$state.Deadline.Days
             }
         } catch {
             Write-WDLog "Could not record the run options: $($_.Exception.Message)" -Level Warn
@@ -13522,7 +13759,13 @@ function Show-WDWindow {
         foreach ($run in @(@($revertPick.Runs) | Sort-Object When -Descending)) {
             $rid = [string]$run.Id
             if (-not $byRun.ContainsKey($rid)) { continue }
-            if (-not $run.UndoFile) { $noScript.Add($run.When.ToString('d MMM yyyy, HH:mm')); continue }
+            # Named with its reason, since "deleted" and "from a build that can
+            # only put back the whole run" call for different things.
+            if (-not $run.UndoFile) {
+                $why = [string]$run.ScriptNote
+                $noScript.Add("$($run.When.ToString('d MMM yyyy, HH:mm'))$(if ($why) { " ($($why.TrimEnd('.')))" })")
+                continue
+            }
             $ops.Add(@{
                 Kind = 'rollback'; Path = $run.UndoFile; Only = @($byRun[$rid])
                 Name = "Put back $($byRun[$rid].Count) option(s) from $($run.When.ToString('d MMM yyyy, HH:mm'))"
@@ -13530,16 +13773,15 @@ function Show-WDWindow {
         }
 
         if (-not $ops.Count) {
-            Show-WDMessage (("Nothing selected can be put back from here. " +
-                             "The runs it belongs to have no rollback script left."),
+            Show-WDMessage (("Nothing selected can be put back from here: " + ($noScript -join '; ') + '.'),
                             'Windows Setup Toolkit', 'OK', 'Warning') | Out-Null
             return
         }
         # Said before the button rather than discovered in the report.
         $ask = "Revert $($picked.Count) option(s) across $($ops.Count) step(s)?"
         if ($noScript.Count) {
-            $ask += "`n`n$($noScript.Count) of the runs involved have no rollback script left, so their share cannot be put back: " +
-                    ($noScript -join ', ') + '.'
+            $ask += "`n`n$($noScript.Count) of the runs involved cannot be driven from here, so their share is not put back: " +
+                    ($noScript -join '; ') + '.'
         }
         if ((Show-WDMessage ($ask, 'Confirm', 'YesNo', 'Warning')) -ne 'Yes') { return }
         $ops = @($ops)
@@ -13941,8 +14183,11 @@ function Show-WDWindow {
     $selfTest = @{ Failures = 0 }
     if ($SelfTestSeconds -gt 0) {
         # The harness lives in WD.UITest, which nothing else imports: an
-        # ordinary launch pays neither the import nor the parse.
-        Import-Module (Join-Path $PSScriptRoot 'WD.UITest.psm1') -Force -DisableNameChecking
+        # ordinary launch pays neither the import nor the parse. Global, because
+        # the tick below is a GetNewClosure block, which resolves commands
+        # against its own module and then global - imported here only, the
+        # harness is invisible to the one line that calls it.
+        Import-Module (Join-Path $PSScriptRoot 'WD.UITest.psm1') -Force -DisableNameChecking -Global
         $refs = [pscustomobject]@{
             accountChecks          = $accountChecks
             accountKeys            = $accountKeys
@@ -13967,6 +14212,7 @@ function Show-WDWindow {
             buildGroups            = $buildGroups
             buildRevert            = $buildRevert
             Categories             = $Categories
+            CHECKED                = $CHECKED
             catHeaders             = $catHeaders
             checkSelection         = $checkSelection
             clearCmpFilters        = $clearCmpFilters
@@ -13978,6 +14224,7 @@ function Show-WDWindow {
             cmpChips               = $cmpChips
             cmpDone                = $cmpDone
             cmpHead                = $cmpHead
+            cmpRefs                = $cmpRefs
             cmpSpyRef              = $cmpSpyRef
             cmpState               = $cmpState
             consequence            = $consequence
@@ -14022,6 +14269,8 @@ function Show-WDWindow {
             presetSelection        = $presetSelection
             pumpRun                = $pumpRun
             recordApplied          = $recordApplied
+            refusedWhy             = $refusedWhy
+            repaintModeGrid        = $repaintModeGrid
             registerLoaded         = $registerLoaded
             renameLoadedTo         = $renameLoadedTo
             reportDropped          = $reportDropped
@@ -14926,6 +15175,9 @@ Export-ModuleMember -Function Show-WDWindow, Get-WDPalette, New-WDGridLength, Ge
                               # then global, never against the one that defined
                               # it.
                               Get-WDSplashMachineLine,
+                              # The self test asks the fit about screens this
+                              # machine does not have.
+                              Get-WDWindowFit, Get-WDOpeningWorkArea,
                               # Every dialog goes through these, and most of the
                               # calls are inside GetNewClosure blocks.
                               Show-WDMessage, Set-WDDialogHost,

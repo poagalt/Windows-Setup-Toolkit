@@ -15,6 +15,31 @@ function Get-Prop {
     $p.Value
 }
 
+# The inside of a single-quoted PowerShell string, for anything this toolkit
+# writes as source - the rollback script, the guard runners, answer-file
+# commands. All FOUR single-quote characters are doubled, not only the ASCII
+# one: the tokenizer treats the curly quotes as quotes too, so a previous value
+# holding a typographic apostrophe ended its literal early and the whole
+# generated script stopped parsing at that line. Measured, not assumed.
+function ConvertTo-WDQuotedBody {
+    param([string]$Text)
+    [string]$Text -replace "['‘’‚‛]", '$0$0'
+}
+
+# Whether Windows servicing is waiting on a restart - asked at the moment of
+# use, not once per run, because a run makes it true: removing a Windows
+# capability leaves one pending, and Reserved Storage and the component store
+# cleanup both refuse until it is done. Counting SessionsPending rather than
+# testing for it, since the key is present and empty on a settled machine.
+function Test-WDServicingPending {
+    $cbs = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing'
+    try {
+        if (Test-Path -LiteralPath (Join-Path $cbs 'RebootPending')) { return $true }
+        if (@(Get-ChildItem -LiteralPath (Join-Path $cbs 'SessionsPending') -ErrorAction SilentlyContinue).Count) { return $true }
+    } catch { }
+    $false
+}
+
 # The status vocabulary every executor shares. Anything not in this list is a
 # bug.
 $script:StatusOrder = @{
@@ -42,6 +67,82 @@ namespace WD {
 
         [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
         public static extern void SetCurrentProcessExplicitAppUserModelID(string AppID);
+
+        [DllImport("powrprof.dll")]
+        static extern uint CallNtPowerInformation(int level, IntPtr input, uint inLen, byte[] output, uint outLen);
+
+        // One byte of SYSTEM_POWER_CAPABILITIES (level 4, 76 bytes): 5 is
+        // SystemS3, 20 is AoAc - Modern Standby. -1 when it cannot be asked.
+        // The language-free answer to the question powercfg /a only answers in
+        // words.
+        public static int PowerCapability(int offset) {
+            byte[] b = new byte[76];
+            if (CallNtPowerInformation(4, IntPtr.Zero, 0, b, (uint)b.Length) != 0) { return -1; }
+            if (offset < 0 || offset >= b.Length) { return -1; }
+            return b[offset];
+        }
+
+        // The graphics kernel's own answers, which dxdiag also reads: whether
+        // any adapter can schedule its own work (hardware-accelerated GPU
+        // scheduling), and how many overlay planes any display output offers.
+        // Layouts from d3dkmthk.h; 70 is KMTQAITYPE_WDDM_2_7_CAPS, checked
+        // against dxdiag on a real machine rather than counted off a header.
+        [StructLayout(LayoutKind.Sequential)]
+        struct KmtAdapterInfo { public uint hAdapter; public uint LuidLow; public int LuidHigh; public uint NumOfSources; public int bPrecisePresentRegionsPreferred; }
+        [StructLayout(LayoutKind.Sequential)]
+        struct KmtEnumAdapters2 { public uint NumAdapters; public IntPtr pAdapters; }
+        [StructLayout(LayoutKind.Sequential)]
+        struct KmtQueryAdapterInfo { public uint hAdapter; public int Type; public IntPtr pPrivateDriverData; public uint PrivateDriverDataSize; }
+        [StructLayout(LayoutKind.Sequential)]
+        struct KmtMpoCaps { public uint hAdapter; public uint VidPnSourceId; public uint MaxPlanes; public uint MaxRGBPlanes; public uint MaxYUVPlanes; public uint OverlayCaps; public float MaxStretchFactor; public float MaxShrinkFactor; }
+        [StructLayout(LayoutKind.Sequential)]
+        struct KmtCloseAdapter { public uint hAdapter; }
+
+        [DllImport("gdi32.dll")] static extern int D3DKMTEnumAdapters2(ref KmtEnumAdapters2 e);
+        [DllImport("gdi32.dll")] static extern int D3DKMTQueryAdapterInfo(ref KmtQueryAdapterInfo q);
+        [DllImport("gdi32.dll")] static extern int D3DKMTGetMultiPlaneOverlayCaps(ref KmtMpoCaps c);
+        [DllImport("gdi32.dll")] static extern int D3DKMTCloseAdapter(ref KmtCloseAdapter c);
+
+        // { HAGS supported on any adapter, HAGS on on any adapter that supports
+        // it, the most overlay planes on any output } - 1/0 for the first two,
+        // a count for the third, and -1 for anything that could not be asked.
+        public static int[] GpuCaps() {
+            int[] r = new int[] { -1, -1, -1 };
+            try {
+                KmtEnumAdapters2 e = new KmtEnumAdapters2();
+                if (D3DKMTEnumAdapters2(ref e) != 0 || e.NumAdapters == 0) { return r; }
+                int sz = Marshal.SizeOf(typeof(KmtAdapterInfo));
+                IntPtr buf = Marshal.AllocHGlobal(sz * (int)e.NumAdapters);
+                IntPtr cap = Marshal.AllocHGlobal(4);
+                try {
+                    e.pAdapters = buf;
+                    if (D3DKMTEnumAdapters2(ref e) != 0) { return r; }
+                    for (int i = 0; i < (int)e.NumAdapters; i++) {
+                        KmtAdapterInfo a = (KmtAdapterInfo)Marshal.PtrToStructure(new IntPtr(buf.ToInt64() + (long)i * sz), typeof(KmtAdapterInfo));
+                        Marshal.WriteInt32(cap, 0);
+                        KmtQueryAdapterInfo q = new KmtQueryAdapterInfo();
+                        q.hAdapter = a.hAdapter; q.Type = 70; q.pPrivateDriverData = cap; q.PrivateDriverDataSize = 4;
+                        if (D3DKMTQueryAdapterInfo(ref q) == 0) {
+                            int v = Marshal.ReadInt32(cap);
+                            if (r[0] < 0) { r[0] = 0; r[1] = 0; }
+                            if ((v & 1) != 0) { r[0] = 1; if ((v & 2) != 0) { r[1] = 1; } }
+                        }
+                        for (uint s = 0; s < a.NumOfSources; s++) {
+                            KmtMpoCaps c = new KmtMpoCaps();
+                            c.hAdapter = a.hAdapter; c.VidPnSourceId = s;
+                            if (D3DKMTGetMultiPlaneOverlayCaps(ref c) == 0 && (int)c.MaxPlanes > r[2]) { r[2] = (int)c.MaxPlanes; }
+                        }
+                        KmtCloseAdapter cl = new KmtCloseAdapter();
+                        cl.hAdapter = a.hAdapter;
+                        D3DKMTCloseAdapter(ref cl);
+                    }
+                } finally {
+                    Marshal.FreeHGlobal(buf);
+                    Marshal.FreeHGlobal(cap);
+                }
+            } catch { }
+            return r;
+        }
     }
 }
 '@
@@ -865,6 +966,23 @@ function Write-WDRunEnvironment {
     $info
 }
 
+function Test-WDSystemProtectionOn {
+    # $true or $false for whether System Protection is on for a drive, $null
+    # when that cannot be read (it needs elevation). A protected volume is
+    # listed by its volume GUID under the restore client's entry in SPP\Clients,
+    # which is what System Properties reads.
+    param([string]$Drive = $env:SystemDrive)
+    try {
+        $letter = ([string]$Drive).TrimEnd('\')
+        $vol = [string](Get-CimInstance Win32_Volume -Filter "DriveLetter='$letter'" -ErrorAction Stop).DeviceID
+        if ($vol -notmatch '(\{[0-9a-fA-F\-]{36}\})') { return $null }
+        $g = $Matches[1]
+        $key = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SPP\Clients' -ErrorAction Stop
+        $list = @($key.'{09F7EDC5-294E-4180-AF6A-FB0E6A0E9513}')
+        return [bool]@($list | Where-Object { [string]$_ -like "*$g*" }).Count
+    } catch { return $null }
+}
+
 function New-WDRestorePoint {
     param([string]$Description = 'Windows Setup Toolkit - before debloat')
 
@@ -873,12 +991,24 @@ function New-WDRestorePoint {
         return New-WDResult -Status Skipped -Message 'Preview mode'
     }
 
-    try {
-        $drive = "$env:SystemDrive\"
-        Write-WDLog "Enabling System Protection on $drive" -Level Info
-        Enable-ComputerRestore -Drive $drive -ErrorAction Stop
-    } catch {
-        Write-WDLog "Could not enable System Protection: $($_.Exception.Message)" -Level Warn
+    # Switching System Protection on is a change to the machine - it reserves
+    # shadow storage and keeps restore points from then on - and it was made
+    # silently and journalled nowhere. It is still made, because without it
+    # there is no restore point, but it is journalled when this is what turned
+    # it on, so the rollback can turn it off again.
+    $drive = "$env:SystemDrive\"
+    $wasOn = Test-WDSystemProtectionOn
+    if ($wasOn -ne $true) {
+        try {
+            Write-WDLog "Enabling System Protection on $drive" -Level Info
+            Enable-ComputerRestore -Drive $drive -ErrorAction Stop
+            if ($wasOn -eq $false -and (Test-WDSystemProtectionOn) -eq $true) {
+                Add-WDJournal -ItemId 'restore-point' -Type 'system-protection' -Target $drive -Status 'Changed' `
+                              -Undo @{ method = 'system-protection-off'; name = $drive }
+            }
+        } catch {
+            Write-WDLog "Could not enable System Protection: $($_.Exception.Message)" -Level Warn
+        }
     }
 
     # Restoring a saved setting has three cases, not two: it was this, it was
@@ -916,7 +1046,21 @@ function New-WDRestorePoint {
 
     try {
         Write-WDLog 'Creating system restore point...' -Level Info
-        Checkpoint-Computer -Description $Description -RestorePointType MODIFY_SETTINGS -ErrorAction Stop
+        # On a runspace with a ceiling, because VSS can sit on this for as long
+        # as it likes and the run would sit with it. BeginStop rather than Stop:
+        # Stop waits for a pipeline inside a native call to unwind, which is the
+        # very wait this exists to put a limit on.
+        $rp = [powershell]::Create()
+        $null = $rp.AddCommand('Checkpoint-Computer').AddParameter('Description', $Description).
+                    AddParameter('RestorePointType', 'MODIFY_SETTINGS').AddParameter('ErrorAction', 'Stop')
+        $h = $rp.BeginInvoke()
+        if (-not $h.AsyncWaitHandle.WaitOne([TimeSpan]::FromMinutes(10))) {
+            $null = $rp.BeginStop($null, $null)
+            throw 'Windows did not finish creating the restore point within ten minutes'
+        }
+        $null = $rp.EndInvoke($h)
+        if ($rp.Streams.Error.Count) { throw $rp.Streams.Error[0].Exception }
+        $rp.Dispose()
         Write-WDLog 'Restore point created.' -Level Success
         $result = New-WDResult -Status Changed -Message 'Restore point created'
     } catch {
@@ -942,8 +1086,14 @@ function Backup-WDRegistryKey {
 
     if (-not $script:Session -or $script:Session.Preview) { return }
 
-    # Accept both PS-drive and native forms.
-    $native = $Path -replace '^HKLM:\\', 'HKLM\' -replace '^HKCU:\\', 'HKCU\' `
+    # Accept the PS-drive, provider-qualified, and native forms. The
+    # provider form was missing, so reg.exe was handed
+    # "Registry::HKEY_USERS\.DEFAULT\..." - the default-account writes - and
+    # refused it; the journal still held the undo, the .reg copy was lost.
+    $native = $Path -replace '^Registry::', '' `
+                    -replace '^HKEY_LOCAL_MACHINE\\', 'HKLM\' -replace '^HKEY_CURRENT_USER\\', 'HKCU\' `
+                    -replace '^HKEY_CLASSES_ROOT\\', 'HKCR\' -replace '^HKEY_USERS\\', 'HKU\' `
+                    -replace '^HKLM:\\', 'HKLM\' -replace '^HKCU:\\', 'HKCU\' `
                     -replace '^HKCR:\\', 'HKCR\' -replace '^HKU:\\',  'HKU\'
 
     $safe = ($native -replace '[\\/:*?"<>|]', '_')
@@ -951,8 +1101,9 @@ function Backup-WDRegistryKey {
     $out  = Join-Path $script:Session.RegDir "$safe.reg"
     if (Test-Path -LiteralPath $out) { return $out }
 
-    $psPath = $native -replace '^HKLM\\', 'HKLM:\' -replace '^HKCU\\', 'HKCU:\' `
-                      -replace '^HKCR\\', 'HKCR:\' -replace '^HKU\\',  'HKU:\'
+    # Through the provider rather than a drive: HKU: exists only once something
+    # has created it, and the provider takes the short hive names directly.
+    $psPath = "Registry::$native"
     if (-not (Test-Path -LiteralPath $psPath)) { return }   # nothing to back up
 
     # reg.exe prints failures to the console, so capture both streams or a
@@ -1142,9 +1293,12 @@ function Write-WDFinding {
 }
 
 function Register-WDUninstalled {
-    param([string]$Name, [string]$InstallLocation)
+    # The publisher as well, because the residue sweep must never take the
+    # vendor's name for the product's: "Lenovo Now" is not a reason to touch
+    # everything called Lenovo.
+    param([string]$Name, [string]$InstallLocation, [string]$Publisher)
     $script:UninstalledThisRun.Add([pscustomobject]@{
-        Name = $Name; InstallLocation = $InstallLocation
+        Name = $Name; InstallLocation = $InstallLocation; Publisher = $Publisher
     })
 }
 
@@ -1230,6 +1384,39 @@ function Test-WDRecycleAvailable {
         $null = $drive
         $true
     } catch { $false }
+}
+
+function Remove-WDFileUndoable {
+    # One file out of the way with a journalled route back, or the reason it
+    # was left where it is. Answers '' on success.
+    #
+    # The Recycle Bin is per-account, and a run as SYSTEM - every re-apply
+    # guard - recycled into $Recycle.Bin\S-1-5-18, which no person can open:
+    # journalled as restorable from the bin, and restorable by nobody. As
+    # SYSTEM the file is parked in the run folder instead and the undo moves
+    # it back.
+    param([Parameter(Mandatory)][string]$Path, [string]$ItemId = '')
+
+    try {
+        $sys = $false
+        try { $sys = [Security.Principal.WindowsIdentity]::GetCurrent().IsSystem } catch { }
+        if ($sys -and $script:Session -and $script:Session.RunDir) {
+            $park = Join-Path $script:Session.RunDir 'parked'
+            if (-not (Test-Path -LiteralPath $park)) { $null = New-Item -ItemType Directory -Path $park -Force -ErrorAction Stop }
+            $dest = Join-Path $park ('{0}-{1}' -f [guid]::NewGuid().ToString('N').Substring(0, 8), (Split-Path $Path -Leaf))
+            Move-Item -LiteralPath $Path -Destination $dest -Force -ErrorAction Stop
+            Add-WDJournal -ItemId $ItemId -Type 'file' -Target $Path -Status 'Removed' `
+                          -Undo @{ method = 'rename'; from = $dest; to = $Path }
+            return ''
+        }
+        if (-not (Test-WDRecycleAvailable -Path $Path)) { return 'no Recycle Bin on that volume, left in place' }
+        if (-not (Remove-WDToRecycleBin -Path $Path))   { return 'could not be moved to the Recycle Bin' }
+        Add-WDJournal -ItemId $ItemId -Type 'file' -Target $Path -Status 'Removed' `
+                      -Undo @{ method = 'recycle'; path = $Path }
+        ''
+    } catch {
+        $_.Exception.Message
+    }
 }
 
 $script:PendingDeleteReady = $false

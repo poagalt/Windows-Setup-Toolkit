@@ -8,25 +8,87 @@
                            "items":  [
                                          {
                                              "id":  "wu-no-restart-signed-in",
-                                             "settingsPath": "Settings > Windows Update > Advanced options.",
-                                             "symptoms": ["pc not restarting for updates", "updates waiting to restart"],
+                                             "settingsPath": "Undo this option from the toolkit, which also puts your own active hours back. By hand: delete the Windows Setup Toolkit Restart Hold task in Task Scheduler, then set Active hours in Settings > Windows Update > Advanced options.",
+                                             "symptoms": ["pc not restarting for updates", "updates waiting to restart", "restart pending for days", "update needs restart", "updates not finishing", "restart required to finish updating", "active hours keep changing", "active hours changed by themselves", "cannot change active hours", "get me up to date turned off"],
                                              "name":  "Never restart while someone is signed in",
-                                             "desc":  "Windows waits for the machine to be idle and signed out instead of restarting under you.",
-                                             "risk":  0,
+                                             "desc":  "While anyone is signed in, even locked or away, an update waits for everybody to sign out before it restarts.",
+                                             "overhead":  "A small task runs for under a second every 15 minutes, and at sign-in, unlock, and wake.",
+                                             "risk":  1,
+                                             "riskNote":  "This really does hold the restart. Somebody who stays signed in - a locked screen counts - is never restarted on for an update, so a security fix that needs a restart waits until they restart or sign out. Restart for overdue security updates puts a limit on that; without it, restart now and then yourself. It works by moving Windows' own active hours, so the Active hours setting in Settings keeps changing by itself, and it keeps Get me up to date off. One gap: a computer asleep for longer than about 16 hours can be restarted when Windows wakes it to finish an update, because Windows decides within seconds of waking, before the hold can run. Stop scheduled tasks waking the machine closes that gap.",
+                                             "revert":  "full",
                                              "default":  true,
+                                             "order":  69,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "script",
+                                                                 "handler":  "HoldUpdateRestarts"
+                                                             }
+                                                         ],
+                                             "tier":  1
+                                         },
+                                         {
+                                             "id":  "wu-restart-anyway-hours",
+                                             "requires":  "wu-no-restart-signed-in",
+                                             "settingsPath": "Undo this option from the toolkit. The hold above then goes back to waiting for everybody to sign out.",
+                                             "symptoms": ["pc restarted overnight", "restarted while signed in", "restarted while locked", "lost work after update restart", "update restarted at night", "open programs closed overnight"],
+                                             "name":  "Still allow restarts between set hours",
+                                             "desc":  "Inside the hours below the hold steps aside, so a computer left signed in overnight can still finish its updates.",
+                                             "risk":  1,
+                                             "riskNote":  "Inside these hours an update can restart the computer with somebody signed in, and Windows does not save what they had open. It only happens if the computer is awake then.",
+                                             "revert":  "full",
+                                             "default":  false,
                                              "order":  70,
                                              "actions":  [
                                                              {
-                                                                 "type":  "registry",
-                                                                 "scope":  "machine",
-                                                                 "values":  [
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU",
-                                                                                    "name":  "NoAutoRebootWithLoggedOnUsers",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  1
-                                                                                }
-                                                                            ]
+                                                                 "type":  "script",
+                                                                 "handler":  "SetRestartHoldHours",
+                                                                 "rule":  "anyway",
+                                                                 "from":  3,
+                                                                 "to":  5
+                                                             }
+                                                         ],
+                                             "tier":  0
+                                         },
+                                         {
+                                             "id":  "wu-restart-only-hours",
+                                             "requires":  "wu-no-restart-signed-in",
+                                             "settingsPath": "Undo this option from the toolkit. The hold above then lets a restart happen as soon as everybody has signed out.",
+                                             "symptoms": ["pc not restarting after sign out", "restart waiting for night", "update restart only at night"],
+                                             "name":  "When nobody is signed in, restart only between set hours",
+                                             "desc":  "Once everybody has signed out, the restart still waits for the hours below.",
+                                             "risk":  0,
+                                             "revert":  "full",
+                                             "default":  false,
+                                             "order":  70,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "script",
+                                                                 "handler":  "SetRestartHoldHours",
+                                                                 "rule":  "only",
+                                                                 "from":  1,
+                                                                 "to":  6
+                                                             }
+                                                         ],
+                                             "tier":  0
+                                         },
+                                         {
+                                             "id":  "wu-restart-deadline",
+                                             "guards":  ["!edition:home"],
+                                             "settingsPath": "Undo this option from the toolkit. Settings has no page for it - it is the Specify deadline for automatic updates and restarts for quality update policy.",
+                                             "symptoms": ["pc restarted for updates", "forced restart", "forced update restart", "restart deadline", "update restart countdown", "restart in 15 minutes", "your organization requires a restart", "some settings are managed by your organization"],
+                                             "name":  "Restart for overdue security updates",
+                                             "desc":  "Windows' own deadline: once a monthly update has waited the days below, it restarts for it after a 15-minute warning, hold or no hold.",
+                                             "risk":  1,
+                                             "riskNote":  "When the deadline passes Windows restarts after a 15-minute warning, signed in or not, at whatever hour that is - overnight included, so a job left running can be cut off - and what was left open is not saved. Restarting yourself when a restart is pending, before the deadline, keeps it from ever firing. That is the point: it stops Never restart while someone is signed in from keeping a security fix waiting for ever. Annual feature updates get no deadline. With a deadline set, Windows also installs monthly updates as soon as they are offered, and treats the machine as managed, so new features that arrive in monthly updates stay off until the next annual update. Home editions ignore this policy, so the option is not offered there.",
+                                             "revert":  "full",
+                                             "default":  true,
+                                             "order":  72,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "script",
+                                                                 "handler":  "SetRestartDeadline",
+                                                                 "days":  7,
+                                                                 "grace":  2
                                                              }
                                                          ],
                                              "tier":  1
@@ -58,10 +120,11 @@
                                          },
                                          {
                                              "id":  "wu-restart-nags",
-                                             "settingsPath": "Undo the run.",
-                                             "symptoms": ["no restart reminder", "missed an update restart"],
-                                             "name":  "Restart reminders and notifications",
-                                             "desc":  "Stops the 'restart now' toasts and the full-screen reminder after an update installs.",
+                                             "guards":  ["!edition:home"],
+                                             "settingsPath": "Undo the run. It is the Display options for update notifications policy, so Settings has no switch for it.",
+                                             "symptoms": ["no update notifications", "not told about updates", "missed an update", "no update available notification"],
+                                             "name":  "Update notifications, except restart warnings",
+                                             "desc":  "Turns off Windows Update's toasts about updates being available, downloading, and installed. The warning before a restart Windows has scheduled still appears.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  72,
@@ -71,20 +134,14 @@
                                                                  "scope":  "machine",
                                                                  "values":  [
                                                                                 {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Microsoft\\WindowsUpdate\\UX\\Settings",
-                                                                                    "name":  "SetAutoRestartNotificationDisable",
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate",
+                                                                                    "name":  "SetUpdateNotificationLevel",
                                                                                     "kind":  "DWord",
                                                                                     "value":  1
                                                                                 },
                                                                                 {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Microsoft\\WindowsUpdate\\UX\\Settings",
-                                                                                    "name":  "RestartNotificationsAllowed2",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  0
-                                                                                },
-                                                                                {
                                                                                     "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate",
-                                                                                    "name":  "SetAutoRestartNotificationDisable",
+                                                                                    "name":  "UpdateNotificationLevel",
                                                                                     "kind":  "DWord",
                                                                                     "value":  1
                                                                                 }
@@ -92,7 +149,7 @@
                                                              }
                                                          ],
                                              "tier":  2,
-                                             "riskNote":  "You stop being told a restart is pending. The restart still happens eventually, so this trades a warning for quiet - check Windows Update yourself now and then."
+                                             "riskNote":  "You stop being told updates are waiting, so check Windows Update yourself now and then. Restart warnings are deliberately kept: with Restart for overdue security updates ticked, the warning before its restart is the only notice you get. It is a policy, so Settings says some settings are managed by your organization. Home editions ignore it, so the option is not offered there."
                                          },
                                          {
                                              "id":  "wu-no-drivers",
@@ -122,7 +179,8 @@
                                          },
                                          {
                                              "id":  "wu-defer-feature",
-                                             "settingsPath": "Settings > Windows Update > Advanced options, and clear the feature update deferral. Undoing the run does the same.",
+                                             "guards":  ["!edition:home"],
+                                             "settingsPath": "Undo this option from the toolkit. Windows 11 Settings has no page for it - it is the Select when Preview Builds and Feature Updates are received policy.",
                                              "symptoms": ["not offered new windows", "cannot upgrade windows", "feature update missing", "stuck on old version", "windows 11 upgrade not offered", "version update not showing", "no new version", "update deferred"],
                                              "name":  "Defer annual feature updates",
                                              "desc":  "Holds the annual Windows version upgrade back. Monthly security updates keep arriving normally. 365 days unless you set your own below.",
@@ -138,11 +196,12 @@
                                                              }
                                                          ],
                                              "tier":  4,
-                                             "riskNote":  "A feature update is the one thing that reliably undoes a debloat, which is why this is here - but a version that goes out of support stops getting security updates entirely. Windows also force-installs a feature update once your build is near end of service, deferral or not. Home editions ignore this policy."
+                                             "riskNote":  "A feature update is the one thing that reliably undoes a debloat, which is why this is here - but a version that goes out of support stops getting security updates entirely, so keep an eye on its end-of-service date. It is a policy, so Settings says some settings are managed by your organization, and Windows treats the machine as managed: new features that arrive in monthly updates stay off until the next annual update. Home editions ignore this policy, so the option is not offered there."
                                          },
                                          {
                                              "id":  "wu-defer-quality",
-                                             "settingsPath": "Settings > Windows Update > Advanced options, and clear the quality update deferral. Undoing the run does the same.",
+                                             "guards":  ["!edition:home"],
+                                             "settingsPath": "Undo this option from the toolkit. Windows 11 Settings has no page for it - it is the Select when Quality Updates are received policy.",
                                              "symptoms": ["updates late", "updates delayed", "no updates yet", "patch tuesday missing", "security update late", "updates not appearing", "update held back"],
                                              "name":  "Defer monthly security updates",
                                              "desc":  "Delays quality updates, so a bad patch has time to be pulled before it reaches this machine. 7 days unless you set your own below.",
@@ -158,11 +217,12 @@
                                                              }
                                                          ],
                                              "tier":  0,
-                                             "riskNote":  "Opt-in because it delays security patches. Seven days of exposure to something already being exploited is a real cost, and it buys you avoiding a bad patch that would probably have been pulled anyway. Home editions ignore this policy."
+                                             "riskNote":  "Opt-in because it delays security patches. Seven days of exposure to something already being exploited is a real cost, and it buys you avoiding a bad patch that would probably have been pulled anyway. Home editions ignore this policy, so the option is not offered there."
                                          },
                                          {
                                              "id":  "wu-notify-first",
-                                             "settingsPath": "Settings > Windows Update > Advanced options, and let updates download automatically again.",
+                                             "refuseUnless":  ["current"],
+                                             "settingsPath": "Undo the run. It is the Configure Automatic Updates policy, so Settings > Windows Update says your organization manages updates while it is in place.",
                                              "symptoms": ["updates not downloading", "update waiting for me", "auto update off", "updates need clicking", "no automatic updates"],
                                              "name":  "Ask before downloading updates",
                                              "desc":  "Windows notifies you that updates are available and waits, instead of downloading and installing on its own.",
@@ -190,29 +250,22 @@
                                                              }
                                                          ],
                                              "tier":  0,
-                                             "riskNote":  "Nothing installs until you say so, which means nothing installs if you stop looking. This is the option that leaves machines years behind on patches. Home editions ignore it. Do not tick this and 'Turn Windows Update off' together - they set the same value and the last one wins."
+                                             "riskNote":  "Nothing installs until you say so, which means nothing installs if you stop looking. This is the option that leaves machines years behind on patches. Microsoft documents this policy for Pro and above, so a Home edition may ignore it. Turn Windows Update off completely rules this one out, since the two set the same value."
                                          },
                                          {
                                              "id":  "wu-other-products",
                                              "settingsPath": "Settings > Windows Update > Advanced options, and turn on updates for other Microsoft products.",
                                              "symptoms": ["office not updating", "other products not updating", "microsoft apps out of date"],
                                              "name":  "Updates for other Microsoft products",
-                                             "desc":  "Stops Windows Update also servicing Office and other Microsoft software.",
+                                             "desc":  "Stops Windows Update also servicing Office and other Microsoft software, the same way the Settings switch does.",
                                              "risk":  1,
                                              "default":  false,
                                              "order":  77,
+                                             "revert":  "full",
                                              "actions":  [
                                                              {
-                                                                 "type":  "registry",
-                                                                 "scope":  "machine",
-                                                                 "values":  [
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate",
-                                                                                    "name":  "AllowMUUpdateService",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  0
-                                                                                }
-                                                                            ]
+                                                                 "type":  "script",
+                                                                 "handler":  "DisableMicrosoftUpdateService"
                                                              }
                                                          ],
                                              "tier":  0,
@@ -220,11 +273,12 @@
                                          },
                                          {
                                              "id":  "wu-off",
+                                             "refuseUnless":  ["current"],
                                              "settingsPath": "Settings > Windows Update. If it says your organization manages updates, undo the run - that removes the policy.",
                                              "symptoms": ["no updates", "updates not working", "windows update broken", "update bugged", "windows update not working", "cannot update windows", "updates not downloading", "update stuck", "no security updates", "update service not running", "windows not updating", "update error", "managed by your organization", "update button missing", "auto update broken", "automatic updates off", "updates not installing", "update check fails"],
                                              "bloat": 6,
                                              "name":  "Turn Windows Update off completely",
-                                             "desc":  "Sets the policy that stops Windows checking for, downloading, or installing anything.",
+                                             "desc":  "Turns off automatic updates. Nothing downloads or installs unless you open Windows Update and ask for it.",
                                              "risk":  2,
                                              "default":  false,
                                              "order":  78,
@@ -243,7 +297,7 @@
                                                              }
                                                          ],
                                              "tier":  0,
-                                             "riskNote":  "This one is genuinely dangerous and no preset selects it. The machine stops receiving security updates, including fixes for flaws being exploited right now, and it will not tell you. Defender definitions still arrive through their own channel, which is the only thing standing between you and the internet afterwards. The services themselves are left running and are never disabled by this toolkit, so undoing it puts you straight back on updates."
+                                             "riskNote":  "This one is genuinely dangerous and no preset selects it. The machine stops installing security updates on its own, including fixes for flaws being exploited right now, and it will not remind you. Defender definitions still arrive through their own channel, which is the only thing standing between you and the internet afterwards. The services themselves are left running and are never disabled by this toolkit, so undoing it puts you straight back on updates. Microsoft documents this policy for Pro and above, so a Home edition may ignore it."
                                          }
                                      ]
                        }

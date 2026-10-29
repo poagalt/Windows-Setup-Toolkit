@@ -24,6 +24,7 @@ $script:ProtectedAppx = @(
     'Microsoft.AsyncTextService'                  # touch keyboard / text input
     'Microsoft.Ink.*'                             # handwriting recognition packs
     'Microsoft.CommandPalette', 'Microsoft.Windows.PeopleExperienceHost'
+    'Microsoft.WindowsTerminal'                   # Windows 11's default host for console windows
     # Media codecs - removing these silently breaks video and image playback
     'Microsoft.HEIFImageExtension', 'Microsoft.HEVCVideoExtension', 'Microsoft.VP9VideoExtensions'
     'Microsoft.WebMediaExtensions', 'Microsoft.WebpImageExtension', 'Microsoft.RawImageExtension'
@@ -56,12 +57,18 @@ $script:ProtectedVendorTools = @{
     lenovo    = @('Lenovo Vantage*', 'Lenovo Commercial Vantage*', 'Lenovo System Interface*',
                   'Lenovo Utility*', 'Lenovo Hotkey*', 'Legion*', 'Lenovo Power*', 'Lenovo Intelligent*',
                   'LenovoVantage*', 'VantageService*')
+    # MyDell and myHP are where consumer Dell and HP laptops keep their thermal
+    # modes (and, on Dell, the battery charging policy) since Dell Power Manager
+    # and HP Command Center folded into them. ScreenXpert drives the ASUS
+    # ScreenPad, and Splendid owns the panel's colour modes.
     dell      = @('Dell Power Manager*', 'Dell Command*', 'Dell Optimizer*', 'Dell Thermal*',
-                  'Dell Display Manager*', 'Dell Pair*')
+                  'Dell Display Manager*', 'Dell Pair*', 'MyDell*')
     hp        = @('HP Power Manager*', 'HP Hotkey*', 'HP System Event Utility*', 'HP Firmware*',
-                  'HP Programmable Key*', 'HP Thermal*', 'HP Audio*', 'HP Display*')
-    asus      = @('Armoury Crate*', 'ASUS System Control Interface*', 'MyASUS Service*',
-                  'ASUS Framework*', 'ASUS Smart Display*')
+                  'HP Programmable Key*', 'HP Thermal*', 'HP Audio*', 'HP Display*', 'myHP*',
+                  'HP Command Center*', 'OMEN Gaming Hub*')
+    asus      = @('Armoury Crate*', 'ASUS System Control Interface*', 'MyASUS*',
+                  'ASUS Framework*', 'ASUS Smart Display*', 'ScreenXpert*', 'ASUS ScreenXpert*',
+                  'ASUS Splendid*', 'MyASUS Splendid*')
     acer      = @('Acer Quick Access*', 'NitroSense*', 'PredatorSense*', 'Acer Power*')
     msi       = @('MSI Center*', 'Dragon Center*', 'MSI SDK*')
     samsung   = @('Samsung Settings*', 'Samsung Device*')
@@ -78,6 +85,16 @@ $script:ProtectedHardwareTools = @(
     'X-Rite*', 'Portrait Displays*', 'Logitech*', 'Logi Options*', 'LGHUB*'
     'Corsair iCUE*', 'SteelSeries*', 'Elgato*', 'Wacom*', 'Focusrite*', 'ASIO*'
     '*Extreme Tuning Utility*', '*Intel*XTU*', 'XTU_*', 'Intel*Overclocking*'
+)
+
+# Disk encryption agents. Uninstalling one without the vendor's own decryption
+# steps can leave the data it encrypted unreadable - Dell says exactly that of
+# Dell Encryption without its Encryption Removal Agent - so no pattern, and no
+# scan, may take one.
+$script:ProtectedEncryption = @(
+    'Dell Encryption*', 'Dell Data Protection*', 'Dell Data Security*'
+    'Symantec Endpoint Encryption*', 'McAfee Drive Encryption*', 'Sophos SafeGuard*'
+    'Check Point*Full Disk Encryption*'
 )
 
 $script:ProtectedServices = @(
@@ -332,7 +349,7 @@ function Get-WDProtectedPrograms {
     param($Profile)
     if (-not $Profile) { $Profile = Get-WDSystemProfile }
 
-    $list = @($script:ProtectedPrograms) + @($script:ProtectedHardwareTools)
+    $list = @($script:ProtectedPrograms) + @($script:ProtectedHardwareTools) + @($script:ProtectedEncryption)
     if ($script:ProtectedVendorTools.ContainsKey($Profile.Vendor)) {
         $list += $script:ProtectedVendorTools[$Profile.Vendor]
     }
@@ -819,6 +836,25 @@ function Get-WDDiscoveredSoftware {
                                                       ForEach-Object { [string]$_.Name }) `
                                         -ServiceNames @($svcs | ForEach-Object { [string]$_.Name })
 
+    # How every find was classified, into the run's trace - offered under which
+    # heading, or kept and why. "Microsoft Family is one of Your apps" was a
+    # report from a machine nobody here could see, and this is what answers it.
+    # A no-op with no session, so the window's own startup scan writes nothing.
+    if (Get-Command Add-WDTrace -ErrorAction SilentlyContinue) {
+        try {
+            $row = { param($e) [ordered]@{ name = [string]$e.Name; display = [string]$e.Display; publisher = [string]$e.Publisher
+                                           origin = [string]$e.Origin; kind = [string]$e.Kind } }
+            Add-WDTrace -Kind 'scan' -Data @{
+                vendor     = [string]$Profile.Vendor
+                vendorApps = @($vendorApps | ForEach-Object { & $row $_ })
+                yourApps   = @($otherApps  | ForEach-Object { & $row $_ })
+                services   = @($otherSvcs  | ForEach-Object { [ordered]@{ name = [string]$_.Name; publisher = [string]$_.Publisher } })
+                extensions = @($extensions | ForEach-Object { [ordered]@{ name = [string]$_.Name; browser = [string]$_.Browser } })
+                kept       = @($protected  | ForEach-Object { [ordered]@{ name = [string]$_.Name; kind = [string]$_.Kind; why = [string]$_.Reason } })
+            }
+        } catch { }
+    }
+
     [pscustomobject]@{
         VendorApps    = @($vendorApps  | Sort-Object Name -Unique)
         OtherApps     = @($otherApps   | Sort-Object Name -Unique)
@@ -845,6 +881,9 @@ function Get-WDProtectionReason {
     if (Test-WDPatternMatch $Name $script:ProtectedHardwareTools) {
         return 'Peripheral control software - drives a mouse, keyboard, headset, tablet or display calibration'
     }
+    if (Test-WDPatternMatch $Name $script:ProtectedEncryption) {
+        return "Disk encryption - uninstalling it without the vendor's own decryption steps can leave encrypted data unreadable"
+    }
     if (Test-WDPatternMatch $Name @('Microsoft Visual C++*','Microsoft .NET*','Microsoft ASP.NET*','DirectX*','Microsoft Edge WebView2 Runtime','Microsoft GameInput')) {
         return 'Runtime or redistributable that other installed software links against'
     }
@@ -855,6 +894,33 @@ function Get-WDProtectionReason {
         return 'Part of Windows - the binary versions itself as an operating system component'
     }
     'Driver or hardware support package'
+}
+
+function Test-WDProtectedTarget {
+    # The protection list asked as a VETO by the executors, not only as a filter
+    # on what the scan offers. A curated pattern is a wildcard, and the list used
+    # to be enforced by the scan alone - so nothing stood between a wildcard and
+    # a framework or a vendor's power tool except the luck of what it matched.
+    # Answers why the target must be kept, or $null. $Package is read for its
+    # display name only when the registered name has not already answered: that
+    # costs an XML parse.
+    param([string]$PackageName, $Package, [string]$DisplayName, $Profile)
+
+    if ($PackageName -and (Test-WDPatternMatch $PackageName $script:ProtectedAppx)) {
+        return 'part of Windows that the shell or other apps depend on'
+    }
+    $names = New-Object System.Collections.Generic.List[string]
+    if ($DisplayName) { $names.Add($DisplayName) }
+    if ($Package) {
+        $d = (Get-WDAppxFacts -Package $Package).Display
+        if ($d) { $names.Add($d) }
+    }
+    if (-not $names.Count) { return $null }
+    $list = @(Get-WDProtectedPrograms -Profile $Profile)
+    foreach ($n in $names) {
+        if (Test-WDPatternMatch $n $list) { return (Get-WDProtectionReason -Name $n -Profile $Profile) }
+    }
+    $null
 }
 
 $script:IconCache = @{}
@@ -1077,7 +1143,7 @@ function New-WDDiscoveredCategories {
 
 Export-ModuleMember -Function Get-WDDiscoveredSoftware, New-WDDiscoveredCategories,
                               Get-WDProtectedPrograms, Get-WDManifestPatterns, Test-WDPatternMatch,
-                              Get-WDProtectionReason, Get-WDIconPath, Get-WDStableId,
+                              Get-WDProtectionReason, Test-WDProtectedTarget, Get-WDIconPath, Get-WDStableId,
                               Get-WDServiceImagePath, Get-WDFileIdentity, Get-WDOwningAppxPackage,
                               Get-WDAppxFacts, Get-WDPublisherName, Get-WDSoftwareOrigin,
                               Get-WDInstallPathSegments, Get-WDBrowserExtensions,

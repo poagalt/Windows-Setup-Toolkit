@@ -186,6 +186,61 @@ function global:Get-WDStepState {
             if ($null -eq $on) { return 'done' }
             return 'todo'
         }
+        'register-task' {
+            $on = Get-WDTaskEnabled -Path $S.P -Name $S.N
+            if ($null -eq $on) { return 'todo' }
+            return 'done'
+        }
+        'power-scheme' {
+            $now = $null
+            try {
+                $out = [string](& powercfg.exe /getactivescheme 2>$null)
+                if ($out -match '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') { $now = $Matches[1].ToLower() }
+            } catch { }
+            if (-not $now) { return 'unknown' }
+            if ($now -eq ([string]$S.V).ToLower()) { return 'done' }
+            return 'todo'
+        }
+        'hibernate' {
+            # Absent means the machine's default, which the second value records.
+            $on = $null
+            try {
+                $pw = Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Power' -ErrorAction Stop
+                if ($pw.PSObject.Properties['HibernateEnabled'])            { $on = [int]$pw.HibernateEnabled }
+                elseif ($pw.PSObject.Properties['HibernateEnabledDefault']) { $on = [int]$pw.HibernateEnabledDefault }
+            } catch { }
+            if ($null -eq $on) { return 'unknown' }
+            if ([bool]$on -eq ($S.V -eq 'on')) { return 'done' }
+            return 'todo'
+        }
+        'mu-service' {
+            try {
+                $sm = New-Object -ComObject 'Microsoft.Update.ServiceManager'
+                foreach ($svc in @($sm.Services)) {
+                    if ([string]$svc.ServiceID -eq $S.N) { if ($svc.IsRegisteredWithAU) { return 'done' } else { return 'todo' } }
+                }
+                return 'todo'
+            } catch { return 'unknown' }
+        }
+        'remove-firewall-rule' {
+            try {
+                if (Get-NetFirewallRule -Name $S.N -ErrorAction SilentlyContinue) { return 'todo' }
+                return 'done'
+            } catch { return 'unknown' }
+        }
+        # Asked the way System Properties asks: a protected volume is listed by
+        # its GUID under the restore client in SPP\Clients.
+        'system-protection-off' {
+            try {
+                $letter = ([string]$S.N).TrimEnd('\')
+                $vol = [string](Get-CimInstance Win32_Volume -Filter "DriveLetter='$letter'" -ErrorAction Stop).DeviceID
+                if ($vol -notmatch '(\{[0-9a-fA-F\-]{36}\})') { return 'unknown' }
+                $g = $Matches[1]
+                $key = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SPP\Clients' -ErrorAction Stop
+                if (@(@($key.'{09F7EDC5-294E-4180-AF6A-FB0E6A0E9513}') | Where-Object { [string]$_ -like "*$g*" }).Count) { return 'todo' }
+                return 'done'
+            } catch { return 'unknown' }
+        }
         'feature' {
             $st = Get-WDFeatureState $S.N
             if (-not $st) { return 'unknown' }
@@ -235,10 +290,24 @@ function global:Get-WDStepText {
         'service'         { return "Set the $($S.N) service back to $($S.V) startup" }
         'task'            { return "Re-enable the scheduled task $($S.P)$($S.N)" }
         'unregister-task' { return "Remove the scheduled task $($S.N), which this run registered" }
+        'register-task'   { return "Register the scheduled task $($S.P)$($S.N) again, from the definition saved before the run deleted it" }
         'feature'         { return "Turn the Windows feature $($S.N) back on" }
         'feature-off'     { return "Turn the Windows feature $($S.N) back off" }
         'capability-off'  { return "Remove the Windows capability $($S.N), which this run added" }
-        'powercfg'        { return "Put the power setting $($S.Sub)\$($S.Set) back to $($S.Ac) on mains, and $($S.Dc) on battery" }
+        'powercfg'        {
+            $plan = $(if ($S.Sch) { " in power plan $($S.Sch)" } else { '' })
+            return "Put the power setting $($S.Sub)\$($S.Set)$plan back to $($S.Ac) on mains, and $($S.Dc) on battery"
+        }
+        'power-scheme'    {
+            $label = $(if ($S.L) { "$($S.L) ($($S.V))" } else { [string]$S.V })
+            $extra = $(if ($S.C) { ", and delete the plan $($S.C) the run added" } else { '' })
+            return "Make the power plan $label active again$extra"
+        }
+        'hibernate'       { if ($S.V -eq 'on') { return 'Turn hibernation back on' } else { return 'Turn hibernation back off' } }
+        'reserved-storage' { return 'Turn Reserved Storage back on' }
+        'mu-service'      { return 'Turn updates for other Microsoft products back on' }
+        'remove-firewall-rule' { return "Remove the firewall rule $($S.N), which installing this added" }
+        'system-protection-off' { return "Turn System Protection back off for $($S.N) - the run switched it on to take a restore point, and turning it off deletes the restore points on that drive, that one included" }
         'regfile'         { return "Import $($S.F), which is the whole of $($S.T) as it was before the run" }
         'file-restore'    { if ($S.F) { return "Restore $($S.T) from the copy taken before the run" }
                             return "Delete $($S.T), which this run created" }
@@ -322,6 +391,51 @@ function global:Invoke-WDStep {
                 Unregister-ScheduledTask -TaskName $S.N -Confirm:$false -ErrorAction Stop
                 return @{ Ok = $true; Note = '' }
             }
+            # Deleted by the run, from a definition exported first.
+            'register-task' {
+                if (-not $S.X) { return @{ Ok = $false; Note = 'the task definition was not saved' } }
+                $null = Register-ScheduledTask -Xml $S.X -TaskName $S.N -TaskPath $S.P -Force -ErrorAction Stop
+                return @{ Ok = $true; Note = '' }
+            }
+            'power-scheme' {
+                $null = & powercfg.exe /setactive $S.V
+                if ($LASTEXITCODE -ne 0) { return @{ Ok = $false; Note = "that power plan is not on this machine any more (powercfg exit $LASTEXITCODE)" } }
+                # A plan the run added from Windows' template, taken away again
+                # once it is no longer the active one.
+                if ($S.C) {
+                    $null = & powercfg.exe /delete $S.C
+                    if ($LASTEXITCODE -ne 0) { return @{ Ok = $true; Note = "switched back, but the plan the run added ($($S.C)) could not be deleted" } }
+                }
+                return @{ Ok = $true; Note = '' }
+            }
+            'hibernate' {
+                $on = $(if ($S.V -eq 'on') { 'on' } else { 'off' })
+                $null = & powercfg.exe /hibernate $on
+                if ($LASTEXITCODE -ne 0) { return @{ Ok = $false; Note = "powercfg exit $LASTEXITCODE" } }
+                return @{ Ok = $true; Note = '' }
+            }
+            'reserved-storage' {
+                if ($global:WDDismBlocked) { return @{ Ok = $false; Note = 'a restart is pending, so Windows will not change Reserved Storage yet' } }
+                $null = & dism.exe /Online /Set-ReservedStorageState /State:Enabled /Quiet
+                if ($LASTEXITCODE -ne 0) { return @{ Ok = $false; Note = "DISM exit $LASTEXITCODE" } }
+                return @{ Ok = $true; Note = '' }
+            }
+            'mu-service' {
+                # 7 = register with Automatic Updates, online and pending
+                # registration allowed - what the Settings switch does.
+                $sm = New-Object -ComObject 'Microsoft.Update.ServiceManager'
+                $null = $sm.AddService2($S.N, 7, '')
+                return @{ Ok = $true; Note = '' }
+            }
+            'remove-firewall-rule' {
+                $rule = Get-NetFirewallRule -Name $S.N -ErrorAction SilentlyContinue
+                if ($rule) { Remove-NetFirewallRule -Name $S.N -ErrorAction Stop }
+                return @{ Ok = $true; Note = '' }
+            }
+            'system-protection-off' {
+                Disable-ComputerRestore -Drive $S.N -ErrorAction Stop
+                return @{ Ok = $true; Note = 'the restore points on that drive went with it' }
+            }
             'feature' {
                 if ($global:WDDismBlocked) { return @{ Ok = $false; Note = 'a restart is pending, so Windows will not service features yet' } }
                 $null = Enable-WindowsOptionalFeature -Online -FeatureName $S.N -NoRestart -ErrorAction Stop
@@ -338,8 +452,14 @@ function global:Invoke-WDStep {
                 return @{ Ok = $true; Note = '' }
             }
             'powercfg' {
-                $null = & powercfg.exe /setacvalueindex SCHEME_CURRENT $S.Sub $S.Set $S.Ac
-                $null = & powercfg.exe /setdcvalueindex SCHEME_CURRENT $S.Sub $S.Set $S.Dc
+                # Into the plan the values were read from, where the journal
+                # recorded one; SCHEME_CURRENT is what older journals meant, and
+                # it was wrong whenever somebody had switched plans since.
+                $sch = $(if ($S.Sch) { $S.Sch } else { 'SCHEME_CURRENT' })
+                $null = & powercfg.exe /setacvalueindex $sch $S.Sub $S.Set $S.Ac
+                if ($LASTEXITCODE -ne 0) { return @{ Ok = $false; Note = "powercfg exit $LASTEXITCODE" } }
+                $null = & powercfg.exe /setdcvalueindex $sch $S.Sub $S.Set $S.Dc
+                if ($LASTEXITCODE -ne 0) { return @{ Ok = $false; Note = "powercfg exit $LASTEXITCODE" } }
                 $null = & powercfg.exe /setactive SCHEME_CURRENT
                 return @{ Ok = $true; Note = '' }
             }
@@ -363,9 +483,18 @@ function global:Invoke-WDStep {
                 return @{ Ok = $true; Note = '' }
             }
             'rename' {
-                if (-not (Test-Path -LiteralPath $S.From)) { return @{ Ok = $false; Note = 'the parked folder is no longer there' } }
+                if (-not (Test-Path -LiteralPath $S.From)) { return @{ Ok = $false; Note = 'the parked copy is no longer there' } }
                 if (Test-Path -LiteralPath $S.To)          { return @{ Ok = $false; Note = 'something is already at that name' } }
-                Rename-Item -LiteralPath $S.From -NewName (Split-Path $S.To -Leaf) -Force -ErrorAction Stop
+                # A rename in place (a parked folder), or a move back from the
+                # run folder (a file parked there by a run as SYSTEM, which has
+                # no Recycle Bin anybody can open).
+                if ((Split-Path $S.From -Parent) -eq (Split-Path $S.To -Parent)) {
+                    Rename-Item -LiteralPath $S.From -NewName (Split-Path $S.To -Leaf) -Force -ErrorAction Stop
+                } else {
+                    $dir = Split-Path $S.To -Parent
+                    if (-not (Test-Path -LiteralPath $dir)) { $null = New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop }
+                    Move-Item -LiteralPath $S.From -Destination $S.To -Force -ErrorAction Stop
+                }
                 return @{ Ok = $true; Note = '' }
             }
             'recycle'   { return (Restore-WDFromBin -Path $S.P) }
@@ -542,7 +671,13 @@ function global:Get-WDSelectedSteps {
     param($Ids)
     if (-not @($Ids).Count) { return @($global:WDSteps) }
     $set = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
-    foreach ($i in @($Ids)) { $null = $set.Add([string]$i) }
+    # Split on commas too: run through -File or the .cmd, "-Only a,b" arrives
+    # as the one string "a,b", which matched nothing and put nothing back.
+    foreach ($i in @($Ids)) {
+        foreach ($part in ([string]$i -split ',')) {
+            if ($part.Trim()) { $null = $set.Add($part.Trim()) }
+        }
+    }
     @($global:WDSteps | Where-Object { $set.Contains([string]$_.Id) })
 }
 
@@ -898,16 +1033,58 @@ function global:Get-WDUndoKind {
         'service'         { 'Services' }
         'task'            { 'Scheduled tasks' }
         'unregister-task' { 'Scheduled tasks' }
+        'register-task'   { 'Scheduled tasks' }
         'feature'         { 'Windows features' }
         'feature-off'     { 'Windows features' }
         'capability-off'  { 'Windows features' }
+        'reserved-storage' { 'Windows features' }
         'file-restore'    { 'Files and folders' }
         'rename'          { 'Files and folders' }
         'recycle'         { 'Files and folders' }
         'powercfg'        { 'Power settings' }
+        'power-scheme'    { 'Power settings' }
+        'hibernate'       { 'Power settings' }
         'uninstall'       { 'Installed programs' }
+        'mu-service'      { 'Windows Update' }
+        'remove-firewall-rule' { 'Firewall rules' }
+        'system-protection-off' { 'System Protection' }
         default           { 'Other' }
     }
+}
+
+function global:Set-WDUndoWindowFit {
+    # The window sized to the screen it opens on - the one holding the
+    # pointer - and centred there: its designed size where there is room, most
+    # of the screen where there is not, and no minimum bigger than the screen.
+    # The same rule as the toolkit's Get-WDWindowFit, copied because this file
+    # imports nothing; change one, change both.
+    param($Window)
+    try {
+        $wa = [Windows.SystemParameters]::WorkArea
+        try {
+            Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+            $scr = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position)
+            $px  = [double][System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width
+            $dip = [double][Windows.SystemParameters]::PrimaryScreenWidth
+            $k   = 1.0
+            if ($px -gt 0 -and $dip -gt 0) { $k = $px / $dip }
+            $r  = $scr.WorkingArea
+            $wa = New-Object Windows.Rect ($r.X / $k), ($r.Y / $k), ($r.Width / $k), ($r.Height / $k)
+        } catch { }
+        $aw = [Math]::Max(1.0, $wa.Width)
+        $ah = [Math]::Max(1.0, $wa.Height)
+        $minW = [Math]::Min([double]$Window.MinWidth, $aw)
+        $minH = [Math]::Min([double]$Window.MinHeight, $ah)
+        $w = [Math]::Floor([Math]::Min($aw, [Math]::Max($minW, [Math]::Min([double]$Window.Width,  $aw * 0.94))))
+        $h = [Math]::Floor([Math]::Min($ah, [Math]::Max($minH, [Math]::Min([double]$Window.Height, $ah * 0.94))))
+        $Window.MinWidth  = $minW
+        $Window.MinHeight = $minH
+        $Window.Width     = $w
+        $Window.Height    = $h
+        $Window.WindowStartupLocation = 'Manual'
+        $Window.Left = $wa.Left + [Math]::Floor(($aw - $w) / 2)
+        $Window.Top  = $wa.Top  + [Math]::Floor(($ah - $h) / 2)
+    } catch { }
 }
 
 function global:Show-WDUndoWindow {
@@ -1449,6 +1626,7 @@ function global:Show-WDUndoWindow {
         return (Invoke-WDUndoConsole)
     }
     Set-WDUndoBrushes -Window $win -Pal $pal
+    Set-WDUndoWindowFit -Window $win
 
     $ui = @{}
     foreach ($n in @('Head','Sub1','Sub2','Bar','Find','BtnTheme','BtnVerbose','BtnFilter','FilterPopup','FilterPanel',
@@ -2535,14 +2713,19 @@ function global:Show-WDUndoWindow {
         $ui.RunNote.Text = ''
 
         $pump = { [Windows.Threading.Dispatcher]::CurrentDispatcher.Invoke([action]{}, 'Render') }
+        # Copied into this scope first: GetNewClosure() keeps only the locals of
+        # the scope it is called in, and $ui and $Ref live one scope up - so the
+        # progress line threw on the first step of every revert from this window.
+        $uiNow  = $ui
+        $refNow = $Ref
         $say = {
             param($L)
             $t = New-Object Windows.Controls.TextBlock
             $t.Text = $L.Text; $t.FontSize = 12.5; $t.TextWrapping = 'Wrap'; $t.Margin = '0,0,0,2'
-            & $Ref $t 'Foreground' $(switch ($L.Level) { 'ok' { 'Ok' } 'bad' { 'Bad' } default { 'Muted' } })
-            $null = $ui.Log.Children.Add($t)
-            $ui.LogScroll.ScrollToEnd()
-            $ui.Tally.Text = "$($L.Index) of $($steps.Count)..."
+            & $refNow $t 'Foreground' $(switch ($L.Level) { 'ok' { 'Ok' } 'bad' { 'Bad' } default { 'Muted' } })
+            $null = $uiNow.Log.Children.Add($t)
+            $uiNow.LogScroll.ScrollToEnd()
+            $uiNow.Tally.Text = "$($L.Index) of $($steps.Count)..."
             & $pump
         }.GetNewClosure()
 

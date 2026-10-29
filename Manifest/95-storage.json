@@ -12,7 +12,7 @@
           "settingsPath": "Nothing to restore.",
           "symptoms": ["temp files gone", "lost unsaved work"],
           "name": "Temporary files",
-          "desc": "Windows and per-user temp folders.",
+          "desc": "Windows' own temp folders and every account's, leaving anything touched in the last day - that may belong to a program that is running.",
           "risk": 0, "tier": 0, "default": false, "order": 95,
           "actions": [ { "type": "script", "handler": "ClearTempFiles" } ]
         },
@@ -31,7 +31,7 @@
           "settingsPath": "Nothing to restore.",
           "symptoms": ["update cache cleared"],
           "name": "Delivery Optimization cache",
-          "desc": "Update files kept to share with other machines on the network.",
+          "desc": "Update files kept to share with other machines on the network, cleared through Delivery Optimization's own cache command.",
           "risk": 0, "tier": 0, "default": false, "order": 95,
           "actions": [ { "type": "script", "handler": "ClearDeliveryOptimization" } ]
         },
@@ -40,8 +40,8 @@
           "settingsPath": "Nothing to restore - Explorer rebuilds the cache as you browse.",
           "symptoms": ["thumbnails slow", "folder slow to open", "picture previews missing", "thumbnails not showing"],
           "name": "Thumbnail and icon cache",
-          "desc": "Explorer's picture and icon caches, which grow and never shrink. Explorer rebuilds them as you browse.",
-          "riskNote": "Folders full of photos redraw their thumbnails the first time you open them after this, which is slow once and then normal again. Explorer holds some of these files open while it is running, so expect part of the cache to survive until the next sign-in.",
+          "desc": "Explorer's thumbnail and icon cache databases for your account. Explorer rebuilds them as you browse.",
+          "riskNote": "Folders full of photos redraw their thumbnails the first time you open them after this, which is slow once and then normal again. Explorer holds some of these files open while it is running; those are deleted at the next restart instead.",
           "risk": 1, "tier": 0, "default": false, "order": 95,
           "actions": [ { "type": "script", "handler": "ClearThumbnailCache" } ]
         },
@@ -50,7 +50,7 @@
           "settingsPath": "Nothing can be restored - the bin was emptied. Files deleted after the run go to it normally again.",
           "symptoms": ["recycle bin empty", "deleted files gone", "cannot restore deleted file", "lost a file"],
           "name": "Empty the Recycle Bin",
-          "desc": "Every account's bin, on every drive.",
+          "desc": "Your Recycle Bin, on every drive. Other accounts' bins are theirs and are left alone.",
           "riskNote": "Deleted for good, including anything an earlier run of this toolkit put there - which is what its rollback restores from. This one is not confined to the system drive, so the space it frees can exceed what the bar above shows.",
           "risk": 1, "tier": 0, "default": false, "order": 96,
           "actions": [ { "type": "script", "handler": "EmptyRecycleBin" } ]
@@ -67,10 +67,12 @@
         },
         {
           "id": "disk-component-store",
+          "settingsPath": "Nothing can be restored. Updates installed after the run can still be uninstalled.",
+          "symptoms": ["cannot uninstall update", "update uninstall missing", "cannot remove a patch", "uninstall updates greyed out", "cannot roll back update"],
           "name": "Superseded Windows components",
-          "desc": "Old versions of updated components in the component store. Only DISM can size this, and only by running the analysis, so it has no figure until it does.",
-          "riskNote": "Updates installed before this runs can no longer be uninstalled. The cleanup itself is a supported DISM operation and can take several minutes.",
-          "risk": 1, "tier": 0, "default": false, "order": 98,
+          "desc": "Old versions of updated components in the component store, often the largest space win here. Only DISM can size this, and only by running the analysis, so it has no figure until it does.",
+          "riskNote": "It throws away the copies Windows keeps for uninstalling updates, so no update installed before this runs can be rolled back - if one breaks something, that route is gone. It takes several minutes, and when a restart is pending (for example from a feature this run removed) it waits for the next run.",
+          "risk": 2, "tier": 0, "default": false, "order": 98, "revert": "none",
           "actions": [ { "type": "script", "handler": "CleanComponentStore" } ]
         }
       ]

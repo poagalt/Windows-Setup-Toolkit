@@ -88,6 +88,80 @@ function Get-WDSystemProfile {
     $isVM = $false
     if ($cs -and $cs.Model -imatch 'virtual|vmware|kvm|qemu|xen|hyper-v') { $isVM = $true }
 
+    # Modern Standby, from the power capabilities Windows reports - $null when
+    # they cannot be asked. And whether something has forced it off: with
+    # PlatformAoAcOverride = 0 the capabilities read like an S3 machine, and the
+    # option that set it still has to be recognisable as applying here.
+    $aoac = $null
+    try { if (Use-WDNative) { $v = [WD.Native]::PowerCapability(20); if ($v -ge 0) { $aoac = ($v -ne 0) } } } catch { }
+    $aoacOff = $false
+    try {
+        $o = Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Power' -Name 'PlatformAoAcOverride' -ErrorAction Stop
+        $aoacOff = ([int]$o.PlatformAoAcOverride -eq 0)
+    } catch { }
+
+    # Administrator protection (24H2 and later): with TypeOfAdminApprovalMode = 2
+    # elevation goes through its own prompt policy, and ConsentPromptBehaviorAdmin
+    # is not consulted at all.
+    $adminProt = $false
+    try {
+        $t = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name 'TypeOfAdminApprovalMode' -ErrorAction Stop
+        $adminProt = ([int]$t.TypeOfAdminApprovalMode -eq 2)
+    } catch { }
+
+    # Whether the system drive is already BitLocker-protected, read the way
+    # Explorer reads it - unelevated, where Get-BitLockerVolume and
+    # Win32_EncryptableVolume both need administrator rights. The property is
+    # undocumented beyond 1 meaning protected, so only 1 counts; every other
+    # answer, and the empty one SYSTEM gets, is $null, and a negated guard on
+    # it keeps passing.
+    $osEnc = $null
+    try {
+        $bl = (New-Object -ComObject Shell.Application).NameSpace("$sysDrive\").Self.ExtendedProperty('System.Volume.BitLockerProtection')
+        if ($bl -is [int]) { $osEnc = ($bl -eq 1) }
+    } catch { }
+
+    # What the graphics kernel says the hardware can do - the facts dxdiag
+    # prints as "Hardware Scheduling" and "MPO MaxPlanes". $null when it cannot
+    # be asked, and a guard on an unknown passes. An overlay test mode an
+    # earlier run wrote counts as overlays present, so the row that wrote it
+    # stays on the page to be undone - the same rule as Modern Standby.
+    $hagsOk = $null
+    $mpoOk  = $null
+    try {
+        if (Use-WDNative) {
+            $gc = [WD.Native]::GpuCaps()
+            if ($gc[0] -ge 0) { $hagsOk = ($gc[0] -eq 1) }
+            if ($gc[2] -ge 0) { $mpoOk  = ($gc[2] -gt 1) }
+        }
+    } catch { }
+    try {
+        $otm = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\Dwm' -Name 'OverlayTestMode' -ErrorAction Stop
+        if ([int]$otm.OverlayTestMode -eq 5) { $mpoOk = $true }
+    } catch { }
+
+    # How far behind on Windows updates, counted in monthly security updates
+    # missed. Windows 11 only: Windows 10 is out of support, so on most of those
+    # machines there is nothing left to catch up on and a count would be a
+    # complaint nobody can act on. $null when there is nothing to count from,
+    # and a guard on an unknown passes.
+    $latest = $null
+    $missed = $null
+    if ($build -ge 22000) {
+        try { $latest = Get-WDLatestUpdate } catch { }
+    }
+    if ($latest) {
+        # A quality-update deferral moves every release later by its days, so
+        # a machine on one is not counted as missing what it has not been
+        # offered yet.
+        $defer = 0
+        try {
+            $wu = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate' -ErrorAction Stop
+            if ([int](Get-Prop $wu 'DeferQualityUpdates' 0) -eq 1) { $defer = [int](Get-Prop $wu 'DeferQualityUpdatesPeriodInDays' 0) }
+        } catch { }
+        $missed = Get-WDUpdatesMissed -Built $latest.Built -DeferDays $defer
+    }
+
     $script:Profile = [pscustomobject]@{
         PSTypeName      = 'WD.SystemProfile'
         ComputerName    = $env:COMPUTERNAME
@@ -115,7 +189,18 @@ function Get-WDSystemProfile {
         HasTouch        = $touch
         HasBattery      = [bool]$bat
         IsVM            = $isVM
-        IsDomainJoined  = $(if ($cs) { [bool]$cs.PartOfDomain } else { $false })
+        ModernStandby   = $aoac
+        ModernStandbyOverridden = $aoacOff
+        AdminProtection = $adminProt
+        OsEncrypted     = $osEnc
+        GpuScheduling   = $hagsOk
+        GpuOverlays     = $mpoOk
+        # The newest monthly update and when Microsoft built it, as text - the
+        # form the run log, the trace, and the refusal all print it in.
+        LatestUpdate      =$(if ($latest) { [string]$latest.Kb } else { '' })
+        LatestUpdateBuilt = $(if ($latest) { $latest.Built.ToString('yyyy-MM-dd') } else { '' })
+        UpdatesMissed     = $missed
+        IsDomainJoined  =$(if ($cs) { [bool]$cs.PartOfDomain } else { $false })
         GpuVendors      = @($gpu | ForEach-Object {
                               if ($_.Name -imatch 'nvidia')      { 'nvidia' }
                               elseif ($_.Name -imatch 'amd|radeon') { 'amd' }
@@ -177,6 +262,96 @@ function Test-WDCopilotKey {
     'Unknown'
 }
 
+# The newest monthly update on this machine, read from Windows' own servicing
+# record rather than a table of release dates that would go stale. Every
+# cumulative update is a Package_for_RollupFix package, and its manifest
+# carries the time Microsoft built it: two to five days before release on every
+# one checked (KB5124008 built 09-05 and out 09-08, KB5127648 built 10-10 and
+# out 10-13). Only an installed package counts - CurrentState 112. A superseded
+# one is 80, and one waiting on a restart is not on the machine yet. $null when
+# there is no record to read.
+function Get-WDLatestUpdate {
+    $root = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\Packages'
+    $best = ''
+    $bestVer = $null
+    try {
+        $k = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($root)
+        if ($k) {
+            try {
+                foreach ($n in $k.GetSubKeyNames()) {
+                    if (-not $n.StartsWith('Package_for_RollupFix~', [StringComparison]::OrdinalIgnoreCase)) { continue }
+                    $v = $null
+                    if (-not [version]::TryParse(($n -split '~')[-1], [ref]$v)) { continue }
+                    $sk = $k.OpenSubKey($n)
+                    if (-not $sk) { continue }
+                    $st = $null
+                    try { $st = $sk.GetValue('CurrentState') } finally { $sk.Close() }
+                    if ($null -eq $st -or [int]$st -ne 112) { continue }
+                    if ($null -eq $bestVer -or $v -gt $bestVer) { $best = $n; $bestVer = $v }
+                }
+            } finally { $k.Close() }
+        }
+    } catch { }
+    if (-not $best) { return $null }
+
+    $kb = ''
+    $built = $null
+    try {
+        $mum  = Join-Path $env:windir "servicing\Packages\$best.mum"
+        $head = (Get-Content -LiteralPath $mum -TotalCount 6 -ErrorAction Stop) -join ' '
+        $m = [regex]::Match($head, 'creationTimeStamp="([^"]+)"')
+        if ($m.Success) {
+            $t = [datetime]::MinValue
+            $styles = [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal
+            if ([datetime]::TryParse($m.Groups[1].Value, [Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$t)) { $built = $t }
+        }
+        $m = [regex]::Match($head, '\bKB\d+')
+        if ($m.Success) { $kb = $m.Value }
+    } catch { }
+    if ($null -eq $built) { return $null }
+    [pscustomobject]@{ Kb = $kb; Version = [string]$bestVer; Built = $built }
+}
+
+# Monthly security updates come out on Patch Tuesday, the second Tuesday of the
+# month, so how many a machine is missing is a matter of the calendar: every one
+# released since its own. Ten days of margin after the build, so the release of
+# the update it does have is never counted against it. Out-of-band releases are
+# fixes to a monthly one and are not counted.
+function Get-WDUpdatesMissed {
+    param(
+        [Parameter(Mandatory)][datetime]$Built,
+        [datetime]$Now = (Get-Date),
+        [int]$DeferDays = 0
+    )
+    $after = $Built.Date.AddDays(10)
+    $today = $Now.Date
+    $n = 0
+    $m = New-Object DateTime ($after.Year, $after.Month, 1)
+    while ($m -le $today) {
+        $pt = $m
+        while ($pt.DayOfWeek -ne [DayOfWeek]::Tuesday) { $pt = $pt.AddDays(1) }
+        $pt = $pt.AddDays(7)
+        if ($pt -gt $after -and $pt.AddDays($DeferDays) -le $today) { $n++ }
+        $m = $m.AddMonths(1)
+    }
+    $n
+}
+
+# Two, not one: a machine that has not installed this month's update yet, or
+# one on a deferral, is one behind for part of every month and is not what this
+# is about.
+$script:UpdateLagLimit = 2
+
+# The month the newest update is from, for sentences. '' when unknown.
+function Format-WDUpdateMonth {
+    param($Profile)
+    $s = [string](Get-Prop $Profile 'LatestUpdateBuilt' '')
+    $d = [datetime]::MinValue
+    if (-not [datetime]::TryParseExact($s, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::None, [ref]$d)) { return '' }
+    $d.ToString('MMMM yyyy', [Globalization.CultureInfo]::InvariantCulture)
+}
+
 function Test-WDGuard {
     param(
         [string[]]$Guards,
@@ -232,6 +407,32 @@ function Test-WDGuard {
             'vm'      { $Profile.IsVM }
             'winget'  { $Profile.HasWinget }
             'domain'  { $Profile.IsDomainJoined }
+            # standby:modern - a Modern Standby machine, including one whose
+            # Modern Standby an earlier run switched off. Unknown passes, like
+            # an unknown guard: a profile that could not ask, or one cached by an
+            # older build, must not hide rows it knows nothing about.
+            'standby' {
+                $ms = $null
+                if ($Profile.PSObject.Properties['ModernStandby']) { $ms = $Profile.ModernStandby }
+                $off = [bool](Get-Prop $Profile 'ModernStandbyOverridden' $false)
+                if ($null -eq $ms) { $true }
+                elseif ($val -ieq 'modern') { [bool]$ms -or $off }
+                elseif ($val -ieq 's3')     { -not [bool]$ms -and -not $off }
+                else { $true }
+            }
+            # Read through Get-Prop, so a profile cached before this existed
+            # reads as "off" and "!adminprotection" keeps passing.
+            'adminprotection' { [bool](Get-Prop $Profile 'AdminProtection' $false) }
+            # Unknown reads as "not encrypted", for the same reason.
+            'osencrypted'     { [bool](Get-Prop $Profile 'OsEncrypted' $false) }
+            # Hardware facts where unknown, or a profile cached before these
+            # existed, reads as "capable": the row stays rather than vanishing
+            # on a machine nothing could ask.
+            'hags'    { $hv = Get-Prop $Profile 'GpuScheduling' $null; if ($null -eq $hv) { $true } else { [bool]$hv } }
+            'mpo'     { $mv = Get-Prop $Profile 'GpuOverlays' $null;   if ($null -eq $mv) { $true } else { [bool]$mv } }
+            # current - fewer than two monthly security updates behind. Unknown
+            # passes, like every other machine fact here.
+            'current' { $um = Get-Prop $Profile 'UpdatesMissed' $null; if ($null -eq $um) { $true } else { [int]$um -lt $script:UpdateLagLimit } }
             default   { $true }    # unknown guard never blocks
         }
 
@@ -262,7 +463,9 @@ function Get-WDGuardFailure {
         # $wants is what a passing machine looks like, $here is what this one
         # is. Negation swaps which of the two is the complaint.
         $wants = switch ($key.ToLower()) {
-            'oem'      { "machines made by $val" }
+            # 'generic' is what an unrecognised manufacturer resolves to, not a
+            # company that makes anything.
+            'oem'      { if ($val -ieq 'generic') { 'machines with no recognised manufacturer' } else { "machines made by $val" } }
             'chassis'  { "$($val.ToLower())s" }
             'edition'  { "Windows $val" }
             'build'    { "Windows build $val" }
@@ -273,18 +476,49 @@ function Get-WDGuardFailure {
             'vm'       { 'a virtual machine' }
             'winget'   { 'winget, the Windows package manager' }
             'domain'   { 'a domain-joined machine' }
+            'standby'  { if ($val -ieq 'modern') { 'a machine that sleeps with Modern Standby' } else { 'a machine that sleeps in S3' } }
+            'adminprotection' { 'a machine with Administrator protection turned on' }
+            'osencrypted'     { 'a machine whose system drive is already BitLocker-encrypted' }
+            'hags'     { 'a graphics adapter that supports hardware-accelerated GPU scheduling' }
+            'mpo'      { 'a display that uses multi-plane overlays' }
+            'current'  { 'a machine that is caught up on Windows updates' }
             default    { "'$g'" }
         }
         $here = switch ($key.ToLower()) {
-            'oem'      { "this one is $([string]$Profile.Vendor)" }
+            'oem'      { if ([string]$Profile.Vendor -ieq 'generic') { 'this one has no recognised manufacturer' } else { "this one is $([string]$Profile.Vendor)" } }
             'chassis'  { "this is a $(if ($Profile.IsPortable) { 'laptop' } else { 'desktop' })" }
             'edition'  { "this is $([string]$Profile.Edition)" }
             'build'    { "this is build $([int]$Profile.Build)" }
             'diskfull' { "this one is $([int]$Profile.DiskUsedPercent)% full" }
+            'current'  { "this one's newest update is from $(Format-WDUpdateMonth $Profile), with $([int](Get-Prop $Profile 'UpdatesMissed' 0)) monthly security updates out since" }
             default    { 'this machine is not one' }
         }
         if ($negate) { return "it is not for $wants, and this machine is one" }
         return "it is for $wants, and $here"
+    }
+    ''
+}
+
+# An option that is offered here but refused for now, as the sentence saying
+# why and what to do about it - '' when nothing stands in the way. Unlike
+# guards, which take a row off a machine where it can only do nothing,
+# refuseUnless is for a row that would do something and must not yet: the page
+# shows it disabled with this text, and a run that names it anyway reports it
+# Skipped with the same text. Both ask here, so the two cannot disagree.
+function Get-WDRefusal {
+    param($Item, $Profile)
+    $g = @(Get-Prop $Item 'refuseUnless' @())
+    if (-not $g.Count) { return '' }
+    if (-not $Profile) { $Profile = Get-WDSystemProfile }
+    foreach ($raw in $g) {
+        if (Test-WDGuard -Guards @($raw) -Profile $Profile) { continue }
+        if (([string]$raw).Trim() -ieq 'current') {
+            $n = [int](Get-Prop $Profile 'UpdatesMissed' 0)
+            return "Unavailable until Windows Update has caught up. This machine's newest update is from " +
+                   "$(Format-WDUpdateMonth $Profile), and the $n monthly security updates since would be held back. " +
+                   'Run Windows Update until it has nothing left to install, restart, and open the toolkit again.'
+        }
+        return "Unavailable on this machine: $(Get-WDGuardFailure -Guards @($raw) -Profile $Profile)."
     }
     ''
 }
@@ -356,6 +590,28 @@ function Get-WDUserAccounts {
         Note = 'Written into the default profile, which is what a new account copies its settings from. Not an account that exists yet.'
     })
     $out.ToArray()
+}
+
+function Get-WDInitialAccountTicks {
+    # Which account boxes start ticked: the saved choice where one names an
+    # account this machine has, and every account otherwise. The property is
+    # read directly, never through @(Get-Prop ...): a machine that has never
+    # saved a choice stores accounts = null, Get-Prop hands that back as a
+    # single $null, and @() of it is a one-element list holding nothing - which
+    # read as "a choice was saved" and started every box unticked, so the first
+    # run on a new machine wrote every per-user setting to no account at all.
+    # An empty or stale list falls back to all too: it is what an early save
+    # writes before the boxes exist, and silently skipping every per-user
+    # setting is not a choice to infer.
+    param($UiState, [string[]]$Keys)
+    $saved = @()
+    if ($UiState) {
+        $p = $UiState.PSObject.Properties['accounts']
+        if ($p -and $null -ne $p.Value) { $saved = @(@($p.Value) | Where-Object { $_ } | ForEach-Object { [string]$_ }) }
+    }
+    $hit = @($Keys | Where-Object { $_ -in $saved })
+    if (-not $hit.Count) { return @($Keys) }
+    $hit
 }
 
 function Get-WDContextAccounts {
@@ -434,7 +690,11 @@ function Dismount-WDDefaultHive {
         } finally {
             Remove-Item $so, $se -Force -ErrorAction SilentlyContinue
         }
-        Use-WDUserHiveDrive
+        # $null =, because it answers a boolean: bare, that $true went out of
+        # Invoke-WDPlan's finally alongside the results, and an elevated run's
+        # report counted two entries - $true and the list - with every total
+        # at zero. Unelevated the hive never mounts, so no test saw it.
+        $null = Use-WDUserHiveDrive
         if (-not (Test-Path -LiteralPath "HKU:\$key")) {
             $Hive.Mounted = $false
             return

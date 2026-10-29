@@ -41,7 +41,7 @@
                                              "symptoms": ["spotify missing", "netflix missing", "streaming app gone", "disney app missing"],
                                              "bloat": 3,
                                              "name":  "Streaming apps",
-                                             "desc":  "Prime Video, Netflix, Disney+, Hulu, Spotify, Amazon Music, and iHeartRadio.",
+                                             "desc":  "Prime Video, Netflix, Disney+, Hulu, Spotify, Amazon Music, iHeartRadio, Plex, and Twitch.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  50,
@@ -51,6 +51,7 @@
                                                                  "names":  [
                                                                                "*PrimeVideo*",
                                                                                "AmazonVideo*",
+                                                                               "*AmazonMusic*",
                                                                                "*Netflix*",
                                                                                "*Disney*",
                                                                                "*Hulu*",
@@ -70,7 +71,7 @@
                                              "symptoms": ["shopping app missing", "travel app gone"],
                                              "bloat": 3,
                                              "name":  "Shopping and travel",
-                                             "desc":  "Amazon Shopping, Alexa, Kindle, Booking.com, Agoda, and eBay.",
+                                             "desc":  "Amazon Shopping, Alexa, Kindle, Booking.com, Agoda, eBay, Wish, and AliExpress.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  50,
@@ -78,7 +79,7 @@
                                                              {
                                                                  "type":  "appx",
                                                                  "names":  [
-                                                                               "*Amazon*",
+                                                                               "Amazon.com.Amazon*",
                                                                                "*Alexa*",
                                                                                "*Kindle*",
                                                                                "*Booking*",
@@ -92,7 +93,8 @@
                                                                  "type":  "uninstall",
                                                                  "match":  [
                                                                                "Booking.com*",
-                                                                               "Amazon*",
+                                                                               "Amazon Assistant*",
+                                                                               "Amazon Shopping*",
                                                                                "Agoda*"
                                                                            ]
                                                              }
@@ -105,7 +107,7 @@
                                              "symptoms": ["adobe trial gone", "creative cloud missing"],
                                              "bloat": 3,
                                              "name":  "Adobe trialware",
-                                             "desc":  "Express, Photoshop Express, and Lightroom trial.",
+                                             "desc":  "Adobe Express and Photoshop Express, the free apps bundled to sell a subscription. Adobe's paid apps are left alone, including from the Store.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  51,
@@ -113,10 +115,8 @@
                                                              {
                                                                  "type":  "appx",
                                                                  "names":  [
-                                                                               "AdobeSystemsIncorporated.*",
                                                                                "*AdobeExpress*",
-                                                                               "*PhotoshopExpress*",
-                                                                               "*Lightroom*"
+                                                                               "*PhotoshopExpress*"
                                                                            ]
                                                              }
                                                          ],
@@ -128,7 +128,7 @@
                                              "symptoms": ["clipchamp missing", "video editor gone", "no video editor"],
                                              "bloat": 3,
                                              "name":  "Clipchamp",
-                                             "desc":  "Microsoft\u0027s bundled video editor.",
+                                             "desc":  "Microsoft's bundled video editor.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  51,
@@ -149,7 +149,7 @@
                                              "symptoms": ["promo app missing"],
                                              "bloat": 2,
                                              "name":  "Assorted promo apps",
-                                             "desc":  "Duolingo, Audible, Opera GX, Grammarly, Dropbox promo, VPN promos, and WildTangent.",
+                                             "desc":  "The Store apps for Duolingo, Audible, Grammarly, Keeper, ExpressVPN, NordVPN, PicsArt, and Phototastic, the Dropbox promotion, and the WildTangent games app. The same products installed from their own websites are left alone.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  51,
@@ -159,27 +159,20 @@
                                                                  "names":  [
                                                                                "*Duolingo*",
                                                                                "*Audible*",
-                                                                               "*Opera*",
                                                                                "*Grammarly*",
-                                                                               "*Dropbox*",
+                                                                               "C27EB4BA.DropboxOEM*",
                                                                                "*ExpressVPN*",
                                                                                "*NordVPN*",
                                                                                "*WildTangent*",
                                                                                "*Keeper*",
-                                                                               "*McAfee*"
+                                                                               "*PicsArt*",
+                                                                               "*PhototasticCollage*"
                                                                            ]
                                                              },
                                                              {
                                                                  "type":  "uninstall",
                                                                  "match":  [
-                                                                               "Opera GX*",
-                                                                               "Opera Stable*",
-                                                                               "Dropbox*",
-                                                                               "ExpressVPN*",
-                                                                               "NordVPN*",
-                                                                               "WildTangent*",
-                                                                               "Wondershare*",
-                                                                               "Keeper Password*"
+                                                                               "WildTangent*"
                                                                            ]
                                                              }
                                                          ],
@@ -191,7 +184,7 @@
                                              "symptoms": ["apps not reinstalling", "no suggested apps", "store suggestions gone"],
                                              "bloat": 2,
                                              "name":  "Kill ContentDeliveryManager",
-                                             "desc":  "The mechanism that silently installs all of the above. Without this they come back at next sign-in.",
+                                             "desc":  "The settings that let Windows install suggested and partner apps on its own, and the suggestions that advertise them.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  52,
@@ -343,7 +336,7 @@
                                              "symptoms": ["games missing", "bundled games gone", "game removed"],
                                              "bloat": 2,
                                              "name":  "Other bundled games",
-                                             "desc":  "March of Empires, Asphalt 8, Royal Revolt, Hidden City, Disney Magic Kingdoms, and the Roblox promo.",
+                                             "desc":  "March of Empires, Asphalt 8, Royal Revolt, Hidden City, Disney Magic Kingdoms, Gardenscapes, the Minecraft trial, and the other Gameloft and G5 games preinstalled for promotion.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  53,
@@ -356,11 +349,7 @@
                                                                                "*RoyalRevolt*",
                                                                                "*HiddenCity*",
                                                                                "*DisneyMagicKingdoms*",
-                                                                               "*Roblox*",
                                                                                "*Gardenscapes*",
-                                                                               "*PhototasticCollage*",
-                                                                               "*PicsArt*",
-                                                                               "*Sway*",
                                                                                "*Minecraft*Trial*",
                                                                                "G5Entertainment*",
                                                                                "GAMELOFTSA.*"
@@ -391,7 +380,7 @@
                                                              }
                                                          ],
                                              "tier":  3,
-                                             "riskNote":  "You lose the storefront and Xbox social features. Games already installed keep working."
+                                             "riskNote":  "You lose the storefront and Xbox social features. It also removes the Xbox sign-in and friends window (Microsoft.Xbox.TCUI) that games with Xbox Live call up, so those games can no longer show it. Games already installed keep working."
                                          },
                                          {
                                              "id":  "gamebar",
@@ -399,7 +388,7 @@
                                              "symptoms": ["game bar not working", "win+g not working", "no game bar", "game overlay missing", "game bar missing", "cannot record game", "game bar will not open", "overlay not showing", "fps counter missing", "you'll need a new app to open ms-gamebar", "need a new app to open this link", "ms-gamebar popup", "ms-gamingoverlay popup", "popup when i connect a controller"],
                                              "bloat": 3,
                                              "name":  "Xbox Game Bar",
-                                             "desc":  "The Win+G game overlay.",
+                                             "desc":  "The Win+G game overlay, and Gaming Copilot with it - it lives inside Game Bar and has no switch of its own.",
                                              "risk":  1,
                                              "default":  false,
                                              "order":  54,
@@ -467,11 +456,11 @@
                                                              }
                                                          ],
                                              "tier":  2,
-                                             "riskNote":  "Removes the Win+G overlay. Some games use it for FPS counters, screenshots, and clip capture. The ms-gamebar, ms-gamebarservices, and ms-gamingoverlay links are pointed at a do-nothing stub so nothing asks for an app to open them; reinstalling Game Bar later needs this run undone as well, or those links stay inert."
+                                             "riskNote":  "Removes the Win+G overlay. Some games use it for FPS counters, screenshots, and clip capture. It also removes the game-chat speech-to-text overlay, an accessibility feature that transcribes voice chat. The ms-gamebar, ms-gamebarservices, and ms-gamingoverlay links are pointed at a do-nothing stub so nothing asks for an app to open them; reinstalling Game Bar later needs this run undone as well, or those links stay inert."
                                          },
                                          {
                                              "id":  "gamingservices",
-                                             "settingsPath": "Reinstall Gaming Services from the Microsoft Store, then restart. Undoing the run does the same thing.",
+                                             "settingsPath": "Install or launch any Store game or launcher (Minecraft, a Game Pass title) and it reinstalls both as dependencies; or reinstall Gaming Services from the Microsoft Store and restart. Undoing the run cannot put them back.",
                                              "symptoms": ["game will not install", "game will not launch", "game pass not working", "xbox app not signing in", "store game broken", "cannot install game", "game pass install error", "xbox sign in failed", "gaming services error", "game crashes on start"],
                                              "bloat": 3,
                                              "name":  "Gaming Services and Xbox Identity",
@@ -489,76 +478,33 @@
                                                              }
                                                          ],
                                              "tier":  4,
-                                             "riskNote":  "Game Pass will stop working entirely and several PC games lose Xbox sign-in. This is hard to undo cleanly - reinstalling Gaming Services is notoriously awkward."
+                                             "riskNote":  "Game Pass will stop working entirely and several PC games lose Xbox sign-in until it is back. Any Store game or launcher pulls both packages back in as dependencies the next time it installs or updates, so on a machine that has one this does not stay removed."
                                          },
                                          {
                                              "id":  "gamedvr",
-                                             "settingsPath": "Settings > Gaming > Captures, and turn background recording back on.",
-                                             "symptoms": ["cannot record", "game recording not working", "win+alt+r not working", "clip recording broken", "background recording off", "no game clips", "capture not working"],
+                                             "settingsPath": "Settings > Gaming > Captures, and turn Record what happened back on.",
+                                             "symptoms": ["win+alt+g not working", "record what happened not working", "background recording off", "cannot save last 30 seconds", "no game clips"],
                                              "bloat": 5,
                                              "name":  "Disable Game DVR background recording",
-                                             "desc":  "A real performance win, and independent of whether Game Bar stays.",
+                                             "desc":  "Turns off Record what happened, which keeps encoding the last minutes of play in the background, for every account. Recording you start yourself still works, and so does Game Bar.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  55,
                                              "actions":  [
                                                              {
                                                                  "type":  "registry",
-                                                                 "scope":  "machine",
-                                                                 "values":  [
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\GameDVR",
-                                                                                    "name":  "AllowGameDVR",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  0
-                                                                                }
-                                                                            ]
-                                                             },
-                                                             {
-                                                                 "type":  "registry",
                                                                  "scope":  "allusers",
                                                                  "values":  [
                                                                                 {
-                                                                                    "path":  "System\\GameConfigStore",
-                                                                                    "name":  "GameDVR_Enabled",
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\GameDVR",
+                                                                                    "name":  "HistoricalCaptureEnabled",
                                                                                     "kind":  "DWord",
                                                                                     "value":  0
-                                                                                },
-                                                                                {
-                                                                                    "path":  "System\\GameConfigStore",
-                                                                                    "name":  "GameDVR_FSEBehaviorMode",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  2
                                                                                 }
                                                                             ]
                                                              }
                                                          ],
                                              "tier":  1
-                                         },
-                                         {
-                                             "id":  "xbox-svc",
-                                             "settingsPath": "services.msc, and set the Xbox services back to Manual.",
-                                             "symptoms": ["xbox slow to sign in", "xbox live not connecting", "game cannot reach xbox", "xbox services error", "multiplayer not working"],
-                                             "bloat": 5,
-                                             "name":  "Xbox services to Manual",
-                                             "desc":  "XblAuthManager, XblGameSave, and XboxNetApiSvc start on demand instead of at boot.",
-                                             "risk":  1,
-                                             "default":  true,
-                                             "order":  56,
-                                             "actions":  [
-                                                             {
-                                                                 "type":  "service",
-                                                                 "startupType":  "Manual",
-                                                                 "names":  [
-                                                                               "XblAuthManager",
-                                                                               "XblGameSave",
-                                                                               "XboxNetApiSvc",
-                                                                               "XboxGipSvc"
-                                                                           ]
-                                                             }
-                                                         ],
-                                             "tier":  2,
-                                             "riskNote":  "Xbox services move to on-demand start. Harmless for most people, but multiplayer sign-in may take a moment longer."
                                          }
                                      ]
                        }

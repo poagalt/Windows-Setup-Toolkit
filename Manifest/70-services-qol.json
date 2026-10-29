@@ -8,11 +8,11 @@
                            "items":  [
                                          {
                                              "id":  "svc-junk",
-                                             "settingsPath": "services.msc, and set the service you need back to Manual.",
-                                             "symptoms": ["fax not working", "nfc not working", "tap to pay not working", "remote registry off", "parental controls not working"],
+                                             "settingsPath": "services.msc, and set the service you need back to Manual. Messaging and Contact Data are per-user services that services.msc cannot change - undo the run for those.",
+                                             "symptoms": ["fax not working", "nfc not working", "tap to pay not working", "remote registry off", "parental controls not working", "contacts missing from search", "contacts not in search results", "text messages not working"],
                                              "bloat": 4,
                                              "name":  "Remote Registry, Fax, RetailDemo, Parental Controls, and NFC payments",
-                                             "desc":  "Disabled outright.",
+                                             "desc":  "All disabled outright, along with Phone Service, Messaging, Wallet, and the contact indexer that puts people in search results. Current Windows already ships Remote Registry off and has no Fax service.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  88,
@@ -27,10 +27,35 @@
                                                                                "WpcMonSvc",
                                                                                "SEMgrSvc",
                                                                                "PhoneSvc",
-                                                                               "MessagingService*",
-                                                                               "WalletService",
-                                                                               "PimIndexMaintenanceSvc*"
+                                                                               "WalletService"
                                                                            ]
+                                                             },
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\MessagingService",
+                                                                                    "name":  "Start",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  4,
+                                                                                    "ifKeyExists":  true
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\PimIndexMaintenanceSvc",
+                                                                                    "name":  "Start",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  4,
+                                                                                    "ifKeyExists":  true
+                                                                                },
+                                                                                {
+                                                                                    "path":  "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\PimIndexMaintenanceSvc",
+                                                                                    "name":  "UserServiceFlags",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0,
+                                                                                    "ifKeyExists":  true
+                                                                                }
+                                                                            ]
                                                              },
                                                              {
                                                                  "type":  "task",
@@ -62,7 +87,7 @@
                                                              }
                                                          ],
                                              "tier":  3,
-                                             "riskNote":  "Superfetch. Helps on mechanical hard drives, roughly neutral on SSDs, and disabling it can slow first-launch times."
+                                             "riskNote":  "Superfetch. Helps on mechanical hard drives, roughly neutral on SSDs, and disabling it can slow first-launch times. SysMain also runs memory compression, so with it off a machine short of RAM starts paging to disk sooner."
                                          },
                                          {
                                              "id":  "svc-wsearch",
@@ -131,37 +156,12 @@
                                              "riskNote":  "Windows Hello fingerprint and face sign-in stop working."
                                          },
                                          {
-                                             "id":  "svc-touch",
-                                             "settingsPath": "services.msc, find Touch Keyboard and Handwriting Panel Service, and set it back to Manual.",
-                                             "symptoms": ["touch keyboard missing", "on screen keyboard not working", "no keyboard on tablet", "handwriting not working", "pen not working", "stylus not working", "touch input broken"],
-                                             "bloat": 5,
-                                             "name":  "Tablet input and touch keyboard",
-                                             "desc":  "The tablet input and touch keyboard service.",
-                                             "risk":  1,
-                                             "default":  false,
-                                             "order":  88,
-                                             "guards":  [
-                                                            "!touch"
-                                                        ],
-                                             "actions":  [
-                                                             {
-                                                                 "type":  "service",
-                                                                 "startupType":  "Manual",
-                                                                 "names":  [
-                                                                               "TabletInputService"
-                                                                           ]
-                                                             }
-                                                         ],
-                                             "tier":  4,
-                                             "riskNote":  "The touch keyboard and pen input stop working. Skipped automatically when a digitiser is detected."
-                                         },
-                                         {
                                              "id":  "feat-legacy",
-                                             "settingsPath": "Turn Windows features on or off, and tick the feature you need.",
-                                             "symptoms": ["windows feature missing", "optional feature gone", "powershell 2 missing", "wmic missing"],
+                                             "settingsPath": "Media Player, Work Folders, XPS Services, and PowerShell 2 come back from Turn Windows features on or off; Steps Recorder, Math Recognizer, Fax and Scan, and WordPad from Settings > System > Optional features.",
+                                             "symptoms": ["windows feature missing", "optional feature gone", "powershell 2 missing", "steps recorder missing", "math input panel missing", "windows media player legacy missing", "work folders missing"],
                                              "bloat": 4,
                                              "name":  "Legacy optional features",
-                                             "desc":  "Steps Recorder, Math Recognizer, Windows Fax and Scan, XPS Writer, and the legacy Media Player.",
+                                             "desc":  "Steps Recorder, Math Recognizer, the legacy Media Player, and Work Folders, plus XPS Writer, Windows Fax and Scan, PowerShell 2, and WordPad on builds that still have them.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  89,
@@ -183,38 +183,33 @@
                                                                                "App.StepsRecorder*",
                                                                                "MathRecognizer*",
                                                                                "Print.Fax.Scan*",
-                                                                               "Microsoft.Windows.WordPad*",
-                                                                               "Browser.InternetExplorer*"
+                                                                               "Microsoft.Windows.WordPad*"
                                                                            ]
                                                              }
                                                          ],
                                              "tier":  1
                                          },
                                          {
-                                             "id":  "task-cleanup",
-                                             "settingsPath": "Task Scheduler, or undo the run to re-enable the tasks.",
-                                             "symptoms": ["scheduled task missing", "task not running", "task scheduler empty", "automatic task not working"],
-                                             "bloat": 1,
-                                             "name":  "Telemetry and marketing scheduled tasks",
-                                             "desc":  "Windows Update, Defender, and disk maintenance tasks are explicitly left alone.",
-                                             "risk":  0,
-                                             "default":  true,
+                                             "id":  "ie-mode",
+                                             "settingsPath": "Settings > System > Optional features > View features, and add Internet Explorer mode. Adding it back has been reported to fail on 25H2, so treat this as one-way.",
+                                             "symptoms": ["ie mode missing", "internet explorer mode not working", "reload in internet explorer mode missing", "intranet site not working in edge", "old website not working in edge", "iexplore missing"],
+                                             "bloat": 4,
+                                             "name":  "Internet Explorer mode",
+                                             "desc":  "The Internet Explorer engine Edge falls back to for old intranet, banking, and government sites.",
+                                             "risk":  1,
+                                             "default":  false,
                                              "order":  89,
+                                             "reboot":  true,
                                              "actions":  [
                                                              {
-                                                                 "type":  "task",
-                                                                 "tasks":  [
-                                                                               "\\Microsoft\\Windows\\CloudExperienceHost\\CreateObjectTask",
-                                                                               "\\Microsoft\\Windows\\Feedback\\Siuf\\*",
-                                                                               "\\Microsoft\\Windows\\Application Experience\\*",
-                                                                               "\\Microsoft\\Windows\\Customer Experience Improvement Program\\*",
-                                                                               "\\Microsoft\\Windows\\PushToInstall\\*",
-                                                                               "\\Microsoft\\Windows\\Subscription\\*",
-                                                                               "\\Microsoft\\Windows\\Speech\\SpeechModelDownloadTask"
+                                                                 "type":  "capability",
+                                                                 "names":  [
+                                                                               "Browser.InternetExplorer*"
                                                                            ]
                                                              }
                                                          ],
-                                             "tier":  1
+                                             "tier":  0,
+                                             "riskNote":  "Sites that only work in Internet Explorer stop opening in Edge's IE mode. Adding the feature back from Optional features has been reported to fail on 25H2, so the rollback may not be able to restore it."
                                          }
                                      ]
                        },
@@ -265,9 +260,9 @@
                                          {
                                              "id":  "taskbar",
                                              "settingsPath": "Settings > Personalization > Taskbar, and turn the buttons back on.",
-                                             "symptoms": ["search box missing", "task view missing", "taskbar buttons gone", "widgets button missing", "taskbar changed", "search missing from taskbar"],
+                                             "symptoms": ["search box missing", "task view missing", "taskbar buttons gone", "taskbar changed", "search missing from taskbar"],
                                              "name":  "Taskbar cleanup",
-                                             "desc":  "Hides Task View, Widgets, Chat, and the search box entirely. Alignment is left as you have it, and Start still searches when you type.",
+                                             "desc":  "Hides the Task View button and the search box entirely. Alignment is left as you have it, and Start still searches when you type. The Widgets button goes with Widgets itself, under its own option.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  91,
@@ -283,22 +278,11 @@
                                                                                     "value":  0
                                                                                 },
                                                                                 {
-                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
-                                                                                    "name":  "TaskbarDa",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  0
-                                                                                },
-                                                                                {
-                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
-                                                                                    "name":  "TaskbarMn",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  0
-                                                                                },
-                                                                                {
                                                                                     "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Search",
                                                                                     "name":  "SearchboxTaskbarMode",
                                                                                     "kind":  "DWord",
-                                                                                    "value":  0
+                                                                                    "value":  0,
+                                                                                    "firstSignIn":  true
                                                                                 }
                                                                             ]
                                                              }
@@ -335,7 +319,7 @@
                                              "settingsPath": "Undo the run.",
                                              "symptoms": ["num lock on at boot", "number pad on at startup"],
                                              "name":  "Num Lock on at startup",
-                                             "desc":  "Turns Num Lock on at the sign-in screen and for every account.",
+                                             "desc":  "Turns Num Lock on at the sign-in screen and for every account. With Fast Startup on, the sign-in screen can come back with the state it shut down in instead - Disable Fast Startup makes this reliable.",
                                              "risk":  0,
                                              "default":  false,
                                              "order":  91,
@@ -369,7 +353,7 @@
                                          },
                                          {
                                              "id":  "settings-home",
-                                             "settingsPath": "Settings > Privacy and security, or undo the run.",
+                                             "settingsPath": "Undo the run. It is a policy value, so no page in Settings turns Home back on.",
                                              "symptoms": ["settings home page missing", "settings opens differently"],
                                              "name":  "Settings home page",
                                              "desc":  "Hides the recommendation-filled Home page so Settings opens on System instead.",
@@ -394,10 +378,10 @@
                                          },
                                          {
                                              "id":  "start-recommended",
-                                             "settingsPath": "Settings > Personalization > Start, and turn the recommendations back on.",
-                                             "symptoms": ["start menu recommended empty", "recommended gone", "no recently added apps"],
+                                             "settingsPath": "Undo the run. The section is hidden by policy, so Settings > Personalization > Start is partly managed while it is in place; afterwards the Recommended switches there are yours again.",
+                                             "symptoms": ["start menu recommended empty", "recommended gone", "no recently added apps", "no recent files in start", "recommended section empty", "start menu blank section"],
                                              "name":  "Start menu Recommended section",
-                                             "desc":  "Hides the recently-added, recently-opened, and suggested entries under the pinned apps.",
+                                             "desc":  "Hides the Recommended block - recent files, recently added apps, and suggestions and app promotions - so Start shows pinned apps and All only.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  91,
@@ -407,38 +391,57 @@
                                                                  "scope":  "machine",
                                                                  "values":  [
                                                                                 {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Microsoft\\PolicyManager\\current\\device\\Start",
-                                                                                    "name":  "HideRecommendedSection",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  1
-                                                                                },
-                                                                                {
                                                                                     "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer",
                                                                                     "name":  "HideRecommendedSection",
                                                                                     "kind":  "DWord",
                                                                                     "value":  1
+                                                                                }
+                                                                            ]
+                                                             },
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                                                                                    "name":  "Start_IrisRecommendations",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
                                                                                 },
                                                                                 {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer",
-                                                                                    "name":  "HideRecommendedPersonalizedSites",
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+                                                                                    "name":  "Start_RecoPersonalizedSites",
                                                                                     "kind":  "DWord",
-                                                                                    "value":  1
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Start",
+                                                                                    "name":  "ShowRecentList",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
+                                                                                },
+                                                                                {
+                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+                                                                                    "name":  "SubscribedContent-338388Enabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
                                                                                 }
                                                                             ]
                                                              }
                                                          ],
                                              "tier":  2,
-                                             "riskNote":  "The Recommended block is hidden rather than emptied, so Start becomes pinned apps only. On Home editions Windows sometimes ignores the policy and puts it back at the next feature update."
+                                             "riskNote":  "The Recommended block is hidden rather than emptied, so Start becomes pinned apps only. The policy is documented for Pro and above, so on Home it may be ignored - but the recommendation switches are turned off too, so the section stays empty there. Recent files in File Explorer and jump lists are a separate option, Stop Quick Access tracking what you open."
                                          },
                                          {
                                              "id":  "sticky-keys",
                                              "settingsPath": "Settings > Accessibility > Keyboard, and turn the Sticky keys shortcut back on.",
                                              "symptoms": ["sticky keys not prompting", "shift five times does nothing"],
                                              "name":  "Sticky Keys shortcut",
-                                             "desc":  "Stops five taps on Shift opening the Sticky Keys prompt. The feature stays available in Accessibility settings.",
+                                             "desc":  "Stops five taps on Shift opening the Sticky Keys prompt, on the sign-in screen as well as for every account, from the next sign-in. The feature stays available in Accessibility settings.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  91,
+                                             "reboot":  true,
                                              "actions":  [
                                                              {
                                                                  "type":  "registry",
@@ -451,12 +454,26 @@
                                                                                     "value":  "506"
                                                                                 }
                                                                             ]
+                                                             },
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "Registry::HKEY_USERS\\.DEFAULT\\Control Panel\\Accessibility\\StickyKeys",
+                                                                                    "name":  "Flags",
+                                                                                    "kind":  "String",
+                                                                                    "value":  "506"
+                                                                                }
+                                                                            ]
                                                              }
                                                          ],
                                              "tier":  2
                                          },
                                          {
                                              "id":  "battery-percent",
+                                             "settingsPath": "Settings > System > Power & battery, and turn Battery percentage off.",
+                                             "symptoms": ["battery percentage showing", "number next to battery icon"],
                                              "name":  "Battery percentage in the system tray",
                                              "desc":  "Shows the number next to the battery icon instead of only the fill level.",
                                              "risk":  0,
@@ -511,10 +528,11 @@
                                              "settingsPath": "Settings > System > Multitasking, and turn Snap windows back on.",
                                              "symptoms": ["snap not working", "windows not snapping", "snap layouts missing", "cannot drag window to side", "aero snap gone", "split screen not working"],
                                              "name":  "Window snapping",
-                                             "desc":  "Turns off snapping a window by dragging it to an edge, along with Snap Assist and the snap layout flyout.",
+                                             "desc":  "Turns off snapping a window by dragging it to an edge, along with Snap Assist and the snap layout flyout. Dragging to an edge stops snapping at the next sign-in.",
                                              "risk":  1,
                                              "default":  false,
                                              "order":  91,
+                                             "reboot":  true,
                                              "actions":  [
                                                              {
                                                                  "type":  "registry",
@@ -622,7 +640,7 @@
                                              "settingsPath": "File Explorer > View > Show, and untick Hidden items.",
                                              "symptoms": ["hidden files showing", "extra folders visible", "appdata showing"],
                                              "name":  "Show hidden files",
-                                             "desc":  "Shows hidden and system files in File Explorer.",
+                                             "desc":  "Shows hidden files and folders in File Explorer. Protected operating system files stay hidden.",
                                              "risk":  1,
                                              "default":  false,
                                              "order":  91,
@@ -641,7 +659,7 @@
                                                              }
                                                          ],
                                              "tier":  0,
-                                             "riskNote":  "Shows hidden and system files everywhere. Harmless, but it clutters File Explorer."
+                                             "riskNote":  "Shows hidden files and folders everywhere, AppData included. Harmless, but it clutters File Explorer."
                                          },
                                          {
                                              "id":  "mouse-accel",
@@ -683,7 +701,7 @@
                                          },
                                          {
                                              "id":  "end-task",
-                                             "settingsPath": "Settings > System > For developers, and turn End Task off.",
+                                             "settingsPath": "Settings > System > Advanced (For developers on older builds), and turn End task off.",
                                              "symptoms": ["end task in taskbar menu"],
                                              "name":  "End task in taskbar right-click",
                                              "desc":  "",
@@ -711,7 +729,7 @@
                                              "settingsPath": "Undo the run.",
                                              "symptoms": ["edge not prompting", "no edge suggestions"],
                                              "name":  "Edge nag suppression",
-                                             "desc":  "Stops desktop shortcut recreation, default-browser prompts, and the first-run experience.",
+                                             "desc":  "Stops Edge putting a shortcut on the desktop when it installs or reinstalls, and turns off its first-run welcome and full-tab promotions.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  92,
@@ -731,12 +749,6 @@
                                                                                     "name":  "HideFirstRunExperience",
                                                                                     "kind":  "DWord",
                                                                                     "value":  1
-                                                                                },
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge",
-                                                                                    "name":  "DefaultBrowserSettingEnabled",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  0
                                                                                 },
                                                                                 {
                                                                                     "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge",
@@ -812,7 +824,7 @@
                                                              }
                                                          ],
                                              "tier":  0,
-                                             "riskNote":  "Reclaims disk equal to your RAM, but removes sleep-to-disk, and hybrid sleep. Skipped automatically on battery-powered hardware."
+                                             "riskNote":  "Reclaims disk equal to your RAM, but removes sleep-to-disk and hybrid sleep, and Fast Startup goes with them, since it is built on hibernation. Skipped automatically on battery-powered hardware."
                                          },
                                          {
                                              "id":  "reserved-storage",
@@ -830,17 +842,18 @@
                                                              }
                                                          ],
                                              "tier":  0,
-                                             "riskNote":  "Frees roughly 7 GB, but Windows then has to find that space itself at the next feature update, which can fail on a full disk."
+                                             "riskNote":  "Frees roughly 7 GB, but Windows then has to find that space itself at the next feature update, which can fail on a full disk. Windows refuses while an update is waiting on a restart, so then this is skipped and says to run it again afterwards."
                                          },
                                          {
                                              "id":  "startup-clean",
                                              "settingsPath": "Settings > Apps > Startup, or Task Manager > Startup apps, and turn the entry back on.",
                                              "symptoms": ["program not starting with windows", "startup app missing", "app not launching at boot", "autostart not working"],
                                              "name":  "Disable startup entries",
-                                             "desc":  "Disables every app set to run at login except system dependencies.",
+                                             "desc":  "Disables every app set to run at sign-in except system dependencies, for every account - Store apps' startup tasks included - the same way Task Manager does, so each one is still listed there as Disabled.",
                                              "risk":  1,
                                              "default":  true,
                                              "order":  94,
+                                             "revert":  "full",
                                              "actions":  [
                                                              {
                                                                  "type":  "script",
@@ -848,11 +861,11 @@
                                                              }
                                                          ],
                                              "tier":  3,
-                                             "riskNote":  "Disables every login item that is not a system dependency. Audio, input, security, and vendor hardware tools are kept."
+                                             "riskNote":  "Disables every sign-in item that is not a system dependency. Audio, input, security, and vendor hardware tools are kept. A few apps switch themselves back on each time they run - turn off that app's own 'start with Windows' setting if one keeps returning."
                                          },
                                          {
                                              "id":  "desktop-shortcuts",
-                                             "settingsPath": "Nothing to restore automatically - re-create the shortcuts you want. The programs themselves were not removed.",
+                                             "settingsPath": "Drag the shortcuts back out of the Recycle Bin, or undo the run. The programs themselves were not removed.",
                                              "symptoms": ["desktop shortcuts gone", "icons missing from desktop", "shortcut deleted", "desktop empty"],
                                              "name":  "Remove desktop shortcuts",
                                              "desc":  "Clears every shortcut off the desktop, yours included. Apps stay installed and in Start.",
@@ -900,25 +913,6 @@
                                                          ],
                                              "tier":  2,
                                              "riskNote":  "Only touches the folder a program itself declared as its install location, and only when the uninstaller left it there. It goes to the Recycle Bin rather than being deleted, so it can be put back - but settings, license files, and saved data stored inside a program's own folder go with it."
-                                         },
-                                         {
-                                             "id":  "component-cleanup",
-                                             "settingsPath": "Nothing can be restored. Updates installed after the run can still be uninstalled.",
-                                             "symptoms": ["cannot uninstall update", "update uninstall missing", "cannot remove a patch"],
-                                             "bloat": 4,
-                                             "name":  "Reclaim space from superseded Windows updates",
-                                             "desc":  "Compacts the component store and clears the temp folders. Usually the largest single space win on the list - typically 3-8 GB.",
-                                             "risk":  2,
-                                             "default":  false,
-                                             "order":  96,
-                                             "actions":  [
-                                                             {
-                                                                 "type":  "script",
-                                                                 "handler":  "CleanComponentStore"
-                                                             }
-                                                         ],
-                                             "tier":  0,
-                                             "riskNote":  "Opt-in because it is not reversible in the way the rest of this list is: it throws away the backups Windows keeps for uninstalling updates, so afterwards no installed update can be rolled back. If a Windows update breaks something for you, that route is gone. It also takes several minutes and cannot be interrupted safely."
                                          },
                                          {
                                              "id":  "uninstall-residue",

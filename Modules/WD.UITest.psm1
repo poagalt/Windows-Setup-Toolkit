@@ -1,7 +1,7 @@
 ﻿function Invoke-WDInteractionTest {
     param([Parameter(Mandatory)]$Refs)
 
-    # Show-WDWindow's frame, unpacked. This block is the interface - 131 names,
+    # Show-WDWindow's frame, unpacked. This block is the interface - 135 names,
     # checked against the caller by [6]. Do not read $Refs below.
     $accountChecks          = $Refs.accountChecks
     $accountKeys            = $Refs.accountKeys
@@ -37,6 +37,7 @@
     $cmpChips               = $Refs.cmpChips
     $cmpDone                = $Refs.cmpDone
     $cmpHead                = $Refs.cmpHead
+    $cmpRefs                = $Refs.cmpRefs
     $cmpSpyRef              = $Refs.cmpSpyRef
     $cmpState               = $Refs.cmpState
     $consequence            = $Refs.consequence
@@ -71,6 +72,7 @@
     $loadedRefresh          = $Refs.loadedRefresh
     $logRows                = $Refs.logRows
     $modeCols               = $Refs.modeCols
+    $CHECKED                = $Refs.CHECKED
     $OPT_IN_ONLY            = $Refs.OPT_IN_ONLY
     $overrides              = $Refs.overrides
     $pal                    = $Refs.pal
@@ -81,6 +83,8 @@
     $presetSelection        = $Refs.presetSelection
     $pumpRun                = $Refs.pumpRun
     $recordApplied          = $Refs.recordApplied
+    $refusedWhy             = $Refs.refusedWhy
+    $repaintModeGrid        = $Refs.repaintModeGrid
     $registerLoaded         = $Refs.registerLoaded
     $renameLoadedTo         = $Refs.renameLoadedTo
     $reportDropped          = $Refs.reportDropped
@@ -200,7 +204,9 @@ if ($advBuilt.Done) {
                 Write-Host '  DEFER  the overlay is still up after the build' -ForegroundColor Red
                 $selfTest.Failures++
             }
-            & $showPage 'PageModes'
+            # Back to where the window opens, which is the home page now rather
+            # than the modes - the first check after this asks exactly that.
+            & $showPage 'PageHome'
             if (-not $rows.Count) {
                 Write-Host '  DEFER  building the page produced no rows at all' -ForegroundColor Red
                 $selfTest.Failures++
@@ -356,6 +362,7 @@ if ($advBuilt.Done) {
             $setBrowL   = $setBrowsers
             $rowByIdL   = $rowById
             $xruleL     = $EXCLUSIONS
+            $refusedL   = $refusedWhy
             $rowTallyL  = $updateTally
             $edgeIdL    = $EDGE_ID
             # Empty on a machine with no Edge profile, which the check that
@@ -433,6 +440,7 @@ if ($advBuilt.Done) {
             # Driven through its two seams rather than by running a real apply.
             $appliedNoteL = $appliedNote
             $recAppliedL  = $recordApplied
+            $repaintL     = $repaintModeGrid
             $appliedRunsL = $appliedRuns
             $uiOutL     = $uiStateOut
             $advUndoL   = $advUndo
@@ -540,7 +548,11 @@ if ($advBuilt.Done) {
             # The application opens on the home page, and almost everything
             # below is about the mode screen.
             & $try 'the home page opens on the three choices' {
-                if ($uiL.PageHome.Visibility -ne 'Visible') { throw 'the window did not open on the home page' }
+                if ($uiL.PageHome.Visibility -ne 'Visible') {
+                    $open = @('PageModes','PageAdvanced','PageRevertHome','PageRevert','PageCompare','PageUnattend','PageRun' |
+                              Where-Object { $uiL[$_] -and $uiL[$_].Visibility -eq 'Visible' })
+                    throw "the window did not open on the home page - open instead: $(if ($open.Count) { $open -join ', ' } else { 'nothing' })"
+                }
                 if ($uiL.StorageBlock.Visibility -ne 'Collapsed') { throw 'the drive bar is up on the home page' }
                 foreach ($b in @($uiL.BtnDebloat, $uiL.BtnRevert, $uiL.BtnUnattend)) {
                     if (-not $b) { throw 'a home card is missing' }
@@ -730,6 +742,9 @@ if ($advBuilt.Done) {
                 if (-not (& $recAppliedL 'Conservative' $ran 'C:\Some\Run Folder')) {
                     throw 'a run matching the preset exactly was not recorded'
                 }
+                # What the apply page does after recording: the cards are painted,
+                # not rebuilt, and clicking one selects it without repainting.
+                & $repaintL
                 $note = & $appliedNoteL 'Conservative'
                 if ($note -notmatch '^Applied on ')          { throw "the marker reads '$note'" }
                 if ($note -notmatch 'C:\\Some\\Run Folder')  { throw "the marker does not name the run folder: '$note'" }
@@ -762,7 +777,9 @@ if ($advBuilt.Done) {
                 # Put the table back: this pass is documented as changing
                 # nothing.
                 $appliedRunsL.Remove('Conservative')
-                & $clickEl $colsL['Conservative'].Border
+                # Repainted, as everything that changes the record does - a
+                # click on the card selects it and paints nothing.
+                & $repaintL
                 if ($colsL['Conservative'].Applied.Visibility -ne 'Collapsed') { throw 'the marker outlived its record' }
             }.GetNewClosure()
             & $try 'every dialog builds in the theme rather than in system white' {
@@ -1709,8 +1726,11 @@ if ($advBuilt.Done) {
                 }
                 # The Add section is not all installers - the quality-of-life
                 # tweaks live here too and do belong to modes.
+                # At least one: FancyZones, Always on Top, Color Picker, and Peek
+                # went, because PowerToys turns them on by itself and their rows
+                # changed nothing; PowerToys Run is the one it ships off.
                 $ptRows = @($rowsL | Where-Object { $_.Requires -eq 'add-powertoys' })
-                if ($ptRows.Count -lt 3) { throw 'the PowerToys options are not marked as dependent' }
+                if ($ptRows.Count -lt 1) { throw 'the PowerToys options are not marked as dependent' }
 
                 & $tickL 'Sec' 'Add' $true
                 $strays = @($rowsL | Where-Object { $_.Section -eq 'remove' -and $_.Panel.Visibility -eq 'Visible' })
@@ -1739,7 +1759,7 @@ if ($advBuilt.Done) {
                 $parent = $rowByIdL['add-powertoys']
                 if (-not $parent) { throw 'the PowerToys install row is missing' }
                 $kids = @($rowsL | Where-Object { $_.Requires -eq 'add-powertoys' })
-                if ($kids.Count -lt 3) { throw "only $($kids.Count) dependent option(s)" }
+                if ($kids.Count -lt 1) { throw "only $($kids.Count) dependent option(s)" }
 
                 if ($instIdsL.Contains('add-powertoys')) {
                     # Already on the machine: nothing to install, so the options
@@ -2121,7 +2141,7 @@ if ($advBuilt.Done) {
                                  $_.Head.Visibility -eq 'Visible' -and
                                  @($_.Rows | Where-Object { $_.Panel.Visibility -eq 'Visible' }).Count })
                     if ($live.Count -lt 2) { throw "filtering to Add left $($live.Count) categor(y/ies) on the page" }
-                    $checked = 0
+                    $reached = 0
                     foreach ($target in @($live[$live.Count - 1], $live[0])) {
                         & $clickEl $target.Panel
                         $uiL.AdvScroll.UpdateLayout()
@@ -2131,14 +2151,14 @@ if ($advBuilt.Done) {
                         $ty = [double]$target.Head.TransformToAncestor($uiL.AdvContent).Transform(
                                 (New-Object Windows.Point 0, 0)).Y
                         if ($ty -gt [double]$uiL.AdvScroll.ScrollableHeight) { continue }
-                        $checked++
+                        $reached++
                         if ($idxSpyL.Active -ne $target.Key) {
                             $lit = @($idxEntriesL | Where-Object { $_.Key -eq $idxSpyL.Active })
                             throw ("with a filter on, clicking '$($target.Name)' highlighted " +
                                    "'$(if ($lit.Count) { $lit[0].Name } else { $idxSpyL.Active })'")
                         }
                     }
-                    if (-not $checked) { throw 'no filtered entry was reachable, so the filtered jump proves nothing' }
+                    if (-not $reached) { throw 'no filtered entry was reachable, so the filtered jump proves nothing' }
                     & $tickL 'Sec' 'Add' $false
                     $uiL.AdvScroll.ScrollToVerticalOffset(0)
                     $uiL.AdvScroll.UpdateLayout()
@@ -2589,13 +2609,13 @@ if ($advBuilt.Done) {
             # so nothing about it can be checked by looking at this one.
             & $try 'every row can say what it actually does to the machine' {
                 & $clickBtn $uiL.BtnAdvanced
-                $checked = 0
+                $reached = 0
                 $noLines = @()
                 foreach ($c in $catsL) {
                     foreach ($i in @(Get-Prop $c 'items' @())) {
                         if (-not @(Get-Prop $i 'actions' @()).Count) { continue }
                         $txt = [string](& $detailL $i)
-                        $checked++
+                        $reached++
                         if ($txt -notmatch 'WHAT THIS CHANGES') { throw "'$($i.id)' produced no detail at all" }
                         if ($txt -match 'Nothing was recorded') { $noLines += [string]$i.id }
                         if ($txt -notmatch 'Revertible: (fully|partially|no)') {
@@ -2608,7 +2628,7 @@ if ($advBuilt.Done) {
                         if ($txt -match 'IF THIS TURNS OUT') { throw "'$($i.id)' still shows the symptoms" }
                     }
                 }
-                if ($checked -lt 100) { throw "only $checked item(s) were asked, so this proves nothing" }
+                if ($reached -lt 100) { throw "only $reached item(s) were asked, so this proves nothing" }
                 if ($noLines.Count) { throw "$($noLines.Count) item(s) act and describe nothing: $(@($noLines | Select-Object -First 4) -join ', ')" }
                 # And the row carries a way in. The risk badge was the only one,
                 # and two thirds of the list has no badge.
@@ -2672,6 +2692,54 @@ if ($advBuilt.Done) {
                     if (@($d.Removed) -contains [string]$x.Blocks) {
                         throw "Extreme reads as edited because '$($x.Blocks)' is ruled out"
                     }
+                }
+                & $clickBtn $uiL.BtnBalanced
+            }.GetNewClosure()
+
+            # A machine fact can hold an option back too - turning updates off on
+            # a machine that is behind on them. Driven by planting a refusal, since
+            # this machine may well be up to date. The row it is planted on is also
+            # ruled out by Turn Windows Update off, and the refusal has to outlast
+            # that rule going in and out of force.
+            & $try 'an option held back until Windows Update catches up says so and cannot be ticked' {
+                & $clickBtn $uiL.BtnAdvanced
+                & $clearFiltL
+                $src = $rowByIdL['wu-off']
+                $dst = $rowByIdL['wu-notify-first']
+                if (-not $src -or -not $dst) { throw 'the two update rows this is written for are not on the page' }
+                if ($dst.Absent) {
+                    Write-Host '        (Ask before downloading is not on this machine, so this proves nothing)'
+                    return
+                }
+                $had   = $refusedL.ContainsKey('wu-notify-first')
+                $was   = [string]$refusedL['wu-notify-first']
+                $probe = 'Unavailable until Windows Update has caught up. (self test)'
+                try {
+                    $refusedL['wu-notify-first'] = $probe
+                    $dst.Check.IsChecked = $true; & $rowTallyL
+                    if ($dst.Check.IsChecked) { throw 'a refused row stayed ticked' }
+                    if ($dst.Check.IsEnabled) { throw 'a refused row still takes a tick' }
+                    if ($dst.Gate.Visibility -ne 'Visible' -or [string]$dst.Gate.Text -ne $probe) { throw 'a refused row does not say why' }
+
+                    $src.Check.IsChecked = $true;  & $rowTallyL
+                    $src.Check.IsChecked = $false; & $rowTallyL
+                    if ($dst.Check.IsEnabled) { throw 'unticking Turn Windows Update off handed the refused row its tick back' }
+                    if ([string]$dst.Gate.Text -ne $probe) { throw 'the other rule replaced the refusal as the reason shown' }
+
+                    # And no preset carries it into a run, even one whose own list
+                    # names it - a saved selection from an up-to-date machine.
+                    $keepBase = $baseL['Conservative']
+                    try {
+                        $baseL['Conservative'] = @(@($keepBase) + 'wu-notify-first')
+                        if (@(& $effIdsL 'Conservative') -contains 'wu-notify-first') { throw 'a preset naming a refused option still selects it' }
+                    } finally { $baseL['Conservative'] = $keepBase }
+                } finally {
+                    if ($had) { $refusedL['wu-notify-first'] = $was } else { $null = $refusedL.Remove('wu-notify-first') }
+                    $src.Check.IsChecked = $false; $dst.Check.IsChecked = $false; & $rowTallyL
+                }
+                if (-not $had) {
+                    if (-not $dst.Check.IsEnabled) { throw 'the row did not come back once the refusal was lifted' }
+                    if ($dst.Gate.Visibility -eq 'Visible') { throw 'the row kept the reason after the refusal was lifted' }
                 }
                 & $clickBtn $uiL.BtnBalanced
             }.GetNewClosure()
@@ -2750,6 +2818,54 @@ if ($advBuilt.Done) {
                 $row.Check.IsChecked = $was
                 & $applyFiltL
             }.GetNewClosure()
+            & $try 'the restart hold''s hours sit under it and never offer an empty range' {
+                & $clickBtn $uiL.BtnAdvanced
+                & $clearFiltL
+                $hold = $rowByIdL['wu-no-restart-signed-in']
+                $kid  = $rowByIdL['wu-restart-anyway-hours']
+                if (-not $hold -or -not $kid) { throw 'the hold or its hours row is missing' }
+                $strip = $stripsL['wu-restart-anyway-hours']
+                if (-not $strip) { throw 'the hours row has no strip' }
+                $wasHold = [bool]$hold.Check.IsChecked
+                $wasKid  = [bool]$kid.Check.IsChecked
+                $wasFrom = [int]$stateL.RestartHours.AnywayFrom
+                $wasTo   = [int]$stateL.RestartHours.AnywayTo
+                try {
+                    # A sub-option, so it is not on the page until the option it
+                    # refines is ticked - and neither are its hours.
+                    $hold.Check.IsChecked = $false
+                    & $applyFiltL
+                    if ($kid.Panel.Visibility -ne 'Collapsed') { throw 'the hours row is on the page with the hold unticked' }
+                    if ($strip.Visibility -ne 'Collapsed') { throw 'the hours strip outlived its row' }
+                    $hold.Check.IsChecked = $true
+                    & $applyFiltL
+                    if ($kid.Panel.Visibility -ne 'Visible') { throw 'ticking the hold did not bring its hours row' }
+                    # The hours are the whole of the option, so they show before
+                    # its own tick, as the deferral days do.
+                    if ($strip.Visibility -ne 'Visible') { throw 'the hours are hidden until the option is ticked' }
+                    $cbs = @($strip.Child.Children | Where-Object { $_ -is [Windows.Controls.ComboBox] })
+                    if ($cbs.Count -ne 2) { throw "the strip has $($cbs.Count) hour picker(s), not 2" }
+                    if ($cbs[0].Items.Count -ne 24) { throw "a picker offers $($cbs[0].Items.Count) hours, not 24" }
+                    $cbs[1].SelectedIndex = 9
+                    $cbs[0].SelectedIndex = 9
+                    if ([int]$cbs[1].SelectedIndex -ne 10) { throw 'picking one hour at both ends left an empty range' }
+                    if ([int]$stateL.RestartHours.AnywayFrom -ne 9 -or [int]$stateL.RestartHours.AnywayTo -ne 10) {
+                        throw "the pickers say 9-10 and the state holds $($stateL.RestartHours.AnywayFrom)-$($stateL.RestartHours.AnywayTo)"
+                    }
+                    if ([int](& $uiOutL).restartAnywayFrom -ne 9) { throw 'the hours are not in what the settings file would be given' }
+                    # Hidden on Home, where the deadline policy does nothing, so
+                    # only asked where the row exists.
+                    $dl = $stripsL['wu-restart-deadline']
+                    if ($rowByIdL['wu-restart-deadline'] -and -not $dl) { throw 'the deadline row has no days box' }
+                } finally {
+                    $cbs = @($strip.Child.Children | Where-Object { $_ -is [Windows.Controls.ComboBox] })
+                    if ($cbs.Count -eq 2) { $cbs[0].SelectedIndex = $wasFrom; $cbs[1].SelectedIndex = $wasTo }
+                    $stateL.RestartHours.AnywayFrom = $wasFrom; $stateL.RestartHours.AnywayTo = $wasTo
+                    $hold.Check.IsChecked = $wasHold
+                    $kid.Check.IsChecked  = $wasKid
+                    & $applyFiltL
+                }
+            }.GetNewClosure()
             & $try 'the default-browser row appears only when there is a browser for it' {
                 & $clickBtn $uiL.BtnAdvanced
                 & $clearFiltL
@@ -2804,8 +2920,10 @@ if ($advBuilt.Done) {
                 $o = & $uaGenL
                 if (-not $o.Check.Ok) { throw "the default form produces a bad file: $($o.Check.Problems -join '; ')" }
                 # Untouched, the page has to produce the file most people want.
+                # .Text, not .Xml, for anything a command does: a long command
+                # is carried as base64 and is in no Path element as itself.
                 foreach ($want in @('BypassNRO', 'HideOnlineAccountScreens', 'BypassTPMCheck', 'AllowTelemetry', '<LocalAccount ')) {
-                    if ($o.Xml -notmatch [regex]::Escape($want)) { throw "the default file is missing $want" }
+                    if ($o.Text -notmatch [regex]::Escape($want)) { throw "the default file is missing $want" }
                 }
                 if ($o.Xml -match '<WillWipeDisk>') { throw 'the default file wipes a disk' }
                 # Compared as a code point, not with StartsWith: U+FEFF is a
@@ -2828,7 +2946,7 @@ if ($advBuilt.Done) {
                     throw "the command box produced $(@($o2.Options.ExtraFirstLogon).Count) command(s), expected 2 with the blank line dropped"
                 }
                 if ($o2.Xml -notmatch 'WD-TEST-PC') { throw 'the computer name did not reach the file' }
-                if ($o2.Xml -match 'BypassTPMCheck') { throw 'the hardware bypass was unticked and is still in the file' }
+                if ($o2.Text -match 'BypassTPMCheck') { throw 'the hardware bypass was unticked and is still in the file' }
                 # Put it back, and prove the disk answer is reachable - a
                 # control nothing can select only looks safe.
                 $byKey['ComputerName'].Ctrl.Text = ''
@@ -2843,7 +2961,9 @@ if ($advBuilt.Done) {
                 if ($o4.Xml -match '<WillWipeDisk>') { throw 'the disk answer latched on once it had been set' }
                 if ("$($uiL.TxtUaTally.Text)" -notmatch '\d') { throw 'the footer does not say what the file carries' }
                 & $clickBtn $uiL.BtnUaBack
-                if ($uiL.PageModes.Visibility -ne 'Visible') { throw 'Back from the answer file page did not return to the modes' }
+                # Home, not the modes: the page is one of the three home cards,
+                # and Back goes to where it was opened from.
+                if ($uiL.PageHome.Visibility -ne 'Visible') { throw 'Back from the answer file page did not return to the home page' }
             }.GetNewClosure()
             & $try 'the setup file page defaults safely and drives its drop-downs' {
                 & $clickBtn $uiL.BtnUnattend
@@ -2938,7 +3058,7 @@ if ($advBuilt.Done) {
                 $byKey['WifiPassword'].Ctrl.Password = 'not-a-real-password'
                 $w = & $uaGenL
                 if (-not $w.Check.Ok) { throw "a Wi-Fi network produced a bad file: $($w.Check.Problems -join '; ')" }
-                if ($w.Xml -notmatch 'wlan add profile') { throw 'a Wi-Fi network wrote no profile' }
+                if ($w.Text -notmatch 'wlan add profile') { throw 'a Wi-Fi network wrote no profile' }
                 $byKey['WifiSsid'].Ctrl.Text = ''
                 $byKey['WifiPassword'].Ctrl.Password = ''
 
@@ -2947,18 +3067,18 @@ if ($advBuilt.Done) {
                 if ($byKey['RunToolkit'].Kind -ne 'switch') { throw 'the toolkit section has no On/Off' }
                 $off = & $uaGenL
                 if ($off.Options.RunToolkit) { throw 'auto-debloat is on by default' }
-                if ($off.Xml -match 'Setup\\Scripts\\WinSetupToolkit') { throw 'the default file runs the toolkit' }
+                if ($off.Text -match 'Setup\\Scripts\\WinSetupToolkit') { throw 'the default file runs the toolkit' }
                 foreach ($rb in $byKey['RunToolkit'].Ctrl) { $rb.IsChecked = [bool]$rb.Tag.On }
                 foreach ($rb in $byKey['RunPreset'].Ctrl) { $rb.IsChecked = ([string]$rb.Tag -eq 'Balanced') }
                 $rp = & $uaGenL
                 if (-not $rp.Check.Ok) { throw "running a preset produced a bad file: $($rp.Check.Problems -join '; ')" }
-                if ($rp.Xml -notmatch 'WinSetupToolkit\.ps1') { throw 'nothing in the file runs the toolkit' }
-                if ($rp.Xml -notmatch 'Setup\\Scripts\\WinSetupToolkit') { throw 'nothing copies the toolkit onto the machine' }
+                if ($rp.Text -notmatch 'WinSetupToolkit\.ps1') { throw 'nothing in the file runs the toolkit' }
+                if ($rp.Text -notmatch 'Setup\\Scripts\\WinSetupToolkit') { throw 'nothing copies the toolkit onto the machine' }
                 # The run is SetupComplete.cmd, base64 inside the specialize
                 # command, so this decodes it.
-                if ($rp.Xml -notmatch 'SetupComplete\.cmd') { throw 'no SetupComplete.cmd is written' }
+                if ($rp.Text -notmatch 'SetupComplete\.cmd') { throw 'no SetupComplete.cmd is written' }
                 $b64 = ''
-                if ($rp.Xml -match "FromBase64String\('([A-Za-z0-9+/=]+)'\)") { $b64 = $Matches[1] }
+                if ($rp.Text -match "FromBase64String\('([A-Za-z0-9+/=]+)'\)") { $b64 = $Matches[1] }
                 if (-not $b64) { throw 'the SetupComplete.cmd body is not in the file' }
                 $setupCmd = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64))
                 if ($setupCmd -notmatch '-Preset Balanced') { throw 'the command does not name the mode' }
@@ -2974,7 +3094,7 @@ if ($advBuilt.Done) {
                 # And the switch turns it off again.
                 foreach ($rb in $byKey['RunToolkit'].Ctrl) { $rb.IsChecked = (-not [bool]$rb.Tag.On) }
                 $rp2 = & $uaGenL
-                if ($rp2.Xml -match 'Setup\\Scripts\\WinSetupToolkit') { throw 'the run option latched on once it had been set' }
+                if ($rp2.Text -match 'Setup\\Scripts\\WinSetupToolkit') { throw 'the run option latched on once it had been set' }
 
                 # Unavailable to a standard account: the account this file
                 # creates is the one that would have to undo the run.
@@ -2985,7 +3105,7 @@ if ($advBuilt.Done) {
                 if ($onRb[0].IsChecked) { throw 'On stayed selected after the account became standard' }
                 $std = & $uaGenL
                 if ($std.Options.RunToolkit) { throw 'a standard account still produced a file that debloats' }
-                if ($std.Xml -match 'Setup\\Scripts\\WinSetupToolkit') { throw 'the file runs the toolkit for a standard account' }
+                if ($std.Text -match 'Setup\\Scripts\\WinSetupToolkit') { throw 'the file runs the toolkit for a standard account' }
                 # Put back, and On becomes available again - a gate that only
                 # closes needs a restart to open.
                 foreach ($rb in $byKey['AccountGroup'].Ctrl) { $rb.IsChecked = ([string]$rb.Tag -eq 'Administrators') }
@@ -3154,7 +3274,12 @@ if ($advBuilt.Done) {
                     & $clickBtn $uiL.BtnBalanced
                     & $clickEl $mine[0]
                     if ($stateL.Preset -ne $name) { throw 'the row in the box did not select it' }
-                    # And says so where it lives.
+                    # And says so where it lives - on the row the box holds now.
+                    # Selecting repaints the box, which makes new rows, so the one
+                    # clicked a moment ago is no longer on screen.
+                    $mine = @($uiL.LoadedPanel.Children |
+                              Where-Object { $_.Tag -and [string]$_.Tag.Name -eq $name })
+                    if (-not $mine.Count) { throw 'selecting it took its row out of the box' }
                     if ([string]$mine[0].Tag.Mark.Text -ne 'SELECTED') {
                         throw "the row reads '$($mine[0].Tag.Mark.Text)'"
                     }
@@ -3536,7 +3661,7 @@ if ($advBuilt.Done) {
                 & $setBrowL @() $false
                 $segs = { param([string]$Word) @($uiL.DiskBar.Children | Where-Object { $_.ToolTip -match $Word }) }
                 if (@(& $segs 'give back').Count) { throw 'a freed segment is drawn with nothing selected' }
-                if ($uiL.DiskNote.Text -notmatch 'Nothing selected changes that') { throw "the note reads '$($uiL.DiskNote.Text)'" }
+                if ($uiL.DiskNote.Text -notmatch '^\S+ is \d+% full\.$') { throw "the note reads '$($uiL.DiskNote.Text)'" }
 
                 $sized = @($storeRowsL | Where-Object { $storeL.Snapshot.Items[$_.Id] -gt 0 })
                 $sized[0].Check.IsChecked = $true
@@ -3698,8 +3823,19 @@ if ($advBuilt.Done) {
                 # No preset name on it: it stands on the card of the preset it
                 # acts on.
                 if ($uiL.BtnResetPresets.Content -ne 'Reset') { throw "the button reads '$($uiL.BtnResetPresets.Content)'" }
-                if ($uiL.PresetEditRow.Parent -ne $colsL['Aggressive'].Panel) {
-                    throw 'the Save/Reset pair is not on the Aggressive column'
+                # On the card, not a direct child of it: the pair shares Preview's
+                # line, in a grid of its own inside the card's foot. So the
+                # question is which card it is inside.
+                $on = @()
+                $el = $uiL.PresetEditRow
+                while ($el -and -not $on.Count) {
+                    $on = @($colsL.Keys | Where-Object { $colsL[$_].Panel -eq $el -or $colsL[$_].Border -eq $el })
+                    $el = $(if ($el -is [Windows.FrameworkElement]) { $el.Parent } else { $null })
+                }
+                if (-not ($on.Count -eq 1 -and $on[0] -eq 'Aggressive')) {
+                    throw ("the Save/Reset pair is not on the Aggressive column - it is on " +
+                           "$(if ($on.Count) { $on -join ', ' } else { 'no card' })" +
+                           ", with $($stateL.Preset) selected and overrides for $(@($ovL.Keys) -join ', ')")
                 }
                 & $clrOvL
                 & $clickBtn $uiL.BtnBackModes
@@ -3912,17 +4048,24 @@ if ($advBuilt.Done) {
                 # One page open at a time, through each one's own Back button.
                 & $clickBtn $uiL.BtnBackModes
                 $seen = 0
+                $skipped = @()
+                $unreachable = @()
                 # All five, and the two that were missing are why this is worth
                 # saying.
                 foreach ($p in @(@{ Go = { & $clickBtn $uiL.BtnDebloat };  Back = $uiL.BtnModesBack;   Page = $uiL.PageModes;    Sv = $uiL.ModeScroll; Name = 'Modes' },
                                  @{ Go = { & $clickBtn $uiL.BtnAdvanced }; Back = $uiL.BtnBackModes;   Page = $uiL.PageAdvanced; Sv = $uiL.AdvScroll;  Name = 'Advanced' },
-                                 @{ Go = { $null = & $goRevertList };      Back = $uiL.BtnRevertBack;  Page = $uiL.PageRevert;   Sv = $uiL.RevScroll;  Name = 'Revert' },
+                                 @{ Go = { & $goRevertList };              Back = $uiL.BtnRevertBack;  Page = $uiL.PageRevert;   Sv = $uiL.RevScroll;  Name = 'Revert' },
                                  @{ Go = { & $clickBtn $uiL.BtnRevert };   Back = $uiL.BtnRevHomeBack; Page = $uiL.PageRevertHome; Sv = $uiL.RevHomeScroll; Name = 'Past runs' },
                                  @{ Go = $goCompare;                       Back = $uiL.BtnCompareBack; Page = $uiL.PageCompare;  Sv = $uiL.CmpScroll;  Name = 'Compare' },
                                  @{ Go = { & $clickBtn $uiL.BtnUnattend }; Back = $uiL.BtnUaBack;      Page = $uiL.PageUnattend; Sv = $uiL.UaScroll;   Name = 'Setup file' })) {
-                    & $p.Go
+                    # A route that cannot get there on this machine says so - the
+                    # Revert list needs a past run with a rollback script - and is
+                    # not counted, so "not laid out" keeps meaning a layout fault.
+                    $went = & $p.Go
+                    if ($went -is [bool] -and -not $went) { $unreachable += $p.Name; continue }
                     $p.Page.UpdateLayout()
                     if ([double]$p.Page.ActualWidth -le 0 -or [double]$p.Sv.ActualWidth -le 0) {
+                        $skipped += "$($p.Name) (page $([int]$p.Page.ActualWidth)px, scroller $([int]$p.Sv.ActualWidth)px, $($p.Page.Visibility))"
                         if ($p.Back) { & $clickBtn $p.Back }
                         continue
                     }
@@ -3942,7 +4085,10 @@ if ($advBuilt.Done) {
                 }
                 # Six, not five. This measured three of five for a long time,
                 # which is a check somebody trusts and should not.
-                if ($seen -lt 6) { throw "$seen of 6 pages laid out, so this measured less than it claims" }
+                if ($unreachable.Count) { Write-Host "        (no way into $($unreachable -join ', ') on this machine, so not measured)" }
+                if ($seen -lt (6 - $unreachable.Count)) {
+                    throw "$seen of $(6 - $unreachable.Count) reachable pages laid out, so this measured less than it claims - not laid out: $($skipped -join '; ')"
+                }
                 # Measured after a real arrange rather than read off the setter:
                 # a setter reads back correctly while the bar arranges at the
                 # theme's MinWidth.
@@ -4161,7 +4307,11 @@ if ($advBuilt.Done) {
                 # to, or the two sides share no heading.
                 $extremeOnly = @($rowsL | Where-Object { $_.Id -in @($baseL['Extreme']) -and $_.Id -notin $base })
                 $shared = @($extremeOnly | ForEach-Object { $_.Category } | Sort-Object -Unique)
-                $spare = @($rowsL | Where-Object { $_.Category -in $shared -and
+                # And one this machine can take: Compare leaves out anything not
+                # here, already done, or ruled out, so an edit naming one of
+                # those draws no card to tag - which depends on the machine, not
+                # on the page.
+                $spare = @($rowsL | Where-Object { $_.Category -in $shared -and $_.Check.IsEnabled -and -not $_.Absent -and
                                                    $_.Id -notin $base -and $_.Id -notin @($baseL['Extreme']) } |
                            Select-Object -First 1 | ForEach-Object { $_.Id })
                 if (-not $spare.Count) { throw 'no spare item in a category Extreme also adds to' }
@@ -4209,7 +4359,7 @@ if ($advBuilt.Done) {
                         }
                     }
                 }
-                if ($tags.Count -ne 1) { throw "$($tags.Count) item(s) tagged, expected 1" }
+                if ($tags.Count -ne 1) { throw "$($tags.Count) item(s) tagged, expected 1 (the edit added '$($spare -join ', ')'; tagged: $($tags -join ', '))" }
                 & $clrOvL
             }.GetNewClosure()
             & $try 'compare says everything the list says about the same item' {
@@ -4358,8 +4508,8 @@ if ($advBuilt.Done) {
 
                 # Not a benchmark, a regression guard: what is guarded against
                 # is a rebuild, which is an order of magnitude away.
-                if ($ms -gt 1200) { throw "the hand-over took ${ms} ms over $cards card(s), which is a rebuild" }
-                Write-Host ("  compare handed an item across in {0} ms over {1} cards" -f $ms, $cards)
+                if ($ms -gt 1200) { throw "the hand-over took ${ms} ms over $cards card(s) ($($cmpRefs.Ms)), which is a rebuild" }
+                Write-Host ("  compare handed an item across in {0} ms over {1} cards ({2})" -f $ms, $cards, $cmpRefs.Ms)
                 & $clrOvL
             }.GetNewClosure()
             & $try 'compare undoes a run of hand-overs, one visit at a time' {
@@ -4449,10 +4599,18 @@ if ($advBuilt.Done) {
                     return
                 }
                 if ($uiL.PageRevert.Visibility -ne 'Visible') { throw 'Show all options did not open the list' }
+                $firstRows = $revL.Count
+                if (-not $firstRows) { throw 'a run with a journal opened onto a page with no rows' }
                 # And Back goes to the cards, not past them to the home page.
                 & $clickBtn $uiL.BtnRevertBack
                 if ($uiL.PageRevertHome.Visibility -ne 'Visible') { throw 'Back skipped the past runs page' }
+                # The second visit is served from the cache, and used to arrive
+                # cleared: the page was emptied before a build that then did
+                # not happen. Every check below is gated on there being rows,
+                # so this one cannot be allowed to pass quietly.
                 $null = & $goRevertList
+                if ($revL.Count -ne $firstRows) { throw "opening the same run again showed $($revL.Count) row(s) where the first visit had $firstRows" }
+                if (-not $uiL.RevList.Children.Count) { throw 'opening the same run again showed an empty page' }
             }.GetNewClosure()
             if ($revL.Count) {
                 & $try 'toggle a revert row' { $revL[0].Check.IsChecked = $true; $revL[0].Check.IsChecked = $false }.GetNewClosure()
@@ -4548,21 +4706,41 @@ if ($advBuilt.Done) {
                 & $try 'revert Select all takes the page and gives it back' {
                     $live = @($revL | Where-Object { $_.Check.IsEnabled -and $_.Card.Visibility -eq 'Visible' })
                     if ($live.Count) {
+                        $all = $live.Count
                         # A bare block, not a closure: GetNewClosure() here
                         # would copy this invocation's locals only.
-                        $say = { "$([string]$uiL.BtnRevSelectAll.Content)/$(@($live | Where-Object { $_.Check.IsChecked }).Count)" }
-                        $s0 = & $say
-                        & $clickBtn $uiL.BtnRevSelectAll
-                        $s1 = & $say
-                        & $clickBtn $uiL.BtnRevSelectAll
-                        $s2 = & $say
-                        foreach ($s in @($s0, $s1, $s2)) {
-                            if ($s -ne "Select none/$($live.Count)" -and $s -ne 'Select all/0') {
-                                throw "the button and the ticks disagree: $s"
+                        $say  = { "$([string]$uiL.BtnRevSelectAll.Content)/$(@($live | Where-Object { $_.Check.IsChecked }).Count)" }
+                        # The rule, from any starting point: the label offers to
+                        # clear only when every live row is ticked.
+                        $fits = { param([string]$S)
+                                  $n = [int]($S -replace '^.*/', '')
+                                  if ($n -eq $all) { $S -eq "Select none/$all" } else { $S -eq "Select all/$n" } }
+                        # Earlier checks may leave the page part-ticked, which is
+                        # a state this button has to read correctly too, and the
+                        # ticks go back exactly as they were found.
+                        $was = @{}
+                        foreach ($r in $live) { $was[$r] = [bool]$r.Check.IsChecked }
+                        try {
+                            $s0 = & $say
+                            if (-not (& $fits $s0)) {
+                                & $revCountL
+                                throw "the page arrived reading $s0 over $all live row(s); after a repaint it reads $(& $say)"
                             }
+                            # From part-ticked or empty, a press takes everything;
+                            # from full, it clears - and the next press reverses it.
+                            $full = ($s0 -eq "Select none/$all")
+                            & $clickBtn $uiL.BtnRevSelectAll
+                            $s1 = & $say
+                            $want1 = $(if ($full) { 'Select all/0' } else { "Select none/$all" })
+                            if ($s1 -ne $want1) { throw "from $s0 a press gave $s1, expected $want1" }
+                            & $clickBtn $uiL.BtnRevSelectAll
+                            $s2 = & $say
+                            $want2 = $(if ($full) { "Select none/$all" } else { 'Select all/0' })
+                            if ($s2 -ne $want2) { throw "a second press gave $s2, expected $want2" }
+                        } finally {
+                            foreach ($r in $live) { $r.Check.IsChecked = $was[$r] }
+                            & $revCountL
                         }
-                        if ($s1 -eq $s0) { throw "a press changed nothing, still $s1" }
-                        if ($s2 -ne $s0) { throw "pressing twice did not come back to $s0, gave $s2" }
                     }
                 }.GetNewClosure()
 
@@ -4592,7 +4770,14 @@ if ($advBuilt.Done) {
                     # second folds it away.
                     & $clickEl $chip
                     if (-not $r.Detail.Det) { throw 'pressing Details built no panel' }
-                    if ([string]$r.Detail.Det.Text -ne [string]$r.DetailText) { throw 'the panel does not show what the row says it would do' }
+                    # Under Non-verbose the row hides its description, so the
+                    # panel leads with it - by design, and invisible to this
+                    # check while the only rows it ever met had none.
+                    $wantDet = [string]$r.DetailText
+                    if ($stateL.Terse -and [string]$r.Desc) {
+                        $wantDet = [string]$r.Desc + [Environment]::NewLine + [Environment]::NewLine + $wantDet
+                    }
+                    if ([string]$r.Detail.Det.Text -ne $wantDet) { throw 'the panel does not show what the row says it would do' }
                     & $clickEl $chip
                     if ($r.Detail.Det.Visibility -ne 'Collapsed') { throw 'a second press did not fold the panel away' }
                     & $clickEl $chip
@@ -4881,7 +5066,10 @@ if ($advBuilt.Done) {
                 & $pumpL
                 if ($stateL.Acknowledged) { throw 'a finished apply acknowledged itself' }
                 if ($uiL.TxtRunNote.Text -notmatch 'restart') { throw "footer does not mention the restart: '$($uiL.TxtRunNote.Text)'" }
-                if ($uiL.TxtNowHead.Text -ne 'Finished') { throw "bottom card reads '$($uiL.TxtNowHead.Text)' at the end" }
+                # One bar at the end, not two: the card goes, and the line under
+                # the bar says it finished and what it did.
+                if ($uiL.NowCard.Visibility -ne 'Collapsed') { throw "the bottom card is still up at the end, reading '$($uiL.TxtNowHead.Text)'" }
+                if ($uiL.TxtCurrent.Text -notmatch '^Finished') { throw "the line under the bar reads '$($uiL.TxtCurrent.Text)' at the end" }
                 if ($stateL.NowSince) { throw 'the clock is still running after the end' }
 
                 # Back is the acknowledgement.
@@ -4998,7 +5186,7 @@ if ($advBuilt.Done) {
                 & $clickBtn $uiL.BtnAdvanced
                 $was = [string]$stateL.Theme
                 $sample = @{
-                    'header'   = @($uiL.HeaderTitle,  'Foreground')
+                    'header'   = @($uiL.HeaderMachine, 'Foreground')
                     'footer'   = @($uiL.AdvFooter,    'Background')
                     'checkbox' = @($uiL.ChkOwnership, 'Foreground')
                     'a row'    = @($rowsL[0].Name,    'Foreground')
@@ -5026,7 +5214,10 @@ if ($advBuilt.Done) {
                 }
                 # Not a benchmark, a regression guard: the old switch took about
                 # three seconds behind an overlay.
-                if ($ms -gt 1200) { throw "the switch took ${ms} ms, which is a rebuild" }
+                if ($ms -gt 1200) {
+                    $parts = @($winL.Tag.ThemeMs.Keys | ForEach-Object { "$_ $($winL.Tag.ThemeMs[$_])" }) -join ', '
+                    throw "the switch took ${ms} ms ($parts), which is a rebuild"
+                }
                 Write-Host ("  theme switch repainted the page in {0} ms" -f $ms)
             }.GetNewClosure()
 

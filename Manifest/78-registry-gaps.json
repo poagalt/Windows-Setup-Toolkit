@@ -8,12 +8,13 @@
       "items": [
         {
           "id": "ads-settings-suggestions",
-          "settingsPath": "Settings > Privacy and security > General.",
-          "symptoms": ["no suggestions in settings"],
+          "settingsPath": "Settings > System > Multitasking > Timeline, and turn Show suggestions in your timeline back on.",
+          "symptoms": ["no suggestions in timeline", "timeline suggestions gone"],
           "bloat": 2,
-          "name": "Suggested content in Settings",
-          "desc": "The fourth suggestion surface, on Settings pages themselves. The other three are already covered.",
+          "name": "Suggestions in Timeline",
+          "desc": "Windows 10's Timeline in Task View suggesting apps and websites. Windows 11 has no Timeline, so this is only offered on Windows 10.",
           "risk": 0, "tier": 1, "default": false, "order": 51,
+          "guards": ["build:<22000"],
           "actions": [
             {
               "type": "registry", "scope": "allusers",
@@ -129,8 +130,7 @@
             {
               "type": "registry", "scope": "machine",
               "values": [
-                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer", "name": "NoUseStoreOpenWith", "kind": "DWord", "value": 1 },
-                { "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer", "name": "NoInternetOpenWith", "kind": "DWord", "value": 1 }
+                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer", "name": "NoUseStoreOpenWith", "kind": "DWord", "value": 1 }
               ]
             }
           ]
@@ -205,29 +205,6 @@
               "type": "registry", "scope": "allusers",
               "values": [
                 { "path": "SOFTWARE\\Policies\\Microsoft\\OneDrive", "name": "DisableFREAnimation", "kind": "DWord", "value": 1 }
-              ]
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "id": "update",
-      "name": "Windows Update",
-      "order": 110,
-      "items": [
-        {
-          "id": "update-temp-feature-control",
-          "settingsPath": "Undo the run.",
-          "symptoms": ["new features not appearing", "feature missing after update"],
-          "name": "Features that ship switched off, staying off",
-          "desc": "Monthly updates carry new features in a disabled state and turn them on later. This keeps them off until the next real feature update.",
-          "risk": 0, "tier": 1, "default": false, "order": 71,
-          "actions": [
-            {
-              "type": "registry", "scope": "machine",
-              "values": [
-                { "path": "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate", "name": "AllowTemporaryEnterpriseFeatureControl", "kind": "DWord", "value": 0 }
               ]
             }
           ]

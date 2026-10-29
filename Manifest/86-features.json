@@ -45,7 +45,7 @@
         {
           "id": "feat-wsl",
           "name": "Windows Subsystem for Linux",
-          "desc": "Turns on the two features WSL needs. The distribution itself comes afterwards, from the Store or by running wsl --install -d Ubuntu.",
+          "desc": "Turns on the Virtual Machine Platform and Windows Subsystem for Linux features. WSL itself and a Linux distribution come afterwards: run wsl --install, which fetches both.",
           "riskNote": "The Virtual Machine Platform half of this is the same hypervisor Hyper-V uses, with the same consequences for other virtual machine software and for anti-cheat. Restart required.",
           "risk": 1, "tier": 0, "default": false, "order": 150,
           "installSize": 500,
@@ -67,11 +67,11 @@
           "id": "feat-openssh-server",
           "name": "OpenSSH server",
           "desc": "Installs sshd so this machine can accept SSH connections. Installing it does not start it.",
-          "riskNote": "Nothing listens until you start the sshd service and let it through the firewall, both of which are deliberately left to you. Once you do, this machine accepts remote sign-ins with your Windows credentials - only worth doing if you actually want that, and worth pairing with key-only authentication if you do.",
+          "riskNote": "Installing it also makes Windows create and enable the OpenSSH-Server-In-TCP firewall rule, which lets SSH in on port 22; undoing the run removes that rule along with the server. Nothing listens until you start the sshd service, which is deliberately left to you. Once you do, this machine accepts remote sign-ins with your Windows credentials - only worth doing if you actually want that, and worth pairing with key-only authentication if you do.",
           "risk": 1, "tier": 0, "default": false, "order": 151,
           "installSize": 15,
           "actions": [
-            { "type": "capability", "mode": "install", "names": ["OpenSSH.Server*"] }
+            { "type": "capability", "mode": "install", "names": ["OpenSSH.Server*"], "firewallRules": ["OpenSSH-Server-In-TCP"] }
           ]
         }
       ]

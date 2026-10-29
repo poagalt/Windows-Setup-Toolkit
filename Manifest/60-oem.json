@@ -87,8 +87,6 @@
                                                                  "match":  [
                                                                                "ASUS GiftBox*",
                                                                                "ASUS Product Register*",
-                                                                               "ASUS Splendid*",
-                                                                               "ASUS ScreenXpert*",
                                                                                "GlideX*"
                                                                            ],
                                                                  "exclude":  [
@@ -141,7 +139,6 @@
                                                                  "timeoutSeconds":  900,
                                                                  "match":  [
                                                                                "MSI App Player*",
-                                                                               "Norton*",
                                                                                "MSI Driver*Utility Installer*"
                                                                            ],
                                                                  "exclude":  [
@@ -151,7 +148,7 @@
                                                              }
                                                          ],
                                              "tier":  3,
-                                             "riskNote":  "Removes the vendor support and update suite. Firmware, power, and thermal tools are excluded and kept."
+                                             "riskNote":  "Removes the vendor support and update suite. On HP, Dell, and Samsung machines that suite is also how BIOS and driver updates arrive, so afterwards they come from Windows Update or the manufacturer's support site. Firmware, power, and thermal tools are excluded and kept."
                                          },
                                          {
                                              "id":  "oem-companion",
@@ -159,7 +156,7 @@
                                              "symptoms": ["vendor companion app missing", "oem app gone"],
                                              "bloat": 3,
                                              "name":  "Vendor companion apps",
-                                             "desc":  "myHP, MyASUS, Lenovo Now, Acer Jumpstart, Dell Customer Connect, and the vendor welcome apps.",
+                                             "desc":  "Lenovo Now, Acer Jumpstart, Dell Customer Connect, HP QuickDrop, and the vendor welcome apps. The vendor's own power, display, and hotkey tools - Lenovo Vantage, MyASUS, MyDell, myHP, and Armoury Crate - are left alone.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  81,
@@ -170,8 +167,6 @@
                                                                                 "oem:hp"
                                                                             ],
                                                                  "names":  [
-                                                                               "AD2F1837.*",
-                                                                               "*myHP*",
                                                                                "*HPPrivacySettings*",
                                                                                "*HPQuickDrop*",
                                                                                "*HPSystemInformation*",
@@ -186,7 +181,6 @@
                                                                             ],
                                                                  "names":  [
                                                                                "DellInc.DellDigitalDelivery*",
-                                                                               "DellInc.MyDell*",
                                                                                "DellInc.DellCustomerConnect*",
                                                                                "DellInc.PartnerPromo*",
                                                                                "DellInc.DellMobileConnect*"
@@ -198,8 +192,6 @@
                                                                                 "oem:lenovo"
                                                                             ],
                                                                  "names":  [
-                                                                               "E046963F.LenovoCompanion",
-                                                                               "E046963F.LenovoSettings*",
                                                                                "*LenovoNow*",
                                                                                "*LenovoWelcome*",
                                                                                "LenovoCorporation.LenovoID*",
@@ -213,10 +205,7 @@
                                                                             ],
                                                                  "names":  [
                                                                                "*ASUSGiftBox*",
-                                                                               "*ASUSProductRegistration*",
-                                                                               "*ASUSSplendid*",
-                                                                               "*ScreenXpert*",
-                                                                               "B9ECED6F.*"
+                                                                               "*ASUSProductRegistration*"
                                                                            ]
                                                              },
                                                              {
@@ -225,19 +214,9 @@
                                                                                 "oem:acer"
                                                                             ],
                                                                  "names":  [
-                                                                               "AcerIncorporated.*",
                                                                                "*AcerCollection*",
                                                                                "*AcerJumpstart*",
                                                                                "*AcerRegistration*"
-                                                                           ]
-                                                             },
-                                                             {
-                                                                 "type":  "appx",
-                                                                 "guards":  [
-                                                                                "oem:samsung"
-                                                                            ],
-                                                                 "names":  [
-                                                                               "SAMSUNGELECTRONICSCO.LTD.*"
                                                                            ]
                                                              },
                                                              {
@@ -268,7 +247,7 @@
                                              "symptoms": ["vendor security app missing", "fingerprint software gone"],
                                              "bloat": 3,
                                              "name":  "Vendor security agents",
-                                             "desc":  "HP Wolf Security, Dell Trusted Device, and the Absolute/Computrace persistence agent.",
+                                             "desc":  "HP Wolf Security with its Sure Click, Sure Sense, and Sure Run agents, and Dell Trusted Device.",
                                              "risk":  1,
                                              "default":  true,
                                              "order":  83,
@@ -295,23 +274,12 @@
                                                                             ],
                                                                  "timeoutSeconds":  900,
                                                                  "match":  [
-                                                                               "Dell Trusted Device*",
-                                                                               "Dell Data Protection*",
-                                                                               "Dell Encryption*"
-                                                                           ]
-                                                             },
-                                                             {
-                                                                 "type":  "uninstall",
-                                                                 "timeoutSeconds":  600,
-                                                                 "match":  [
-                                                                               "Absolute*",
-                                                                               "Computrace*",
-                                                                               "LoJack*"
+                                                                               "Dell Trusted Device*"
                                                                            ]
                                                              }
                                                          ],
                                              "tier":  3,
-                                             "riskNote":  "Removes vendor endpoint security agents. On a managed work machine this may be required by your employer - check first."
+                                             "riskNote":  "Removes vendor endpoint security agents. HP Sure Sense is an antivirus, so Windows Security takes over from it. On a managed work machine your employer may require these - check first. Dell Encryption is deliberately left alone: uninstalling it without Dell's own removal agent leaves the data it encrypted unreadable."
                                          },
                                          {
                                              "id":  "oem-media",
@@ -319,8 +287,8 @@
                                              "symptoms": ["media suite missing", "dvd player gone", "bundled media app missing"],
                                              "bloat": 3,
                                              "name":  "Bundled media suites",
-                                             "desc":  "CyberLink PowerDirector and PowerDVD, Nero, Power2Go, and WildTangent Games.",
-                                             "risk":  0,
+                                             "desc":  "CyberLink's PowerDVD, PowerDirector, PhotoDirector, Power2Go, and MediaShow, plus Nero, Roxio, Corel trials, and WildTangent Games.",
+                                             "risk":  1,
                                              "default":  true,
                                              "order":  84,
                                              "actions":  [
@@ -337,7 +305,6 @@
                                                                                "Nero*",
                                                                                "WildTangent*",
                                                                                "Corel*Trial*",
-                                                                               "Wondershare*",
                                                                                "Roxio*"
                                                                            ]
                                                              },
@@ -350,7 +317,8 @@
                                                                            ]
                                                              }
                                                          ],
-                                             "tier":  1
+                                             "tier":  1,
+                                             "riskNote":  "These are matched by product name, so a copy you bought goes along with a bundled trial - PowerDVD is the usual way to play Blu-ray discs on Windows. Untick this if you paid for one of them."
                                          },
                                          {
                                              "id":  "oem-reg",
@@ -362,6 +330,9 @@
                                              "risk":  0,
                                              "default":  true,
                                              "order":  84,
+                                             "guards":  [
+                                                            "!oem:generic"
+                                                        ],
                                              "actions":  [
                                                              {
                                                                  "type":  "uninstall",
@@ -383,17 +354,18 @@
                                          },
                                          {
                                              "id":  "oem-shortcuts",
-                                             "settingsPath": "Re-create the shortcut yourself.",
+                                             "settingsPath": "Drag the shortcut back out of the Recycle Bin, or undo the run.",
                                              "symptoms": ["desktop shortcut removed", "affiliate icon gone"],
                                              "bloat": 2,
                                              "name":  "Affiliate desktop shortcuts and tiles",
-                                             "desc":  "Booking.com, Amazon, and similar planted links across desktop and Start.",
+                                             "desc":  "Booking.com, Amazon, and similar planted links across desktop and Start. A shortcut that opens a program you have installed is kept.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  85,
                                              "actions":  [
                                                              {
                                                                  "type":  "shortcut",
+                                                                 "keepLive":  true,
                                                                  "names":  [
                                                                                "Booking.com*",
                                                                                "Amazon*",
@@ -415,24 +387,15 @@
                                          },
                                          {
                                              "id":  "gpu-telemetry",
-                                             "settingsPath": "Undo the run.",
+                                             "settingsPath": "Re-enable NVIDIA Telemetry Container in services.msc and its tasks in Task Scheduler, or undo the run. The Intel and AMD programs reinstall from the vendor.",
                                              "symptoms": ["nvidia telemetry off", "gpu telemetry"],
                                              "bloat": 1,
                                              "name":  "GPU telemetry",
-                                             "desc":  "NVIDIA Telemetry Client and its tasks, plus AMD, and Intel telemetry services. Drivers are untouched.",
+                                             "desc":  "NVIDIA's telemetry service and tasks as older drivers install them, AMD's User Experience Program, and Intel's Computing Improvement Program. Drivers are untouched. NVIDIA App's own telemetry runs inside the display driver's container and is switched off in NVIDIA App's settings, not here.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  86,
                                              "actions":  [
-                                                             {
-                                                                 "type":  "uninstall",
-                                                                 "guards":  [
-                                                                                "gpu:nvidia"
-                                                                            ],
-                                                                 "match":  [
-                                                                               "NVIDIA Telemetry*"
-                                                                           ]
-                                                             },
                                                              {
                                                                  "type":  "task",
                                                                  "guards":  [
@@ -467,8 +430,7 @@
                                                              {
                                                                  "type":  "uninstall",
                                                                  "match":  [
-                                                                               "Intel*Computing Improvement Program*",
-                                                                               "Intel*Driver*Support Assistant*"
+                                                                               "Intel*Computing Improvement Program*"
                                                                            ]
                                                              }
                                                          ],
@@ -504,11 +466,11 @@
                                          },
                                          {
                                              "id":  "device-companion",
-                                             "settingsPath": "Undo the run.",
+                                             "settingsPath": "Undo the run. While the policy is in place, Device Installation Settings in System Properties (sysdm.cpl, Hardware tab) is grayed out.",
                                              "symptoms": ["device app not installing", "no companion app prompt", "hardware app missing"],
                                              "bloat": 2,
                                              "name":  "Stop Windows fetching companion apps for your hardware",
-                                             "desc":  "Turns off the device metadata download that installs a vendor's app when you plug something in. Drivers still install normally.",
+                                             "desc":  "Turns off the device metadata download that fetches a vendor's app when you plug something in. Drivers still install normally. Software a driver package carries with it as a component of its own is not covered - Windows Update can still deliver that.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  85,
@@ -540,7 +502,7 @@
                                              "symptoms": ["driver control panel missing", "graphics control panel missing", "no vendor app after driver install", "audio control panel missing"],
                                              "bloat": 3,
                                              "name":  "Block software bundled inside driver packages",
-                                             "desc":  "Driver packages are allowed to carry a co-installer that runs vendor software alongside the driver. This stops that half without touching the driver.",
+                                             "desc":  "Older driver packages may carry a co-installer that runs vendor software alongside the driver - the route Razer's mouse and keyboard installer used. This stops that half without touching the driver. Newer packages ship their software as a separate component, which this does not affect.",
                                              "risk":  1,
                                              "default":  true,
                                              "order":  85,

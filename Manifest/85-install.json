@@ -18,16 +18,16 @@
         },
         {
           "id": "add-python", "installSize": 120,
-          "detect": ["Python 3.13*"],
-          "name": "Python 3.13",
-          "desc": "The python.org build, with pip and the py launcher.",
+          "detect": ["Python 3.14*"],
+          "name": "Python 3.14",
+          "desc": "The python.org build, with pip and the py launcher it carries.",
           "risk": 0, "tier": 0, "default": false, "order": 90,
           "guards": ["winget"],
-          "actions": [ { "type": "winget", "mode": "install", "ids": ["Python.Python.3.13", "Python.Launcher"] } ]
+          "actions": [ { "type": "winget", "mode": "install", "ids": ["Python.Python.3.14"] } ]
         },
         {
           "id": "add-java", "installSize": 300,
-          "detect": ["Eclipse Temurin JDK*", "OpenJDK*", "Java(TM) SE Development Kit*"],
+          "detect": ["Eclipse Temurin JDK with Hotspot 21*"],
           "name": "Java (Temurin JDK 21)",
           "desc": "Eclipse Temurin, the mainstream free OpenJDK build. LTS release.",
           "risk": 0, "tier": 0, "default": false, "order": 90,
@@ -73,19 +73,10 @@
           "id": "add-eclipse", "installSize": 500,
           "detect": ["Eclipse IDE*"],
           "name": "Eclipse IDE for Java",
-          "desc": "The Eclipse Java IDE. Needs a JDK - tick Java above if you do not already have one.",
+          "desc": "The Eclipse Java IDE, with the Java runtime it ships with. winget installs it as a portable app, so it has no Start menu entry: run eclipse from a terminal, or pin eclipse.exe from winget's Packages folder.",
           "risk": 0, "tier": 0, "default": false, "order": 92,
           "guards": ["winget"],
           "actions": [ { "type": "winget", "mode": "install", "ids": ["EclipseFoundation.Eclipse.Java"] } ]
-        },
-        {
-          "id": "add-netbeans", "installSize": 900,
-          "detect": ["Apache NetBeans*"],
-          "name": "Apache NetBeans",
-          "desc": "The Apache Java IDE. Needs a JDK - tick Java above if you do not already have one.",
-          "risk": 0, "tier": 0, "default": false, "order": 92,
-          "guards": ["winget"],
-          "actions": [ { "type": "winget", "mode": "install", "ids": ["Apache.NetBeans"] } ]
         }
       ]
     },
@@ -131,7 +122,7 @@
           "detect": ["Adobe Creative Cloud*", "Adobe Photoshop*"],
           "name": "Adobe Photoshop (via Creative Cloud)",
           "desc": "Installs the Adobe Creative Cloud desktop app, which is how Photoshop is installed and licensed.",
-          "riskNote": "Photoshop itself is not distributed as a standalone package this can fetch - Adobe ships it through Creative Cloud only. This puts Creative Cloud on the machine; Photoshop is then installed from inside it, and needs a paid Adobe subscription. Creative Cloud also adds background services and a startup entry of its own.",
+          "riskNote": "Photoshop itself is not distributed as a standalone package this can fetch - Adobe ships it through Creative Cloud only. This puts Creative Cloud on the machine; Photoshop is then installed from inside it, and needs a paid Adobe subscription. Creative Cloud also adds background services and a startup entry of its own. Right after Adobe ships a new installer the winget package can be a step behind and refuse it, until winget catches up.",
           "risk": 2, "tier": 0, "default": false, "order": 93,
           "guards": ["winget"],
           "actions": [ { "type": "winget", "mode": "install", "ids": ["Adobe.CreativeCloud"] } ]
@@ -148,8 +139,8 @@
         {
           "id": "pt-run", "requires": "add-powertoys",
           "name": "PowerToys Run on Alt+Space",
-          "desc": "The launcher: start typing to find an app, a file, a calculation, or a setting. Set up here rather than in PowerToys' own settings.",
-          "riskNote": "Configures PowerToys, so it only does something if PowerToys is installed - tick Microsoft PowerToys above if it is not. The setting is written either way and is read the first time PowerToys starts.",
+          "desc": "The launcher: start typing to find an app, a file, a calculation, or a setting. Current PowerToys ships it switched off in favour of Command Palette on Win+Alt+Space, so this turns it on, for the account that runs the toolkit.",
+          "riskNote": "Configures PowerToys, so it only does something if PowerToys is installed - tick Microsoft PowerToys above if it is not. The setting is written either way and is read the first time PowerToys starts. The Copilot app claims Alt+Space as well; removing it under AI frees the shortcut.",
           "risk": 0, "tier": 0, "default": false, "order": 89,
           "actions": [
             {
@@ -158,38 +149,6 @@
               "hotkey": { "file": "PowerToys Run", "property": "open_powerlauncher", "alt": true, "code": 32, "label": "Alt+Space" }
             }
           ]
-        },
-        {
-          "id": "pt-fancyzones", "requires": "add-powertoys",
-          "name": "PowerToys FancyZones",
-          "desc": "Snap windows into layouts you define, rather than the halves and quarters Windows offers.",
-          "riskNote": "Configures PowerToys, so it only does something if PowerToys is installed.",
-          "risk": 0, "tier": 0, "default": false, "order": 89,
-          "actions": [ { "type": "script", "handler": "SetPowerToysModule", "module": "FancyZones", "enable": true, "label": "FancyZones" } ]
-        },
-        {
-          "id": "pt-alwaystop", "requires": "add-powertoys",
-          "name": "PowerToys Always on Top",
-          "desc": "Win+Ctrl+T pins the focused window above every other one.",
-          "riskNote": "Configures PowerToys, so it only does something if PowerToys is installed.",
-          "risk": 0, "tier": 0, "default": false, "order": 89,
-          "actions": [ { "type": "script", "handler": "SetPowerToysModule", "module": "AlwaysOnTop", "enable": true, "label": "Always on Top" } ]
-        },
-        {
-          "id": "pt-colorpicker", "requires": "add-powertoys",
-          "name": "PowerToys Color Picker",
-          "desc": "Win+Shift+C reads the color under the cursor and copies it.",
-          "riskNote": "Configures PowerToys, so it only does something if PowerToys is installed.",
-          "risk": 0, "tier": 0, "default": false, "order": 89,
-          "actions": [ { "type": "script", "handler": "SetPowerToysModule", "module": "ColorPicker", "enable": true, "label": "Color Picker" } ]
-        },
-        {
-          "id": "pt-peek", "requires": "add-powertoys",
-          "name": "PowerToys Peek",
-          "desc": "Ctrl+Space previews the selected file in Explorer without opening its application.",
-          "riskNote": "Configures PowerToys, so it only does something if PowerToys is installed.",
-          "risk": 0, "tier": 0, "default": false, "order": 89,
-          "actions": [ { "type": "script", "handler": "SetPowerToysModule", "module": "Peek", "enable": true, "label": "Peek" } ]
         }
       ]
     }

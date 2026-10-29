@@ -12,7 +12,7 @@
                                              "symptoms": ["news app missing", "msn news gone"],
                                              "bloat": 2,
                                              "name":  "Microsoft News",
-                                             "desc":  "The Bing News app and its notification tasks.",
+                                             "desc":  "The Microsoft News app.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  57,
@@ -50,11 +50,11 @@
                                          },
                                          {
                                              "id":  "widgets",
-                                             "settingsPath": "Settings > Personalization > Taskbar, and turn Widgets back on. The package itself may need reinstalling from the Store.",
+                                             "settingsPath": "Reinstall the Windows Web Experience Pack from the Microsoft Store. The Widgets switch in Settings > Personalization > Taskbar comes back with it.",
                                              "symptoms": ["widgets missing", "no weather on taskbar", "widgets not working", "weather gone", "news feed missing", "widgets button gone", "cannot open widgets"],
                                              "bloat": 2,
                                              "name":  "Widgets board and Windows Web Experience Pack",
-                                             "desc":  "The panel, the taskbar button, and Win+W. Uninstalls the Windows Web Experience Pack, which is the package the whole feature ships in.",
+                                             "desc":  "The panel, the taskbar button, and Win+W. Uninstalls the Windows Web Experience Pack, which is the package the whole feature ships in, and the Microsoft Start app that feeds it news.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  58,
@@ -63,84 +63,34 @@
                                                                  "type":  "appx",
                                                                  "names":  [
                                                                                "Microsoft.WidgetsPlatformRuntime",
-                                                                               "MicrosoftWindows.Client.WebExperience"
+                                                                               "MicrosoftWindows.Client.WebExperience",
+                                                                               "Microsoft.StartExperiencesApp"
                                                                            ]
-                                                             },
-                                                             {
-                                                                 "type":  "registry",
-                                                                 "scope":  "machine",
-                                                                 "values":  [
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Dsh",
-                                                                                    "name":  "AllowNewsAndInterests",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  0
-                                                                                }
-                                                                            ]
-                                                             },
-                                                             {
-                                                                 "type":  "registry",
-                                                                 "scope":  "allusers",
-                                                                 "values":  [
-                                                                                {
-                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
-                                                                                    "name":  "TaskbarDa",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  0
-                                                                                }
-                                                                            ]
                                                              }
                                                          ],
                                              "tier":  2
                                          },
                                          {
                                              "id":  "spotlight",
-                                             "settingsPath": "Settings > Personalization > Lock screen, and set it back to Windows spotlight.",
-                                             "symptoms": ["lock screen picture not changing", "same lock screen every day", "spotlight not working", "lock screen stuck", "no daily image", "wallpaper not changing"],
+                                             "settingsPath": "Undo the run. Spotlight itself is untouched and stays wherever it is chosen in Settings > Personalization > Lock screen.",
+                                             "symptoms": ["no fun facts on lock screen", "lock screen tips missing", "spotlight suggestions gone"],
                                              "bloat": 2,
                                              "name":  "Lock screen Spotlight ads",
-                                             "desc":  "Keeps the wallpapers, drops the ads, facts, and tips.",
+                                             "desc":  "Keeps the wallpapers and stops Spotlight suggesting other companies' apps and content, on every account. Spotlight's own facts and tips have no off switch while it is the lock screen; with Picture or Slideshow chosen, this turns them off too.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  59,
                                              "actions":  [
                                                              {
                                                                  "type":  "registry",
-                                                                 "scope":  "machine",
-                                                                 "guards":  [
-                                                                                "edition:enterprise"
-                                                                            ],
+                                                                 "scope":  "allusers",
                                                                  "values":  [
                                                                                 {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent",
-                                                                                    "name":  "DisableWindowsSpotlightFeatures",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  1
-                                                                                },
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent",
-                                                                                    "name":  "DisableSpotlightCollectionOnDesktop",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  1
-                                                                                }
-                                                                            ]
-                                                             },
-                                                             {
-                                                                 "type":  "registry",
-                                                                 "scope":  "machine",
-                                                                 "values":  [
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent",
+                                                                                    "path":  "SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent",
                                                                                     "name":  "DisableThirdPartySuggestions",
                                                                                     "kind":  "DWord",
                                                                                     "value":  1
-                                                                                }
-                                                                            ]
-                                                             },
-                                                             {
-                                                                 "type":  "registry",
-                                                                 "scope":  "allusers",
-                                                                 "values":  [
+                                                                                },
                                                                                 {
                                                                                     "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
                                                                                     "name":  "RotatingLockScreenOverlayEnabled",
@@ -150,56 +100,6 @@
                                                                                 {
                                                                                     "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
                                                                                     "name":  "SubscribedContent-338387Enabled",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  0
-                                                                                }
-                                                                            ]
-                                                             }
-                                                         ],
-                                             "tier":  1
-                                         },
-                                         {
-                                             "id":  "start-rec",
-                                             "settingsPath": "Settings > Personalization > Start, and turn the recommendations back on.",
-                                             "symptoms": ["start menu recommended empty", "no recent files in start", "recommended section empty", "start menu blank section"],
-                                             "bloat": 2,
-                                             "name":  "Start menu Recommended section",
-                                             "desc":  "Plus the app promotions that appear in it.",
-                                             "risk":  0,
-                                             "default":  true,
-                                             "order":  59,
-                                             "actions":  [
-                                                             {
-                                                                 "type":  "registry",
-                                                                 "scope":  "machine",
-                                                                 "values":  [
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer",
-                                                                                    "name":  "HideRecommendedSection",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  1
-                                                                                },
-                                                                                {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Microsoft\\PolicyManager\\current\\device\\Start",
-                                                                                    "name":  "HideRecommendedSection",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  1
-                                                                                }
-                                                                            ]
-                                                             },
-                                                             {
-                                                                 "type":  "registry",
-                                                                 "scope":  "allusers",
-                                                                 "values":  [
-                                                                                {
-                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
-                                                                                    "name":  "SubscribedContent-338388Enabled",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  0
-                                                                                },
-                                                                                {
-                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
-                                                                                    "name":  "Start_IrisRecommendations",
                                                                                     "kind":  "DWord",
                                                                                     "value":  0
                                                                                 }
@@ -336,7 +236,7 @@
                                              "symptoms": ["explorer banner gone", "no ads in file explorer"],
                                              "bloat": 2,
                                              "name":  "File Explorer banner ads",
-                                             "desc":  "Sync provider notifications, which is how Microsoft 365, and OneDrive advertise inside Explorer.",
+                                             "desc":  "Sync provider notifications, which is how Microsoft 365 and OneDrive advertise inside Explorer.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  60,
@@ -358,7 +258,7 @@
                                          },
                                          {
                                              "id":  "ad-id",
-                                             "settingsPath": "Settings > Privacy and security > General, and turn the advertising ID back on.",
+                                             "settingsPath": "Undo the run. It is a policy, so the advertising ID switch in Settings > Privacy and security > General is locked while it is in place; afterwards it is there.",
                                              "symptoms": ["ads not personalized", "advertising id off", "generic ads"],
                                              "bloat": 1,
                                              "name":  "Advertising ID",
@@ -396,7 +296,7 @@
                                          },
                                          {
                                              "id":  "search-hl",
-                                             "settingsPath": "Settings > Privacy and security > Search permissions, and turn search highlights back on.",
+                                             "settingsPath": "Undo the run. The policy locks the search highlights switch in Settings > Privacy and security > Search permissions while it is in place; afterwards it is there.",
                                              "symptoms": ["search highlights missing", "no illustration in search box", "search box plain"],
                                              "bloat": 2,
                                              "name":  "Search highlights",
@@ -414,12 +314,6 @@
                                                                                     "name":  "IsDynamicSearchBoxEnabled",
                                                                                     "kind":  "DWord",
                                                                                     "value":  0
-                                                                                },
-                                                                                {
-                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Feeds",
-                                                                                    "name":  "ShellFeedsTaskbarViewMode",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  2
                                                                                 }
                                                                             ]
                                                              },
@@ -451,7 +345,7 @@
                                              "symptoms": ["telemetry off", "diagnostics not working", "feedback hub broken", "company cannot see diagnostics", "intune reporting broken", "management tool no data"],
                                              "bloat": 1,
                                              "name":  "DiagTrack service",
-                                             "desc":  "Connected User Experiences and Telemetry.",
+                                             "desc":  "Connected User Experiences and Telemetry, and the WAP push message routing service that device management uses.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  61,
@@ -461,8 +355,7 @@
                                                                  "startupType":  "Disabled",
                                                                  "names":  [
                                                                                "DiagTrack",
-                                                                               "dmwappushservice",
-                                                                               "diagnosticshub.standardcollector.service"
+                                                                               "dmwappushservice"
                                                                            ]
                                                              }
                                                          ],
@@ -470,7 +363,7 @@
                                          },
                                          {
                                              "id":  "telemetry-level",
-                                             "settingsPath": "Settings > Privacy and security > Diagnostics and feedback, and turn optional diagnostic data back on.",
+                                             "settingsPath": "Undo the run. It is a policy, so Settings > Privacy and security > Diagnostics and feedback is locked while it is in place; afterwards optional diagnostic data can be turned back on there.",
                                              "symptoms": ["diagnostic data off", "feedback hub not sending", "no diagnostics", "telemetry disabled", "support cannot see logs"],
                                              "bloat": 1,
                                              "name":  "Diagnostic data to minimum",
@@ -524,7 +417,7 @@
                                              "symptoms": ["old program not working", "compatibility fix missing", "program compatibility broken"],
                                              "bloat": 1,
                                              "name":  "CEIP and Application Experience tasks",
-                                             "desc":  "Compatibility Appraiser, ProgramDataUpdater, Consolidator, UsbCeip, and KernelCeip.",
+                                             "desc":  "The Compatibility Appraiser, the startup-app and compatibility-database tasks, Consolidator, UsbCeip, the Autochk proxy, and the disk diagnostic collector.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  62,
@@ -532,8 +425,7 @@
                                                              {
                                                                  "type":  "task",
                                                                  "tasks":  [
-                                                                               "\\Microsoft\\Windows\\Application Experience\\Microsoft Compatibility Appraiser",
-                                                                               "\\Microsoft\\Windows\\Application Experience\\ProgramDataUpdater",
+                                                                               "\\Microsoft\\Windows\\Application Experience\\Microsoft Compatibility Appraiser*",
                                                                                "\\Microsoft\\Windows\\Application Experience\\StartupAppTask",
                                                                                "\\Microsoft\\Windows\\Application Experience\\PcaPatchDbTask",
                                                                                "\\Microsoft\\Windows\\Customer Experience Improvement Program\\*",
@@ -604,7 +496,7 @@
                                          },
                                          {
                                              "id":  "activity",
-                                             "settingsPath": "Settings > Privacy and security > Activity history, and turn it back on.",
+                                             "settingsPath": "Undo the run. It is a policy, so Settings > Privacy and security > Activity history is locked while it is in place; afterwards it can be turned back on there.",
                                              "symptoms": ["task view empty", "no recent activity", "timeline empty", "activity history missing", "recent apps gone"],
                                              "bloat": 1,
                                              "name":  "Activity history",
@@ -687,7 +579,7 @@
                                          },
                                          {
                                              "id":  "location",
-                                             "settingsPath": "Settings > Privacy and security > Location, and turn location services back on.",
+                                             "settingsPath": "Undo the run. It is a policy, so Settings > Privacy and security > Location is locked while it is in place; afterwards location services can be turned back on there.",
                                              "symptoms": ["location not working", "gps not working", "weather wrong location", "maps cannot find me", "wrong time zone", "clock wrong", "weather showing wrong city", "app asking for location", "location services off", "find my location failed"],
                                              "bloat": 1,
                                              "name":  "Location services",
@@ -721,11 +613,11 @@
                                          },
                                          {
                                              "id":  "delivery-opt",
-                                             "settingsPath": "Settings > Windows Update > Advanced options > Delivery Optimization, and allow downloads from other PCs.",
+                                             "settingsPath": "Undo the run. It is a policy, so Settings > Windows Update > Advanced options > Delivery Optimization is locked while it is in place.",
                                              "symptoms": ["updates slow", "downloads slow", "update download slow"],
                                              "bloat": 5,
                                              "name":  "Delivery Optimization to LAN only",
-                                             "desc":  "Stops the machine seeding Windows updates to strangers over the internet.",
+                                             "desc":  "Windows already shares update downloads only with PCs on your own network by default; this locks that in by policy, so nothing can switch it to sharing with PCs on the internet.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  63,
@@ -747,15 +639,27 @@
                                          },
                                          {
                                              "id":  "wer",
-                                             "settingsPath": "services.msc, find Windows Error Reporting Service, and set it back to Manual.",
-                                             "symptoms": ["no crash reports", "error reporting off", "crash dump missing", "support wants a crash report", "no minidump"],
+                                             "settingsPath": "Undo the run: it turns the policy off and sets Windows Error Reporting Service in services.msc back to Manual.",
+                                             "symptoms": ["no crash reports", "error reporting off", "app crash report missing", "support wants a crash report", "problem reports empty"],
                                              "bloat": 1,
                                              "name":  "Windows Error Reporting",
-                                             "desc":  "Windows Error Reporting.",
+                                             "desc":  "Stops Windows collecting and sending reports when an app crashes or hangs, by policy and with its service and task off. Kernel crash dumps are not affected.",
                                              "risk":  1,
                                              "default":  false,
                                              "order":  63,
                                              "actions":  [
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Error Reporting",
+                                                                                    "name":  "Disabled",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
+                                                             },
                                                              {
                                                                  "type":  "service",
                                                                  "startupType":  "Disabled",
@@ -779,10 +683,13 @@
                                              "symptoms": ["cortana missing", "cortana gone", "voice assistant missing"],
                                              "bloat": 4,
                                              "name":  "Cortana leftovers",
-                                             "desc":  "Residual packages, policies, and scheduled tasks.",
+                                             "desc":  "The Cortana app and the policy that keeps it off. Windows 11 24H2 removed Cortana itself, so this is only offered on earlier builds.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  64,
+                                             "guards":  [
+                                                            "build:<26100"
+                                                        ],
                                              "actions":  [
                                                              {
                                                                  "type":  "appx",
@@ -808,11 +715,11 @@
                                          },
                                          {
                                              "id":  "edge-telemetry",
-                                             "settingsPath": "Undo the run, or check edge://settings/privacy.",
+                                             "settingsPath": "Undo the run. These are Edge policies, so edge://settings shows them as managed while they are in place.",
                                              "symptoms": ["edge shopping missing", "edge coupons gone", "edge features missing"],
                                              "bloat": 1,
                                              "name":  "Edge telemetry and commerce",
-                                             "desc":  "Shopping, coupons, startup boost, background mode, and its telemetry.",
+                                             "desc":  "Shopping, coupons, Rewards, startup boost, background mode, and its telemetry. Edge keeps updating itself.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  64,
@@ -864,23 +771,17 @@
                                                                                     "value":  0
                                                                                 }
                                                                             ]
-                                                             },
-                                                             {
-                                                                 "type":  "task",
-                                                                 "tasks":  [
-                                                                               "\\MicrosoftEdgeUpdateTask*"
-                                                                           ]
                                                              }
                                                          ],
                                              "tier":  1
                                          },
                                          {
                                              "id":  "search-privacy",
-                                             "settingsPath": "Settings > Privacy and security > Search permissions, and turn cloud content search back on.",
-                                             "symptoms": ["search not suggesting", "no account results in search", "search personalization off"],
+                                             "settingsPath": "Undo the run. Cloud content search is a policy, so Settings > Privacy and security > Search permissions is locked while it is in place.",
+                                             "symptoms": ["search not suggesting", "no account results in search", "search personalization off", "onedrive files not in search", "outlook results missing from search"],
                                              "bloat": 1,
                                              "name":  "Search and personalization tracking",
-                                             "desc":  "Turns off the language-list hand-off to websites, app-launch tracking in Start and search, and cloud search of your Microsoft and work accounts.",
+                                             "desc":  "Turns off the language-list hand-off to websites and cloud search of your Microsoft and work accounts.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  62,
@@ -894,12 +795,6 @@
                                                                                     "name":  "HttpAcceptLanguageOptOut",
                                                                                     "kind":  "DWord",
                                                                                     "value":  1
-                                                                                },
-                                                                                {
-                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
-                                                                                    "name":  "Start_TrackProgs",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  0
                                                                                 },
                                                                                 {
                                                                                     "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\SearchSettings",
@@ -932,7 +827,7 @@
                                          },
                                          {
                                              "id":  "find-my-device",
-                                             "settingsPath": "Settings > Privacy and security > Find my device, and turn it back on.",
+                                             "settingsPath": "Undo the run. It is a policy, so Settings > Privacy and security > Find my device is locked while it is in place; afterwards it can be turned back on there.",
                                              "symptoms": ["find my device not working", "cannot locate pc", "find my device off", "lost laptop tracking"],
                                              "bloat": 1,
                                              "name":  "Find My Device location reporting",

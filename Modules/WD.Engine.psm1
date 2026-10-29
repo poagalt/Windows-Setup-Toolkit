@@ -310,6 +310,10 @@ function Resolve-WDPlan {
                 SettingsPath = [string](Get-Prop $item 'settingsPath' '')
                 Symptoms = @(Get-Prop $item 'symptoms' @())
                 Mechanics = [string](Get-Prop $item 'mechanics' '')
+                # Kept in the plan rather than dropped, so a run that names it
+                # anyway reports it Skipped with the reason instead of quietly
+                # leaving it out.
+                Refused  = [string](Get-WDRefusal -Item $item -Profile $Profile)
                 Actions  = $actions
             })
         }
@@ -317,6 +321,14 @@ function Resolve-WDPlan {
 
     # Appended to the plan rather than run behind it, so both are previewable,
     # cancellable, journalled, and reported like any other step.
+    #
+    # The two that change things sit at 9980 and 9981, BEFORE the common issues
+    # document (9990) and the rollback script (9995), and that order is the
+    # rollback. They were at 9997 and 9998, so the script was generated from a
+    # journal that did not yet hold their entries: the 2026-08-15 run journalled
+    # the consumer-features policy on line 484 and its rollback script never
+    # mentions it. Only the Explorer restart, which journals nothing, comes after
+    # the documents.
     if ($plan.Count) {
         # The paths closed below are all about apps coming back, so a run that
         # only changed settings has nothing for them to do.
@@ -324,20 +336,30 @@ function Resolve-WDPlan {
         $removesApps = $false
         foreach ($pi in $plan) {
             foreach ($a in @($pi.Actions)) {
-                if ([string](Get-Prop $a 'type' '') -in $removals) { $removesApps = $true; break }
+                $t = [string](Get-Prop $a 'type' '')
+                if ($t -notin $removals) { continue }
+                # Features and capabilities go both ways. Turning Telnet or WSL ON
+                # is not a removal, and counting it as one meant a run that only
+                # added the Telnet client went on to change content-delivery
+                # values for every account and sweep everybody's shortcuts -
+                # none of it on a row anybody ticked.
+                $mode = [string](Get-Prop $a 'mode' '')
+                if ($t -eq 'feature'    -and $mode -ieq 'enable')  { continue }
+                if ($t -eq 'capability' -and $mode -ieq 'install') { continue }
+                $removesApps = $true; break
             }
             if ($removesApps) { break }
         }
         if ($removesApps) {
             $plan.Add([pscustomobject]@{
                 Id = 'close-resurrection'; Name = 'Close revival paths'
-                Category = 'Double-checks'; Risk = 0; Order = 9997; Reboot = $false
+                Category = 'Double-checks'; Risk = 0; Order = 9980; Reboot = $false
                 RiskNote = ''
                 SettingsPath = 'Open the toolkit, choose Revert past changes, and untick everything except Close revival paths.'
                 Symptoms = @('removed app came back', 'app reinstalled itself', 'store reinstalling apps',
                              'apps keep coming back', 'edge not updating', 'edge updater missing',
                              'suggested apps returned', 'app returned after update')
-                Mechanics = 'Deprovisions what this run uninstalled, switches off the content-delivery values that reinstall bundled apps at the next sign-in, sets the consumer-features policy, and disables the push-to-install tasks. The Edge updater is only touched when Edge itself is gone.'
+                Mechanics = 'Deprovisions what this run uninstalled, switches off the content-delivery values that reinstall bundled apps at the next sign-in, sets the consumer-features policy on Enterprise and Education (the only editions that read it), and disables the push-to-install tasks. The Edge updater is only touched when Edge itself is gone.'
                 Actions = @([pscustomobject]@{ type = 'script'; handler = 'CloseResurrectionPaths' })
             })
         }
@@ -347,7 +369,7 @@ function Resolve-WDPlan {
                 # sweep should see everything else removed, and Start should be
                 # right when the shell reads it again.
                 Id = 'clear-stale-shortcuts'; Name = 'Clear shortcuts left pointing at nothing'
-                Category = 'Double-checks'; Risk = 0; Order = 9998; Reboot = $false
+                Category = 'Double-checks'; Risk = 0; Order = 9981; Reboot = $false
                 RiskNote = ''
                 SettingsPath = 'Every one is recycled, so they can be restored from the Recycle Bin, or by running the rollback script.'
                 Symptoms = @('removed app still in start menu', 'shortcut does nothing', 'start menu shortcut broken',
@@ -444,13 +466,21 @@ function Invoke-WDPlan {
 
     & $report @{ Phase = 'Start'; Index = 0; Total = $total; Elapsed = $sw.Elapsed }
 
+    # Written as a statement, not an if-expression: the expression unrolled an
+    # empty list to $null, which the trace wrote as {} - so a run told to write
+    # to no account recorded something that read as "all", and fifty per-user
+    # options doing nothing took a reading of the code to explain.
+    $acctRecord = '<all>'
+    if ($null -ne $acctScope) {
+        if (@($acctScope).Count) { $acctRecord = @($acctScope | ForEach-Object { [string]$_ }) } else { $acctRecord = '<none>' }
+    }
     Add-WDTrace -Kind 'run-start' -Data @{
         total          = $total
         preview        = [bool]$Session.Preview
         allowDownloads = [bool]$AllowDownloads
         allowOwnership = [bool]$AllowOwnership
         # $null is every account, which is not the same as none.
-        accounts       = $(if ($null -eq $acctScope) { '<all>' } else { $acctScope })
+        accounts       = $acctRecord
         items          = @($Plan | ForEach-Object {
             [ordered]@{ id = $_.Id; name = $_.Name; section = [string]$_.Section
                         risk = $_.Risk; actions = @($_.Actions).Count }
@@ -466,7 +496,45 @@ function Invoke-WDPlan {
         Add-WDTrace -Kind 'default-hive' -Data @{ mounted = $false; threw = (Format-WDException $_) }
     }
 
+    # Where per-user settings will actually land, by name, in the log a person
+    # reads. Resolved the way the registry executor resolves it, so the line
+    # and the writes cannot disagree.
+    try {
+        $reach = @(Select-WDAccountHives -Hives (Get-WDUserHives) -Default $defaultHive -Accounts $acctScope)
+        $named = New-Object System.Collections.Generic.List[string]
+        foreach ($h in $reach) {
+            $n = [string]$h.Name
+            if ($n -eq 'CurrentUser') { $n = "$([Environment]::UserDomainName)\$([Environment]::UserName) (this account)" }
+            elseif ($n -eq 'DefaultProfile') { $n = 'the default profile (accounts created later)' }
+            else { try { $n = (New-Object Security.Principal.SecurityIdentifier $n).Translate([Security.Principal.NTAccount]).Value } catch { } }
+            $named.Add($n)
+        }
+        $perUser = @($Plan | Where-Object { @(@($_.Actions) | Where-Object { [string](Get-Prop $_ 'scope' '') -ieq 'allusers' }).Count }).Count
+        if ($named.Count) {
+            Write-WDLog "Per-user settings are written to: $($named -join '; ')." -Level Info
+        } elseif ($perUser) {
+            Write-WDLog "NO ACCOUNT IS SELECTED for per-user settings, so $perUser option(s) in this run will write nothing per-user." -Level Warn
+        }
+        Add-WDTrace -Kind 'accounts' -Data @{ chosen = $acctRecord; reach = @($named); perUserItems = $perUser }
+    } catch {
+        Write-WDLog "Could not resolve which accounts per-user settings reach: $($_.Exception.Message)" -Level Warn
+    }
+
+    # How far behind on Windows updates the machine was when the run started:
+    # the fact behind any update option this run refused, and worth having in
+    # the log of a machine set up straight out of the box.
+    $lagKb  = [string](Get-Prop $Profile 'LatestUpdate' '')
+    $lagN   = Get-Prop $Profile 'UpdatesMissed' $null
+    $lagAt  = [string](Get-Prop $Profile 'LatestUpdateBuilt' '')
+    if ($lagKb) {
+        $lagLevel = 'Info'
+        if ($null -ne $lagN -and -not (Test-WDGuard -Guards @('current') -Profile $Profile)) { $lagLevel = 'Warn' }
+        Write-WDLog "Newest Windows update installed: $lagKb, built $lagAt, with $lagN monthly security update(s) out since." -Level $lagLevel
+    }
+    Add-WDTrace -Kind 'updates' -Data @{ latest = $lagKb; built = $lagAt; missed = $lagN }
+
     $i = 0
+    $ranToEnd = $false
     try {
         foreach ($item in $Plan) {
             if ($CancelToken -and $CancelToken.Cancel) {
@@ -504,7 +572,14 @@ function Invoke-WDPlan {
 
             $actionResults = New-Object System.Collections.Generic.List[psobject]
             $ax = 0
-            foreach ($action in $item.Actions) {
+            $todo = @($item.Actions)
+            $refused = [string](Get-Prop $item 'Refused' '')
+            if ($refused) {
+                $todo = @()
+                $actionResults.Add((New-WDResult -Status Skipped -Message $refused))
+                Add-WDTrace -Kind 'refused' -Data @{ item = $item.Id; why = $refused }
+            }
+            foreach ($action in $todo) {
                 $ax++
                 # Between actions, not inside one: an item stopped partway is
                 # Skipped, and whatever its earlier actions did is already
@@ -587,6 +662,9 @@ function Invoke-WDPlan {
                 'Partial'     { 'Warn' }
                 # Worth reading, but not a warning about this run.
                 'Obstruction' { 'Info' }
+                # It did not happen, so it is not a success either - a refused
+                # option read "[SUCCESS] Skipped: Unavailable until...".
+                'Skipped'     { 'Info' }
                 'NotPresent'  { 'Debug' }
                 'AlreadySet'  { 'Debug' }
                 default       { 'Success' }
@@ -611,11 +689,18 @@ function Invoke-WDPlan {
 
             & $report @{ Phase = 'Item'; Index = $i; Total = $total; Item = $item; Result = $record; Elapsed = $sw.Elapsed }
         }
+        # Reached only when the loop ran to its end rather than being stopped.
+        $ranToEnd = -not ($CancelToken -and $CancelToken.Cancel)
     } finally {
-        if ($defaultHive) { Dismount-WDDefaultHive -Hive $defaultHive }
+        # Discarded: anything this emits leaves Invoke-WDPlan with the results.
+        if ($defaultHive) { $null = Dismount-WDDefaultHive -Hive $defaultHive }
         # Last, so it catches everything the run recycled - including items
-        # processed before the irreversible flag was read.
-        if ((Test-WDIrreversible) -and -not $Session.Preview) {
+        # processed before the irreversible flag was read. Only on a run that
+        # finished: emptying every drive's bin is the permanent mode's last act,
+        # and somebody who pressed Cancel, or a run that stopped on an error,
+        # has not asked for that last act - the bin still holds whatever they
+        # put there themselves.
+        if ((Test-WDIrreversible) -and -not $Session.Preview -and $ranToEnd) {
             if (Clear-WDRecycleBin) { Write-WDLog 'Recycle Bin emptied.' -Level Warn }
         }
         $sw.Stop()
@@ -688,9 +773,34 @@ function Merge-WDResults {
 }
 
 function Export-WDReport {
-    param($Results, $Session, $Profile, [string]$PresetName = '')
+    # -OnlyIfChanged is for the re-apply guards: a guard runs at every sign-in,
+    # and recording each one that found nothing to do gave the Revert page a
+    # new card per sign-in for runs with nothing in them to revert.
+    param($Results, $Session, $Profile, [string]$PresetName = '', [switch]$OnlyIfChanged)
 
-    $r = @($Results)
+    # Only result objects, with any nested list opened up. A stray value that
+    # leaked out of the engine - a $true, once, from an undiscarded call in its
+    # finally - made this @($true, <the list>): two entries, every count zero,
+    # and nothing said why. Kept, and named in the log, rather than trusted.
+    $flat  = New-Object System.Collections.Generic.List[psobject]
+    $stray = New-Object System.Collections.Generic.List[string]
+    foreach ($x in @($Results)) {
+        if ($null -eq $x) { continue }
+        if ($x.PSObject.Properties['Status'] -and $x.PSObject.Properties['Id']) { $flat.Add($x); continue }
+        if ($x -is [System.Collections.IEnumerable] -and $x -isnot [string]) {
+            foreach ($y in $x) {
+                if ($null -ne $y -and $y.PSObject.Properties['Status'] -and $y.PSObject.Properties['Id']) { $flat.Add($y) }
+                elseif ($null -ne $y) { $stray.Add("$($y.GetType().Name) '$y'") }
+            }
+            continue
+        }
+        $stray.Add("$($x.GetType().Name) '$x'")
+    }
+    if ($stray.Count) {
+        Write-WDLog ("The run's results carried $($stray.Count) value(s) that are not results, dropped from the report: " +
+                     ($stray -join ', ') + '. Something in the engine emitted to its output; this is a bug.') -Level Warn
+    }
+    $r = $flat.ToArray()
     $summary = [ordered]@{
         sessionId  = $Session.Id
         started    = $Session.Started.ToString('o')
@@ -726,7 +836,12 @@ function Export-WDReport {
     # Here rather than at the two call sites: the console and the window both
     # come through this function, and two places that must agree about "a run
     # happened" is one place plus a way to disagree.
-    $null = Register-WDRunRecord -Report $summary
+    $changed = $true
+    if ($OnlyIfChanged) {
+        $jf = [string]$Session.JournalFile
+        $changed = [bool]($jf -and (Test-Path -LiteralPath $jf) -and (Get-Item -LiteralPath $jf).Length -gt 0)
+    }
+    if ($changed) { $null = Register-WDRunRecord -Report $summary }
 
     $summary
 }

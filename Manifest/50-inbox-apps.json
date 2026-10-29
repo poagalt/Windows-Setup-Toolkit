@@ -8,7 +8,7 @@
                            "items":  [
                                          {
                                              "id":  "mail-cal",
-                                             "settingsPath": "Install Outlook from the Microsoft Store. Mail and Calendar have been discontinued by Microsoft.",
+                                             "settingsPath": "Nothing to put back: Microsoft ended Mail and Calendar in December 2024. Outlook from the Microsoft Store replaces them.",
                                              "symptoms": ["mail app missing", "calendar app missing", "no email app", "cannot check email", "mail gone", "calendar gone"],
                                              "bloat": 3,
                                              "name":  "Mail and Calendar",
@@ -29,11 +29,11 @@
                                          },
                                          {
                                              "id":  "new-outlook",
-                                             "settingsPath": "Install Outlook from the Microsoft Store, and undo the run to unblock the updater channel.",
-                                             "symptoms": ["outlook missing", "new outlook gone", "outlook will not install", "no outlook app", "outlook keeps coming back"],
+                                             "settingsPath": "Undo the run, then install Outlook from the Microsoft Store.",
+                                             "symptoms": ["outlook missing", "new outlook gone", "outlook will not install", "no outlook app", "outlook keeps coming back", "mailto link does nothing", "email link asks for an app"],
                                              "bloat": 3,
                                              "name":  "New Outlook for Windows",
-                                             "desc":  "The web-wrapper mail client Microsoft pushes hard. Also blocks the separate Windows Update channel that reinstalls it.",
+                                             "desc":  "The web-based mail client Windows preinstalls, and the Windows Update channel and the switch from classic Outlook that put it back. Start may still show an Outlook pin that reinstalls it when clicked, and mail links need another mail app chosen.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  70,
@@ -45,14 +45,32 @@
                                                                            ]
                                                              },
                                                              {
+                                                                 "type":  "registryKey",
+                                                                 "paths":  [
+                                                                               "HKLM:\\SOFTWARE\\Microsoft\\WindowsUpdate\\Orchestrator\\UScheduler_Oobe\\OutlookUpdate"
+                                                                           ]
+                                                             },
+                                                             {
                                                                  "type":  "registry",
                                                                  "scope":  "machine",
                                                                  "values":  [
                                                                                 {
-                                                                                    "path":  "HKLM:\\SOFTWARE\\Microsoft\\WindowsUpdate\\Orchestrator\\UScheduler_OOBE\\OutlookUpdate",
-                                                                                    "name":  "BlockedOOBEUpdaters",
-                                                                                    "kind":  "MultiString",
-                                                                                    "value":  ["ms:outlookupdate"]
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Microsoft\\WindowsUpdate\\Orchestrator\\UScheduler_Oobe",
+                                                                                    "name":  "BlockedOobeUpdaters",
+                                                                                    "kind":  "String",
+                                                                                    "value":  "[\"MS_Outlook\"]"
+                                                                                }
+                                                                            ]
+                                                             },
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "allusers",
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "Software\\Policies\\Microsoft\\office\\16.0\\outlook\\preferences",
+                                                                                    "name":  "NewOutlookMigrationUserSetting",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  0
                                                                                 }
                                                                             ]
                                                              }
@@ -62,13 +80,17 @@
                                          {
                                              "id":  "teams",
                                              "settingsPath": "Install Microsoft Teams from teams.microsoft.com or the Store.",
-                                             "symptoms": ["teams missing", "teams gone", "chat missing from taskbar", "cannot find teams"],
+                                             "symptoms": ["teams missing", "teams gone", "cannot find teams", "work teams missing"],
                                              "bloat": 3,
-                                             "name":  "Microsoft Teams (personal)",
-                                             "desc":  "The free consumer client. Work Teams deployed by an organization is left alone.",
-                                             "risk":  0,
+                                             "name":  "Microsoft Teams (new client, work and personal)",
+                                             "desc":  "The Teams app, for every account. It is one app for work and personal accounts alike, so a work Teams deployed this way goes too. Not offered on a domain-joined machine.",
+                                             "riskNote":  "If you use Teams for work or school, this removes it. Reinstall it from teams.microsoft.com.",
+                                             "risk":  1,
                                              "default":  true,
                                              "order":  70,
+                                             "guards":  [
+                                                            "!domain"
+                                                        ],
                                              "actions":  [
                                                              {
                                                                  "type":  "appx",
@@ -82,18 +104,6 @@
                                                                  "match":  [
                                                                                "Teams Machine-Wide Installer"
                                                                            ]
-                                                             },
-                                                             {
-                                                                 "type":  "registry",
-                                                                 "scope":  "allusers",
-                                                                 "values":  [
-                                                                                {
-                                                                                    "path":  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
-                                                                                    "name":  "TaskbarMn",
-                                                                                    "kind":  "DWord",
-                                                                                    "value":  0
-                                                                                }
-                                                                            ]
                                                              }
                                                          ],
                                              "tier":  1
@@ -112,9 +122,7 @@
                                                              {
                                                                  "type":  "appx",
                                                                  "names":  [
-                                                                               "Microsoft.MicrosoftOfficeHub",
-                                                                               "Microsoft.Office.Todo.List",
-                                                                               "Microsoft.OfficePushNotificationUtility"
+                                                                               "Microsoft.MicrosoftOfficeHub"
                                                                            ]
                                                              }
                                                          ],
@@ -126,7 +134,7 @@
                                              "symptoms": ["cannot play video", "cannot play music", "no media player", "mp4 will not open", "mp3 will not play", "video will not open", "media player missing"],
                                              "bloat": 5,
                                              "name":  "Media Player",
-                                             "desc":  "The built-in music and audio player.",
+                                             "desc":  "The built-in music and video player. Legacy Windows Media Player is a separate optional feature and stays.",
                                              "risk":  1,
                                              "default":  false,
                                              "order":  71,
@@ -134,13 +142,12 @@
                                                              {
                                                                  "type":  "appx",
                                                                  "names":  [
-                                                                               "Microsoft.ZuneMusic",
-                                                                               "Microsoft.WindowsMediaPlayer"
+                                                                               "Microsoft.ZuneMusic"
                                                                            ]
                                                              }
                                                          ],
                                              "tier":  0,
-                                             "riskNote":  "It is the default audio player. Removing it means audio files have no handler until you set another."
+                                             "riskNote":  "It is the default audio and video player. Removing it means music and video files, .mp3 and .mp4 included, have no handler until you set another."
                                          },
                                          {
                                              "id":  "movies-tv",
@@ -207,11 +214,12 @@
                                          {
                                              "id":  "get-help",
                                              "settingsPath": "Reinstall Get Help from the Microsoft Store.",
-                                             "symptoms": ["get help missing", "no help app", "support app gone"],
+                                             "symptoms": ["get help missing", "no help app", "support app gone", "troubleshooter will not open", "troubleshooter does nothing", "other troubleshooters not working"],
                                              "bloat": 5,
                                              "name":  "Get Help",
                                              "desc":  "",
-                                             "risk":  0,
+                                             "riskNote":  "Windows' own troubleshooters (Settings > System > Troubleshoot) now run inside Get Help, so they stop opening.",
+                                             "risk":  1,
                                              "default":  true,
                                              "order":  72,
                                              "actions":  [
@@ -222,15 +230,15 @@
                                                                            ]
                                                              }
                                                          ],
-                                             "tier":  1
+                                             "tier":  2
                                          },
                                          {
                                              "id":  "get-started",
-                                             "settingsPath": "Reinstall Tips from the Microsoft Store.",
-                                             "symptoms": ["tips app missing", "get started gone"],
+                                             "settingsPath": "Undo the run. On builds that still have it, Tips can be reinstalled from the Microsoft Store.",
+                                             "symptoms": ["tips app missing", "get started gone", "get started closes immediately"],
                                              "bloat": 2,
                                              "name":  "Tips and Get Started",
-                                             "desc":  "",
+                                             "desc":  "The Tips app where a build still has it, and on Enterprise and Education the policy that switches the Get Started experience off. Pro and Home have no switch for Get Started itself.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  72,
@@ -242,6 +250,22 @@
                                                                                "Microsoft.WindowsGetStarted",
                                                                                "Microsoft.Tips"
                                                                            ]
+                                                             },
+                                                             {
+                                                                 "type":  "registry",
+                                                                 "scope":  "machine",
+                                                                 "guards":  [
+                                                                                "edition:enterprise",
+                                                                                "build:>=26100"
+                                                                            ],
+                                                                 "values":  [
+                                                                                {
+                                                                                    "path":  "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent",
+                                                                                    "name":  "DisableGetStarted",
+                                                                                    "kind":  "DWord",
+                                                                                    "value":  1
+                                                                                }
+                                                                            ]
                                                              }
                                                          ],
                                              "tier":  1
@@ -364,7 +388,7 @@
                                          },
                                          {
                                              "id":  "mixed-reality",
-                                             "settingsPath": "Reinstall from the Microsoft Store.",
+                                             "settingsPath": "Nothing to put back on current builds: Windows Mixed Reality was removed in 24H2, and 3D Builder and Print 3D are no longer offered. On older builds, reinstall from the Microsoft Store where they are still listed.",
                                              "symptoms": ["3d builder missing", "print 3d gone", "mixed reality portal missing"],
                                              "bloat": 3,
                                              "name":  "3D Builder, Print 3D, and MR Portal",
@@ -387,7 +411,7 @@
                                          },
                                          {
                                              "id":  "dev-home",
-                                             "settingsPath": "Reinstall Dev Home from the Microsoft Store.",
+                                             "settingsPath": "Nothing to put back: Microsoft retired Dev Home in 2025 and removed it from Windows, and aka.ms/devhome now opens Settings > System > Advanced instead.",
                                              "symptoms": ["dev home missing"],
                                              "bloat": 3,
                                              "name":  "Dev Home",
@@ -431,7 +455,7 @@
                                              "symptoms": ["to do missing", "tasks missing", "todo app gone", "cannot find my tasks"],
                                              "bloat": 3,
                                              "name":  "Microsoft To Do",
-                                             "desc":  "Microsoft\u0027s task list app.",
+                                             "desc":  "Microsoft's task list app.",
                                              "risk":  1,
                                              "default":  true,
                                              "order":  73,
@@ -445,6 +469,27 @@
                                                          ],
                                              "tier":  2,
                                              "riskNote":  "Syncs with Outlook tasks. Removing the app does not delete the tasks."
+                                         },
+                                         {
+                                             "id":  "family",
+                                             "settingsPath": "Reinstall Microsoft Family Safety from the Microsoft Store. The family group and its limits belong to the Microsoft account, so nothing needs setting up again.",
+                                             "symptoms": ["family safety missing", "family app gone", "microsoft family missing", "cannot see screen time", "cannot change screen time limits", "parental controls app missing"],
+                                             "bloat": 3,
+                                             "name":  "Microsoft Family Safety",
+                                             "desc":  "The app for a Microsoft family group's screen time limits, content filters, and activity reports.",
+                                             "risk":  1,
+                                             "default":  true,
+                                             "order":  73,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "appx",
+                                                                 "names":  [
+                                                                               "MicrosoftCorporationII.MicrosoftFamily"
+                                                                           ]
+                                                             }
+                                                         ],
+                                             "tier":  2,
+                                             "riskNote":  "Anyone managing a family group from this PC loses the app for it. The group and its limits belong to the Microsoft account, so nothing is deleted, and family.microsoft.com still shows and changes them."
                                          },
                                          {
                                              "id":  "power-automate",
@@ -493,7 +538,7 @@
                                              "symptoms": ["quick assist missing", "cannot get remote help", "remote help gone", "nobody can remote in"],
                                              "bloat": 5,
                                              "name":  "Quick Assist",
-                                             "desc":  "Microsoft\u0027s built-in remote assistance tool.",
+                                             "desc":  "Microsoft's built-in remote assistance tool.",
                                              "risk":  1,
                                              "default":  true,
                                              "order":  74,
@@ -596,7 +641,7 @@
                                                              }
                                                          ],
                                              "tier":  0,
-                                             "riskNote":  "Nothing opens .txt, .log, or .ini files until you set a replacement, and a good deal of software still opens its readme by handing the path to Notepad."
+                                             "riskNote":  "Double-clicking a .txt, .log, or .ini file may ask which app to use until you choose one. The classic notepad.exe stays wherever Windows still has its optional Notepad (system) feature, so software that opens a readme by handing the path to notepad.exe keeps working there."
                                          },
                                          {
                                              "id":  "app-calculator",
@@ -638,11 +683,11 @@
                                                              }
                                                          ],
                                              "tier":  0,
-                                             "riskNote":  "Win+Shift+S and the Print Screen key both stop capturing - they are handled by this app rather than by the shell - and nothing else on a clean install saves a screenshot to a file."
+                                             "riskNote":  "Win+Shift+S and the Print Screen key's snipping overlay stop working - they are handled by this app rather than by the shell - and so does screen recording. Win+Print Screen still saves a full-screen capture to Pictures\\Screenshots."
                                          },
                                          {
                                              "id":  "store",
-                                             "settingsPath": "Undo the run. If that does not bring it back, run: wsreset -i from an administrator prompt, or reinstall it with Add-AppxPackage from an elevated PowerShell.",
+                                             "settingsPath": "Run wsreset -i from an administrator prompt and wait a few minutes: it downloads and reinstalls the Store. Undoing the run cannot put it back, because the package is removed for every account.",
                                              "symptoms": ["store missing", "microsoft store gone", "cannot install apps", "store will not open", "cannot update apps", "app store missing", "store error", "cannot download apps", "store not working", "game pass will not install", "cannot reinstall app"],
                                              "bloat": 6,
                                              "name":  "Microsoft Store",
@@ -660,15 +705,15 @@
                                                              }
                                                          ],
                                              "tier":  0,
-                                             "riskNote":  "Without the Store you cannot install or update Store apps, and reinstalling the Store itself is difficult."
+                                             "riskNote":  "Without the Store you cannot install or update Store apps - and every other app this toolkit removes gives the Store as its way back, so that route goes too until the Store is reinstalled with wsreset -i."
                                          },
                                          {
                                              "id":  "remove-edge",
-                                             "settingsPath": "Reinstall Microsoft Edge from microsoft.com/edge.",
+                                             "settingsPath": "Undo the run, which turns Edge's updater back on, then reinstall Microsoft Edge from microsoft.com/edge.",
                                              "symptoms": ["edge missing", "no browser", "cannot open links", "you will need an app to open this", "links not opening", "pdf will not open", "html will not open", "edge gone", "browser missing", "app shows blank page", "webview not working", "email links broken"],
                                              "bloat": 3,
                                              "name":  "Uninstall Microsoft Edge",
-                                             "desc":  "Uninstalls the Edge browser and blocks its updater from bringing it back. Outside the EEA, Windows refuses to uninstall Edge at all, so this sets the home region to Ireland for the length of the uninstall and puts it straight back. WebView2 Runtime is kept.",
+                                             "desc":  "Uninstalls the Edge browser, and once it is gone switches off its updater and the Windows Update channel that reinstalls it. If Windows refuses the uninstall, Edge is left exactly as it was, still updating. WebView2 Runtime is kept.",
                                              "risk":  1,
                                              "default":  true,
                                              "order":  92,
@@ -680,7 +725,7 @@
                                                          ],
                                              "tier":  3,
                                              "reboot":  true,
-                                             "riskNote":  "Windows decides whether Edge may be uninstalled at all, from a regional policy file in System32 that Microsoft added for the Digital Markets Act: outside about thirty-five EEA regions the answer is no, and the uninstaller simply refuses - which is why this used to run and change nothing. This run therefore sets your home region to Ireland just long enough to run the uninstaller and sets it back immediately; the change is also written to the rollback script in case the run is interrupted between the two. Your language, keyboard, and formats are untouched - only the Home location field. If Windows still refuses, the item reports that plainly instead of claiming success. WebView2 is kept, so apps that embed a browser still work, but a few Windows surfaces expect Edge and may fall back awkwardly.",
+                                             "riskNote":  "Windows decides whether Edge may be uninstalled at all: outside about thirty-five EEA regions the answer is no, so this run sets your home region to Ireland just long enough to run the uninstaller and sets it back immediately (also written to the rollback script in case the run is interrupted between the two; your language, keyboard, and formats are untouched). Current builds can still refuse, because they also check which program asked and accept Settings; when that happens nothing else is changed and the item says so. When it does uninstall, the updater it shares with WebView2 goes off, so WebView2 - which apps that embed a browser use - stops receiving security updates until Edge or the updater is reinstalled. A few Windows surfaces expect Edge and may fall back awkwardly.",
                                              "covers":  [
                                                             "Microsoft Edge",
                                                             "Microsoft Edge Update*",

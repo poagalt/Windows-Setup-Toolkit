@@ -6,6 +6,28 @@ $script:WDToolHealth = $null
 # thing nobody could ask about.
 $script:WDToolRank = @{ 'Ok' = 0; 'Degraded' = 1; 'Unknown' = 2; 'Unavailable' = 3 }
 
+function Test-WDTcpReachable {
+    # Whether a TCP connection to the host actually opens. The wait finishing
+    # is not the connection succeeding: with no network the name lookup fails
+    # at once, which completes the attempt too, and the internet check reported
+    # "Ok" in 0 ms on a laptop with no connection whose every install then
+    # failed. EndConnect is what says which.
+    param([Parameter(Mandatory)][string]$HostName, [int]$Port = 443, [int]$TimeoutMs = 3000)
+    $ok = $false; $why = ''; $client = $null
+    try {
+        $client = New-Object Net.Sockets.TcpClient
+        $async  = $client.BeginConnect($HostName, $Port, $null, $null)
+        if ($async.AsyncWaitHandle.WaitOne($TimeoutMs)) {
+            try { $client.EndConnect($async); $ok = [bool]$client.Connected }
+            catch {
+                $why = $(if ($_.Exception.InnerException) { $_.Exception.InnerException.Message } else { $_.Exception.Message })
+            }
+        } else { $why = "no answer within $([int]($TimeoutMs / 1000)) seconds" }
+    } catch { $why = $_.Exception.Message }
+    finally { try { if ($client) { $client.Close() } } catch { } }
+    [pscustomobject]@{ Ok = $ok; Why = $why }
+}
+
 function New-WDToolResult {
     param(
         [Parameter(Mandatory)][string]$Id,
@@ -226,19 +248,13 @@ function Test-WDToolHealth {
     }
 
     & $run 'network' {
-        $ok = $false
-        $client = $null
-        try {
-            $client = New-Object Net.Sockets.TcpClient
-            $async = $client.BeginConnect('cdn.winget.microsoft.com', 443, $null, $null)
-            $ok = $async.AsyncWaitHandle.WaitOne(1500)
-        } catch { }
-        finally { try { if ($client) { $client.Close() } } catch { } }
+        $probe = Test-WDTcpReachable -HostName 'cdn.winget.microsoft.com' -Port 443
+        $ok = $probe.Ok; $why = $probe.Why
         if (-not $ok) {
             return New-WDToolResult -Id 'network' -Name 'Internet access' -State Unavailable `
                 -Reason 'The package servers could not be reached, so nothing can be downloaded or installed.' `
                 -Fix 'Connect to a network. Removals do not need one; installs do.' `
-                -Affects @('winget')
+                -Detail $why -Affects @('winget') -Handlers @('InstallChosenBrowser')
         }
         New-WDToolResult -Id 'network' -Name 'Internet access' -State Ok
     }
@@ -313,9 +329,17 @@ function Test-WDToolHealth {
         # writes can be overwritten at the next refresh.
         $domain = $false; $mdm = 0
         try { $domain = [bool](Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).PartOfDomain } catch { }
+        # An enrollment that points at a management server, not merely an
+        # active one. Every Windows 11 machine carries a dozen active entries of
+        # its own - the Local, Cloud, and Deploy authorities and blank type-1
+        # placeholders - so counting EnrollmentState alone called an unmanaged
+        # laptop "managed by an MDM", and the warning that followed was false.
         try {
-            $mdm = @(Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Enrollments' -ErrorAction Stop |
-                     Where-Object { (Get-ItemProperty $_.PSPath -Name EnrollmentState -ErrorAction SilentlyContinue).EnrollmentState -eq 1 }).Count
+            $mdm = @(Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Enrollments' -ErrorAction Stop | Where-Object {
+                $e = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+                $e -and $e.EnrollmentState -eq 1 -and
+                ([string]$e.DiscoveryServiceFullURL -or [string]$e.ProviderID -eq 'MS DM Server')
+            }).Count
         } catch { }
         if ($domain -or $mdm -gt 0) {
             return New-WDToolResult -Id 'managed' -Name 'Policy management' -State Degraded `
@@ -497,7 +521,7 @@ function Test-WDToolHealth {
             return New-WDToolResult -Id 'shell' -Name 'Windows shell (Explorer)' -State Degraded `
                 -Reason 'Explorer is not running, so shell changes cannot be applied or seen until it starts.' `
                 -Fix 'Sign out and back in, or start explorer.exe.' `
-                -Handlers @('RestartExplorer','SetTaskbarAutoHide','VerifyShellHealth')
+                -Handlers @('RestartExplorer','SetTaskbarAutoHide')
         }
         New-WDToolResult -Id 'shell' -Name 'Windows shell (Explorer)' -State Ok
     }
@@ -723,4 +747,5 @@ function Write-WDToolHealthLog {
 }
 
 Export-ModuleMember -Function Test-WDToolHealth, Get-WDToolHealthSummary, Get-WDHealthImpact,
-                              Format-WDToolHealthText, Write-WDToolHealthLog, New-WDToolResult
+                              Format-WDToolHealthText, Write-WDToolHealthLog, New-WDToolResult,
+                              Test-WDTcpReachable

@@ -131,11 +131,27 @@ function Get-WDBrowserRegistrations {
                 } catch { }
             }
             if (-not $prog.Count) { continue }
+
+            # The name Settings' deep link keys on is the RegisteredApplications
+            # value whose data points at this Capabilities key, not
+            # ApplicationName. The two agree for Chrome and Edge; Firefox
+            # registers as Firefox-<hash>, and its friendly name finds nothing.
+            $regName = ''
+            $wantCap = "Software\Clients\StartMenuInternet\$($k.PSChildName)\Capabilities"
+            try {
+                $ra = Get-Item -LiteralPath (Join-Path $hive 'SOFTWARE\RegisteredApplications') -ErrorAction Stop
+                foreach ($vn in $ra.GetValueNames()) {
+                    if ([string]$ra.GetValue($vn) -ieq $wantCap) { $regName = [string]$vn; break }
+                }
+            } catch { }
+
             $out.Add([pscustomobject]@{
                 Key      = $k.PSChildName
                 Name     = $name
                 IsEdge   = ($k.PSChildName -match 'msedge|Microsoft Edge')
                 ProgIds  = $prog
+                Hive     = $hive
+                RegName  = $regName
             })
         }
     }
@@ -150,75 +166,86 @@ function Get-WDDefaultBrowserProgId {
     try { return [string](Get-ItemProperty -LiteralPath $p -Name 'ProgId' -ErrorAction Stop).ProgId } catch { return '' }
 }
 
+function Read-WDUserChoiceMap {
+    # Every protocol and file type this user has a UserChoice for, read once and
+    # through the registry API. The provider route - Join-Path, Test-Path, and
+    # Get-ItemProperty per key - took fifty seconds over FileExts on a machine
+    # with a few hundred types, and the "already done" probe asks this.
+    $map = [pscustomobject]@{
+        Url  = New-Object System.Collections.Generic.List[psobject]
+        File = New-Object System.Collections.Generic.List[psobject]
+    }
+    foreach ($r in @(
+        @{ Into = 'Url';  Path = 'SOFTWARE\Microsoft\Windows\Shell\Associations\UrlAssociations' }
+        @{ Into = 'File'; Path = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\FileExts' })) {
+        $k = $null
+        try { $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($r.Path) } catch { }
+        if (-not $k) { continue }
+        try {
+            foreach ($n in $k.GetSubKeyNames()) {
+                $uc = $null
+                try { $uc = $k.OpenSubKey("$n\UserChoice") } catch { }
+                if (-not $uc) { continue }
+                $id = ''
+                try { $id = [string]$uc.GetValue('ProgId', '') } catch { } finally { $uc.Close() }
+                if ($id) { $map.($r.Into).Add([pscustomobject]@{ Name = [string]$n; ProgId = $id }) }
+            }
+        } finally { $k.Close() }
+    }
+    $map
+}
+
 function Get-WDHeldAssociations {
-    param([string[]]$ProgIds)
+    param([string[]]$ProgIds, $Map)
 
     $out = [pscustomobject]@{ Url = @(); File = @() }
     if (-not $ProgIds -or -not $ProgIds.Count) { return $out }
     $want = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($p in $ProgIds) { if ($p) { $null = $want.Add([string]$p) } }
+    if (-not $Map) { $Map = Read-WDUserChoiceMap }
 
-    $urls  = New-Object System.Collections.Generic.List[string]
-    $files = New-Object System.Collections.Generic.List[string]
-    foreach ($pair in @(
-        @{ Root = 'HKCU:\SOFTWARE\Microsoft\Windows\Shell\Associations\UrlAssociations'; Into = $urls }
-        @{ Root = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\FileExts';   Into = $files })) {
-        if (-not (Test-Path -LiteralPath $pair.Root)) { continue }
-        foreach ($k in (Get-ChildItem -LiteralPath $pair.Root -ErrorAction SilentlyContinue)) {
-            $uc = Join-Path $k.PSPath 'UserChoice'
-            if (-not (Test-Path -LiteralPath $uc)) { continue }
-            try {
-                $id = [string](Get-ItemProperty -LiteralPath $uc -Name 'ProgId' -ErrorAction Stop).ProgId
-                if ($id -and $want.Contains($id)) { $pair.Into.Add([string]$k.PSChildName) }
-            } catch { }
-        }
-    }
-    $out.Url  = @($urls  | Sort-Object -Unique)
-    $out.File = @($files | Sort-Object -Unique)
+    $out.Url  = @($Map.Url  | Where-Object { $want.Contains([string]$_.ProgId) } | ForEach-Object { $_.Name } | Sort-Object -Unique)
+    $out.File = @($Map.File | Where-Object { $want.Contains([string]$_.ProgId) } | ForEach-Object { $_.Name } | Sort-Object -Unique)
     $out
 }
 
 function Get-WDOrphanedAssociations {
-    $out = [pscustomobject]@{ Url = @(); File = @() }
-    $urls  = New-Object System.Collections.Generic.List[string]
-    $files = New-Object System.Collections.Generic.List[string]
+    param($Map)
 
-    foreach ($pair in @(
-        @{ Root = 'HKCU:\SOFTWARE\Microsoft\Windows\Shell\Associations\UrlAssociations'; Into = $urls }
-        @{ Root = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\FileExts';   Into = $files })) {
-        if (-not (Test-Path -LiteralPath $pair.Root)) { continue }
-        foreach ($k in (Get-ChildItem -LiteralPath $pair.Root -ErrorAction SilentlyContinue)) {
-            $uc = Join-Path $k.PSPath 'UserChoice'
-            if (-not (Test-Path -LiteralPath $uc)) { continue }
-            $id = ''
-            try { $id = [string](Get-ItemProperty -LiteralPath $uc -Name 'ProgId' -ErrorAction Stop).ProgId } catch { continue }
-            if (-not $id) { continue }
-            if (Test-WDProgIdResolves -ProgId $id) { continue }
-            $pair.Into.Add([string]$k.PSChildName)
-        }
+    $out = [pscustomobject]@{ Url = @(); File = @() }
+    if (-not $Map) { $Map = Read-WDUserChoiceMap }
+    # One answer per ProgId: a few hundred types point at a few dozen of them.
+    $ok = @{}
+    $broken = {
+        param($Entry)
+        $id = [string]$Entry.ProgId
+        if (-not $ok.ContainsKey($id)) { $ok[$id] = [bool](Test-WDProgIdResolves -ProgId $id) }
+        -not $ok[$id]
     }
-    $out.Url  = @($urls  | Sort-Object -Unique)
-    $out.File = @($files | Sort-Object -Unique)
+    $out.Url  = @($Map.Url  | Where-Object { & $broken $_ } | ForEach-Object { $_.Name } | Sort-Object -Unique)
+    $out.File = @($Map.File | Where-Object { & $broken $_ } | ForEach-Object { $_.Name } | Sort-Object -Unique)
     $out
 }
 
 function Test-WDProgIdResolves {
     param([string]$ProgId)
     if (-not $ProgId) { return $false }
-    $root = "Registry::HKEY_CLASSES_ROOT\$ProgId"
 
     # Windows deletes the whole ProgId key when the program that registered it
-    # is uninstalled. It is also the only test a Store app answers.
-    try { if (-not (Test-Path -LiteralPath $root)) { return $false } } catch { return $true }
+    # is uninstalled. It is also the only test a Store app answers. A key that
+    # cannot be read is not evidence of anything, so it counts as resolving.
+    $root = $null
+    try { $root = [Microsoft.Win32.Registry]::ClassesRoot.OpenSubKey($ProgId) } catch { return $true }
+    if (-not $root) { return $false }
 
     # Only a rooted path is checked: a bare command name is resolved through
     # PATH by the shell, and guessing at that would report working types as
     # broken.
     $cmd = ''
     try {
-        $cmdKey = "$root\shell\open\command"
-        if (Test-Path -LiteralPath $cmdKey) { $cmd = [string](Get-Item -LiteralPath $cmdKey).GetValue('') }
-    } catch { }
+        $ck = $root.OpenSubKey('shell\open\command')
+        if ($ck) { try { $cmd = [string]$ck.GetValue('') } finally { $ck.Close() } }
+    } catch { } finally { $root.Close() }
     if ($cmd) {
         $exe = $cmd
         if ($cmd -match '^\s*"([^"]+)"') { $exe = $Matches[1] }
@@ -262,24 +289,72 @@ function Get-WDAssociationLock {
     [string]($reasons -join '; ')
 }
 
-function Set-WDDefaultBrowserBestEffort {
-    # There is no silent path on current Windows, and this does not pretend
-    # otherwise: it moves what it can and hands the rest to the operator with
-    # the Settings page already open.
-    param($Context, [string]$PreferName)
+# What one press of Set default moves. Outside the EEA it is the four a browser
+# is for; where the Digital Markets Act applies Windows adds ftp, read, .pdf, and
+# the rest of the web types (Windows Insider Blog, 2025-06-02). Which of the two
+# a machine gets is decided by Windows' own region policy file, so it is read
+# from there - the same answer Settings gets - rather than from a country list.
+$script:DefaultAppsExtraTypesGuid = '{8e779eeb-377c-4373-9e80-56e164fdca7e}'
+$script:SetDefaultCore  = @('http', 'https', '.htm', '.html')
+$script:SetDefaultExtra = @('ftp', 'read', '.pdf', '.svg', '.xht', '.xhtml', '.mht', '.mhtml', '.shtml', '.xml')
 
+function Get-WDSetDefaultScope {
+    $extended = $false
+    $path = Join-Path ([string]$env:SystemRoot) 'System32\IntegratedServicesRegionPolicySet.json'
+    try {
+        $doc = Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json
+        $pol = @($doc.policies | Where-Object { [string]$_.guid -ieq $script:DefaultAppsExtraTypesGuid })
+        if ($pol.Count) {
+            $extended = ([string]$pol[0].defaultState -ieq 'enabled')
+            $iso = Get-WDGeoIso2 -GeoId (Get-WDHomeGeoId)
+            if ($iso -and @($pol[0].conditions.region.enabled) -contains $iso) { $extended = $true }
+        }
+    } catch { }
+    $types = @($script:SetDefaultCore)
+    if ($extended) { $types += $script:SetDefaultExtra }
+    [pscustomobject]@{ Extended = $extended; Types = $types }
+}
+
+function Format-WDTypeList {
+    param([string[]]$Types, [int]$Max = 12)
+    $t = @($Types)
+    $s = (@($t | Select-Object -First $Max)) -join ', '
+    if ($t.Count -gt $Max) { $s += ", and $($t.Count - $Max) more" }
+    $s
+}
+
+function Get-WDDefaultBrowserPlan {
+    # Everything the default-browser step decides, with nothing opened. The
+    # handler, its preview, Edge removal's hand-over, and the "already done"
+    # probe all ask this one question, so they cannot disagree - the probe used
+    # to look at http and https alone while the handler saw .svg still with Edge
+    # and reopened Settings on every run.
+    param([string]$PreferName)
+
+    $plan = [pscustomobject]@{
+        Pick = $null; Current = ''; Wanted = ''; Done = $false; Extended = $false
+        Moving = @(); ByHand = @(); Stranded = @()
+    }
     $browsers = @(Get-WDBrowserRegistrations)
     $targets  = @($browsers | Where-Object { -not $_.IsEdge })
-    if (-not $targets.Count) {
-        return [pscustomobject]@{ Ok = $false; Message = 'no replacement browser is installed yet'; Opened = $false }
-    }
+    if (-not $targets.Count) { return $plan }
+
+    $current = Get-WDDefaultBrowserProgId
+    $plan.Current = $current
 
     $pick = $null
     if ($PreferName) { $pick = $targets | Where-Object { $_.Name -like "*$PreferName*" -or $_.Key -like "*$PreferName*" } | Select-Object -First 1 }
+    # Nobody said which: the browser already holding http, if it is not Edge.
+    # Without this a machine on Firefox was told to move everything to whichever
+    # browser happened to sort first.
+    if (-not $pick -and $current) {
+        $pick = $targets | Where-Object { @($_.ProgIds.Values) -contains $current } | Select-Object -First 1
+    }
     if (-not $pick) { $pick = $targets[0] }
+    $plan.Pick = $pick
 
-    $current = Get-WDDefaultBrowserProgId
     $wanted  = [string]$pick.ProgIds['http']
+    $plan.Wanted = $wanted
 
     # Everything the outgoing browser holds, not just http - the complaint this
     # answers is the half-move where .pdf and .svg go on opening in the old one.
@@ -294,61 +369,105 @@ function Set-WDDefaultBrowserBestEffort {
         if (-not $b.IsEdge) { continue }
         foreach ($v in @($b.ProgIds.Values)) { if ($v -and -not $mine.Contains([string]$v)) { $outgoing += [string]$v } }
     }
-    $held  = Get-WDHeldAssociations -ProgIds @($outgoing | Sort-Object -Unique)
+    $ucMap = Read-WDUserChoiceMap
+    $held  = Get-WDHeldAssociations -ProgIds @($outgoing | Sort-Object -Unique) -Map $ucMap
 
     # Anything already pointing at a program that is gone is swept up too. Those
     # are worse than a wrong default - the type does not open at all - and
     # removing the mail app orphans mailto, which reading Edge's ProgIds never
     # finds.
-    $orph  = Get-WDOrphanedAssociations
+    $orph  = Get-WDOrphanedAssociations -Map $ucMap
     $takes = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($k in @($pick.ProgIds.Keys)) { $null = $takes.Add([string]$k) }
 
-    $allHeld = @(@($held.Url) + @($held.File) + @($orph.Url) + @($orph.File) | Sort-Object -Unique)
-    $moving  = @($allHeld | Where-Object { $takes.Contains([string]$_) })
-    # Types the outgoing browser holds that the incoming one never registered
-    # for. No amount of pressing Set default moves these, so naming them is the
-    # difference between a finished job and one that looks finished.
-    $stranded = @(@($held.Url) + @($held.File) | Where-Object { -not $takes.Contains([string]$_) })
+    $allHeld   = @(@($held.Url) + @($held.File) + @($orph.Url) + @($orph.File) | Sort-Object -Unique)
+    $claimable = @($allHeld | Where-Object { $takes.Contains([string]$_) })
 
-    # A claim about the whole set, not about http: tested on http alone, a
-    # machine where Chrome already held it stopped while Edge went on holding
-    # .svg and mailto, and the next step uninstalled Edge.
-    if ($wanted -and $current -and $current -eq $wanted -and -not $moving.Count) {
-        $msg = "$($pick.Name) already holds everything it can take"
-        if ($stranded.Count) {
-            $msg += ". Still pointed at the browser being replaced, and $($pick.Name) has not registered for " +
-                    "them so Windows will not offer them: " + ((@($stranded | Select-Object -First 8)) -join ', ') +
-                    $(if ($stranded.Count -gt 8) { ", and $($stranded.Count - 8) more" } else { '' })
-        }
+    # Of what the incoming browser can take, only the types Set default covers
+    # here move on that one press. The rest it claims too, but each has to be
+    # picked under Default apps by hand - outside the EEA that is .pdf, .svg,
+    # and mailto among others.
+    $scope = Get-WDSetDefaultScope
+    $plan.Extended = $scope.Extended
+    $inScope = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($t in @($scope.Types)) { $null = $inScope.Add([string]$t) }
+    $plan.Moving = @($claimable | Where-Object { $inScope.Contains([string]$_) })
+    $plan.ByHand = @($claimable | Where-Object { -not $inScope.Contains([string]$_) })
+    # Types the outgoing browser holds that the incoming one never registered
+    # for. Nothing in Default apps can move these to it, so naming them is the
+    # difference between a finished job and one that looks finished.
+    # Edge's own microsoft-edge: protocols are left out: no other browser claims
+    # them, and telling somebody to point them elsewhere is advice nobody can
+    # follow.
+    $plan.Stranded = @(@($held.Url) + @($held.File) | Where-Object { -not $takes.Contains([string]$_) -and [string]$_ -notlike 'microsoft-edge*' })
+
+    # Done when the press would move nothing: http is already the pick's, and
+    # nothing Set default covers is left with the outgoing browser. Not "nothing
+    # held anywhere" - that asked for a button that cannot move .svg, and on a
+    # US machine reopened Settings at every run.
+    $plan.Done = [bool]($wanted -and $current -and $current -eq $wanted -and -not @($plan.Moving).Count)
+    $plan
+}
+
+function Get-WDDefaultBrowserLeftovers {
+    # The two sentences every outcome ends with, when they apply.
+    param($Plan)
+    $name = [string]$Plan.Pick.Name
+    $s = ''
+    if (@($Plan.ByHand).Count) {
+        $s += " Set default does not move these here, so pick $name for each under Settings > Apps > Default apps > $name" +
+              ": $(Format-WDTypeList -Types $Plan.ByHand)."
+    }
+    if (@($Plan.Stranded).Count) {
+        $s += " These stay with the old browser because $name has not registered for them, so they have to be" +
+              " pointed at another program by hand: $(Format-WDTypeList -Types $Plan.Stranded)."
+    }
+    $s
+}
+
+function Set-WDDefaultBrowserBestEffort {
+    # There is no silent path on current Windows, and this does not pretend
+    # otherwise: it reads the plan and hands it to the operator with the
+    # Settings page already open.
+    param($Context, [string]$PreferName)
+
+    $plan = Get-WDDefaultBrowserPlan -PreferName $PreferName
+    if (-not $plan.Pick) {
+        return [pscustomobject]@{ Ok = $false; Message = 'no replacement browser is installed yet'; Opened = $false
+                                  Pick = ''; Moving = @(); ByHand = @(); Stranded = @() }
+    }
+    $pick = $plan.Pick
+    $rest = Get-WDDefaultBrowserLeftovers -Plan $plan
+
+    if ($plan.Done) {
         return [pscustomobject]@{
             Ok = $true; Opened = $false; Pick = $pick.Name
-            Moving = @(); Stranded = $stranded; Message = $msg
+            Moving = @(); ByHand = $plan.ByHand; Stranded = $plan.Stranded
+            Message = "$($pick.Name) already holds everything Set default moves.$rest".Trim()
         }
     }
 
-    $what = $(if ($moving.Count) {
-                  "$($moving.Count) association(s) - " +
-                  ((@($moving | Select-Object -First 12)) -join ', ') +
-                  $(if ($moving.Count -gt 12) { ", and $($moving.Count - 12) more" } else { '' })
-              } else { 'http, https and the web file types' })
+    $what = $(if (@($plan.Moving).Count) { "$(@($plan.Moving).Count) association(s) - $(Format-WDTypeList -Types $plan.Moving)" }
+              else { 'http, https, .htm, and .html' })
 
     $lock = Get-WDAssociationLock
+    $why = $(if ($lock) { " Windows will not allow this silently: $lock." } else { ' Windows will not let any program do this silently.' })
     if ($Context.Preview) {
-        $why = $(if ($lock) { " Windows will not allow this silently: $lock." } else { '' })
         return [pscustomobject]@{
             Ok = $false; Opened = $false; Pick = $pick.Name
-            Moving = $moving; Stranded = $stranded
-            Message = "Would hand $what to $($pick.Name).$why"
+            Moving = $plan.Moving; ByHand = $plan.ByHand; Stranded = $plan.Stranded
+            Message = "Would hand $what to $($pick.Name).$why$rest"
         }
     }
 
-    # registeredAppMachine takes a name from
-    # HKLM\SOFTWARE\RegisteredApplications, where per-machine installs land.
+    # registeredAppMachine for a browser registered under HKLM,
+    # registeredAppUser for one under HKCU, each with its RegisteredApplications
+    # name. The friendly name is the fallback for a browser that registered none.
     $opened = $false
     try {
-        $arg = [uri]::EscapeDataString($pick.Name)
-        Start-Process "ms-settings:defaultapps?registeredAppMachine=$arg" -ErrorAction Stop
+        $param = $(if ([string]$pick.Hive -ieq 'HKCU:') { 'registeredAppUser' } else { 'registeredAppMachine' })
+        $nm    = $(if ($pick.RegName) { [string]$pick.RegName } else { [string]$pick.Name })
+        Start-Process "ms-settings:defaultapps?$param=$([uri]::EscapeDataString($nm))" -ErrorAction Stop
         $opened = $true
     } catch {
         try { Start-Process 'ms-settings:defaultapps' -ErrorAction Stop; $opened = $true } catch { }
@@ -358,8 +477,9 @@ function Set-WDDefaultBrowserBestEffort {
         Ok       = $false
         Opened   = $opened
         Pick     = $pick.Name
-        Moving   = $moving
-        Stranded = $stranded
+        Moving   = $plan.Moving
+        ByHand   = $plan.ByHand
+        Stranded = $plan.Stranded
         Message  = "$($pick.Name) could not be made default without your confirmation" +
                    $(if ($lock) { " - $lock" } else { '' })
     }
@@ -382,31 +502,24 @@ Register-WDHandler 'SetDefaultBrowser' {
     }
 
     $r = Set-WDDefaultBrowserBestEffort -Context $Context -PreferName $prefer
+    if (-not $r.Pick) {
+        return New-WDResult -Status Skipped -Message "Nothing to hand the associations to - $($r.Message)"
+    }
     if ($r.Ok) { return New-WDResult -Status AlreadySet -Message $r.Message }
     # Obstruction in preview too, because that is what apply reports. It read
     # Changed, which is the one thing this step is certain not to do on its own.
     if ($Context.Preview) {
         return New-WDResult -Status Obstruction -Message $r.Message `
-                            -Detail ('Windows will not allow this silently: the User Choice Protection Driver is ' +
-                                     'active and blocks these keys. Applying will open Settings at the right ' +
-                                     'browser and tell you which button to press.')
+                            -Detail ('Applying will open Settings > Apps > Default apps at the right browser and ' +
+                                     'say which button to press.')
     }
 
-    if (-not $r.Pick) {
-        return New-WDResult -Status Skipped -Message "Nothing to hand the associations to - $($r.Message)"
-    }
     $tail = ''
     if (@($r.Moving).Count) {
-        $tail += ' That moves ' + @($r.Moving).Count + ' association(s): ' +
-                 ((@($r.Moving | Select-Object -First 20)) -join ', ') +
-                 $(if (@($r.Moving).Count -gt 20) { ', and ' + (@($r.Moving).Count - 20) + ' more.' } else { '.' })
+        $tail += " That moves $(@($r.Moving).Count) association(s): $(Format-WDTypeList -Types $r.Moving -Max 20)."
     }
-    if (@($r.Stranded).Count) {
-        $tail += ' These stay with the old browser because ' + $r.Pick + ' has not registered for them, ' +
-                 'so Set default cannot move them and they have to be pointed somewhere by hand: ' +
-                 ((@($r.Stranded | Select-Object -First 20)) -join ', ') +
-                 $(if (@($r.Stranded).Count -gt 20) { ', and ' + (@($r.Stranded).Count - 20) + ' more.' } else { '.' })
-    }
+    $tail += Get-WDDefaultBrowserLeftovers -Plan ([pscustomobject]@{
+        Pick = [pscustomobject]@{ Name = $r.Pick }; ByHand = $r.ByHand; Stranded = $r.Stranded })
     # Obstruction, not Blocked: Blocked means this run tried something and
     # Windows said no, and nothing here was refused. Windows lets no program
     # move the default browser silently, by design.
@@ -420,42 +533,50 @@ Register-WDHandler 'SetDefaultBrowser' {
 function Block-WDEdgeReinstall {
     param($Context)
 
-    $pol = 'HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate'
     $blocked = New-Object System.Collections.Generic.List[string]
 
-    if (-not $Context.Preview) {
-        Backup-WDRegistryKey -Path $pol
-        if (-not (Test-Path $pol)) { $null = New-Item -Path $pol -Force }
-
-        # 0 = do not install / do not update, for every channel.
-        $values = [ordered]@{
-            'InstallDefault'                = 0
-            'UpdateDefault'                 = 0
-            'AutoUpdateCheckPeriodMinutes'  = 0
-            'DoNotUpdateToEdgeWithChromium' = 1
-            'CreateDesktopShortcutDefault'  = 0
-            'RemoveDesktopShortcutDefault'  = 1
-        }
-        foreach ($g in $script:EdgeGuids.Values) {
-            $values["Install$g"] = 0
-            $values["Update$g"]  = 0
-        }
-        foreach ($k in $values.Keys) {
-            try {
-                Set-ItemProperty -LiteralPath $pol -Name $k -Value $values[$k] -Type DWord -Force -ErrorAction Stop
-            } catch { }
-        }
-        Add-WDJournal -ItemId $Context.ItemId -Type 'registry' -Target $pol -Status 'Changed' `
-                      -Undo @{ method = 'registry'; path = $pol; name = 'InstallDefault'; previous = '__ABSENT__'; kind = 'DWord' }
-        $blocked.Add('update policy')
+    # The EdgeUpdate policies, through the registry executor so that every value
+    # is journalled - this used to journal InstallDefault alone of the fourteen
+    # it wrote, so a rollback left thirteen behind. They bind only a machine
+    # joined to a domain: Microsoft documents InstallDefault and UpdateDefault
+    # as "available only on Windows instances that are joined to a Microsoft
+    # Active Directory domain", and on this machine the updater's own log reads
+    # "Machine is not Enterprise Managed" with them in place. Everywhere else
+    # the services, tasks, and folder below are what stop it.
+    $pol  = 'HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate'
+    $vals = New-Object System.Collections.Generic.List[psobject]
+    $base = [ordered]@{
+        'InstallDefault'                = 0
+        'UpdateDefault'                 = 0
+        'AutoUpdateCheckPeriodMinutes'  = 0
+        'DoNotUpdateToEdgeWithChromium' = 1
+        'CreateDesktopShortcutDefault'  = 0
+        'RemoveDesktopShortcutDefault'  = 1
     }
+    foreach ($k in $base.Keys) { $vals.Add([pscustomobject]@{ path = $pol; name = $k; kind = 'DWord'; value = $base[$k] }) }
+    foreach ($g in $script:EdgeGuids.Values) {
+        $vals.Add([pscustomobject]@{ path = $pol; name = "Install$g"; kind = 'DWord'; value = 0 })
+        $vals.Add([pscustomobject]@{ path = $pol; name = "Update$g";  kind = 'DWord'; value = 0 })
+    }
+    $reg = Invoke-WDRegistryAction -Context $Context -Action ([pscustomobject]@{ type = 'registry'; scope = 'machine'; values = $vals.ToArray() })
+    if ([string]$reg.Status -in @('Changed', 'AlreadySet')) { $blocked.Add('update policy') }
+
+    # The Windows Update channel that put EdgeUpdate back on this machine eight
+    # days after the 2026-08-15 run (its log: "/install ... brand=WAAS",
+    # Windows servicing) - the same orchestrator entry Microsoft tells admins
+    # to delete to stop the new Outlook being reinstalled. Exported first.
+    $uso = Invoke-WDRegistryKeyAction -Context $Context -Action ([pscustomobject]@{
+        type = 'registryKey'; paths = @('HKLM:\SOFTWARE\Microsoft\WindowsUpdate\Orchestrator\UScheduler_Oobe\EdgeUpdate') })
+    if ([string]$uso.Status -eq 'Removed') { $blocked.Add('Windows Update reinstall channel') }
 
     # The updater itself: services, then tasks, then its binaries.
     $svc = Invoke-WDServiceAction -Action ([pscustomobject]@{
         names = @('edgeupdate', 'edgeupdatem', 'MicrosoftEdgeElevationService')
         startupType = 'Disabled'; stop = $true }) -Context $Context
-    if ($svc.Status -in @('Changed','Removed')) { $blocked.Add('updater services') }
+    if ($svc.Status -in @('Changed','Removed','AlreadySet')) { $blocked.Add('updater services') }
 
+    # Deleted with each definition exported first, so the rollback registers
+    # them again.
     $tsk = Invoke-WDTaskAction -Action ([pscustomobject]@{
         tasks = @('\MicrosoftEdgeUpdateTask*'); delete = $true }) -Context $Context
     if ($tsk.Status -in @('Changed','Removed')) { $blocked.Add('updater tasks') }
@@ -471,7 +592,7 @@ function Block-WDEdgeReinstall {
             Add-WDJournal -ItemId $Context.ItemId -Type 'file' -Target $updDir -Status 'Changed' `
                           -Undo @{ method = 'rename'; from = $parked; to = $updDir }
         } catch {
-            # Held open by a running updater; the policy block still holds.
+            # Held open by a running updater; the services above still hold.
             Write-WDLog "EdgeUpdate folder is in use, left in place: $($_.Exception.Message)" -Level Warn -Item $Context.ItemId
         }
     } elseif ($Context.Preview -and (Test-Path -LiteralPath $updDir)) {
@@ -482,21 +603,31 @@ function Block-WDEdgeReinstall {
 }
 
 Register-WDHandler 'RemoveEdge' {
-    # Order matters: block the reinstall vectors first, then uninstall. The
-    # other way round leaves a window where EdgeUpdate notices Edge is gone and
-    # re-stages it.
+    # UNINSTALL FIRST, then block - and block only what was really uninstalled.
+    #
+    # This used to block every reinstall vector first, on the reasoning that
+    # EdgeUpdate would otherwise notice Edge was gone and re-stage it. The cost
+    # of that order showed on 2026-08-15: Windows refused the uninstall (exit
+    # 93), the updater was already off, and a folder sweep then deleted Edge's
+    # files anyway - leaving Installed apps, App Paths, the default-browser
+    # registration and microsoft-edge: links all pointing at an msedge.exe that
+    # was gone, and reporting "Removed". A refused uninstall now changes
+    # nothing: Edge stays installed AND updating. The race the old order
+    # guarded against is closed by stopping the updater (not disabling it)
+    # for the length of the uninstall.
     param($Action, $Context)
 
     $edgeDirs = @(
         (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application'),
         (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application')
     ) | Where-Object { Test-Path -LiteralPath $_ }
+    $installed = { @($edgeDirs | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'msedge.exe') }) }
 
     $appx = @()
     try { $appx = @(Get-AppxPackage -Name 'Microsoft.MicrosoftEdge.Stable' -ErrorAction SilentlyContinue) } catch { }
 
-    if (-not $edgeDirs -and -not $appx) {
-        # Still block the vectors, so a future servicing pass cannot install it.
+    if (-not @(& $installed).Count -and -not $appx) {
+        # Already gone: shut what would bring it back.
         $null = Block-WDEdgeReinstall -Context $Context
         return New-WDResult -Status NotPresent -Message 'Edge is not installed; reinstall vectors blocked anyway'
     }
@@ -504,12 +635,11 @@ Register-WDHandler 'RemoveEdge' {
     $policy = Get-WDEdgeUninstallPolicy
 
     if ($Context.Preview) {
-        $note = 'Blocks EdgeUpdate policy, services, tasks and binaries first, then uninstalls. WebView2 Runtime is kept.'
+        $note = 'Uninstalls Edge, and only once it is really gone blocks its updater, its update tasks, and the Windows Update channel that reinstalls it. WebView2 Runtime is kept, but stops receiving updates with the updater off.'
         if ($policy.Known -and -not $policy.Allowed) {
-            $note = "Windows currently refuses to uninstall Edge in region $($policy.Region): the " +
-                    '"Edge is uninstallable" policy in IntegratedServicesRegionPolicySet.json is enabled only in the EEA. ' +
-                    'This run will set the home region to IE for the length of the uninstall and set it straight back, ' +
-                    'which is what makes the uninstaller answer. ' + $note
+            $note = "Windows refuses to uninstall Edge in region $($policy.Region) unless the home region is an EEA one, so " +
+                    'the run sets it to IE for the length of the uninstall and straight back. Current builds can refuse ' +
+                    'anyway; if so, Edge is left exactly as it was. ' + $note
         }
         $handover = Set-WDDefaultBrowserBestEffort -Context $Context
         $note = "$($handover.Message) " + $note
@@ -539,16 +669,16 @@ Register-WDHandler 'RemoveEdge' {
                      'Links will have no handler until one is installed.') -Level Warn -Item $Context.ItemId
     }
 
-    # 1. Block first.
-    foreach ($b in (Block-WDEdgeReinstall -Context $Context)) { $steps.Add($b) }
-
-    # 2. Stop anything holding files open.
-    Get-Process -Name 'msedge','MicrosoftEdgeUpdate','msedgewebview2' -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -ne 'msedgewebview2' } |
+    # 1. Stop the updater and anything holding files open. Stopped, not
+    # disabled: if Windows refuses the uninstall, the updater carries on as it
+    # was.
+    $wasRunning = @(Get-Service -Name 'edgeupdate', 'edgeupdatem' -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Running' })
+    foreach ($s in $wasRunning) { try { Stop-Service -Name $s.Name -Force -ErrorAction Stop } catch { } }
+    Get-Process -Name 'msedge', 'MicrosoftEdgeUpdate' -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 600
 
-    # 3. Lift the regional refusal. Journalled as well as restored in the
+    # 2. Lift the regional refusal. Journalled as well as restored in the
     # finally: the finally covers an exception, the journal covers this process
     # being killed between the two.
     $geoWas = -1
@@ -568,27 +698,18 @@ Register-WDHandler 'RemoveEdge' {
         }
     }
 
+    $exits = New-Object System.Collections.Generic.List[string]
     try {
-        # 4. Run every setup.exe there is. Version folders move between updates,
+        # 3. Run every setup.exe there is. Version folders move between updates,
         # so search rather than assume a path.
-        $lastExit = $null
         foreach ($dir in $edgeDirs) {
             $setups = @(Get-ChildItem -LiteralPath $dir -Recurse -Filter 'setup.exe' -ErrorAction SilentlyContinue |
                         Where-Object { $_.FullName -match '\\Installer\\setup\.exe$' })
             foreach ($s in $setups) {
                 $r = Invoke-WDProcess -FilePath $s.FullName -TimeoutSeconds 600 -ArgumentList @(
                     '--uninstall', '--system-level', '--verbose-logging', '--force-uninstall')
-                $lastExit = $r.ExitCode
-                if ($r.ExitCode -eq 0) { $steps.Add('uninstaller ran') }
-                else { $steps.Add("uninstaller exit $($r.ExitCode)") }
+                $exits.Add([string]$r.ExitCode)
             }
-        }
-
-        # Exit 532 is the refusal, not a failure. It has no documented meaning,
-        # so the log line is the evidence.
-        if ($lastExit -and $lastExit -ne 0) {
-            $why = Get-WDEdgeInstallerReason
-            if ($why) { Write-WDLog "Edge installer said: $why" -Level Warn -Item $Context.ItemId }
         }
     } finally {
         if ($geoWas -ge 0) {
@@ -598,46 +719,62 @@ Register-WDHandler 'RemoveEdge' {
         }
     }
 
-    # 4. The Store-delivered package, for all users and provisioned.
+    # 4. Did it work? Asked of the disk, not of the exit code, which has no
+    # documented meaning - and BEFORE anything is swept, because a sweep after
+    # a refusal is what turned "Windows said no" into a half-deleted browser.
+    $stillThere = @(& $installed)
+    if ($stillThere.Count) {
+        foreach ($s in $wasRunning) { try { Start-Service -Name $s.Name -ErrorAction Stop } catch { } }
+        $why = Get-WDEdgeInstallerReason
+        $after = Get-WDEdgeUninstallPolicy
+        $detail = "Edge is still installed at $($stillThere -join ', ') (uninstaller exit $($exits -join ', ')). " +
+                  'Nothing else was changed: Edge keeps updating, and its updater is untouched.'
+        if ($why) { $detail += " Edge's own log says: $why" }
+        if ($after.Known -and -not $after.Allowed) {
+            $detail += " Windows permits uninstalling Edge only in the EEA. On current builds it also refuses an uninstall " +
+                       'that Settings did not start: with the home region set to an EEA country under Settings, Time and ' +
+                       'language, Language and region, Installed apps shows an Uninstall button next to Edge.'
+        } else {
+            $detail += ' Uninstall it from Settings > Apps > Installed apps, which is the caller Windows accepts.'
+        }
+        return New-WDResult -Status Blocked -Message 'Windows refused to uninstall Edge' -Detail $detail
+    }
+    $steps.Add('uninstaller removed Edge')
+
+    # 5. Gone, so now the updater and every channel that would reinstall it.
+    foreach ($b in (Block-WDEdgeReinstall -Context $Context)) { $steps.Add($b) }
+
+    # 6. The Store-delivered package, for all users and provisioned.
     $ax = Invoke-WDAppxAction -Action ([pscustomobject]@{
         names = @('Microsoft.MicrosoftEdge.Stable', 'Microsoft.MicrosoftEdge.Beta', 'Microsoft.MicrosoftEdgeDevToolsClient') }) -Context $Context
     if ($ax.Status -eq 'Removed') { $steps.Add('appx package removed') }
 
-    # 5. Clear EdgeUpdate's own record that Edge exists, or it re-stages.
+    # 7. Clear EdgeUpdate's own record that Edge exists, or it re-stages.
+    # Exported before deletion, through the key executor, so it is journalled.
+    $clients = New-Object System.Collections.Generic.List[string]
     foreach ($root in @('HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients',
                         'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients')) {
-        foreach ($g in $script:EdgeGuids.Values) {
-            $k = Join-Path $root $g
-            if (Test-Path -LiteralPath $k) {
-                try {
-                    $null = Backup-WDRegistryKey -Path $k
-                    Remove-Item -LiteralPath $k -Recurse -Force -ErrorAction Stop
-                    $steps.Add('updater client record cleared')
-                } catch { }
-            }
-        }
+        foreach ($g in $script:EdgeGuids.Values) { $clients.Add((Join-Path $root $g)) }
     }
+    $cr = Invoke-WDRegistryKeyAction -Context $Context -Action ([pscustomobject]@{ type = 'registryKey'; paths = $clients.ToArray() })
+    if ([string]$cr.Status -eq 'Removed') { $steps.Add('updater client record cleared') }
 
-    # 6. Sweep the folders. The uninstaller leaves its tree behind on nearly
-    # every machine, held open by processes that restart themselves.
+    # 8. What the uninstaller left of Edge's own folder. Only Edge's: EdgeCore
+    # is WebView2's servicing copy (its msedge.dll is a hardlink of the one in
+    # EdgeWebView), EdgeWebView is WebView2, EdgeUpdate is parked above, and the
+    # Copilot folders were never Edge's to take. The old ^(Edge|Copilot) sweep
+    # deleted all of those but EdgeWebView.
     $sweepRoots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) |
         Where-Object { $_ } | ForEach-Object { Join-Path $_ 'Microsoft' }
-    $edgeProcs = @('msedge', 'msedgewebview2', 'MicrosoftEdgeUpdate', 'identity_helper',
+    $edgeProcs = @('msedge', 'MicrosoftEdgeUpdate', 'identity_helper',
                    'msedge_proxy', 'cookie_exporter', 'elevation_service')
     $swept  = 0
     $queued = 0
     foreach ($root in $sweepRoots) {
         if (-not (Test-Path -LiteralPath $root)) { continue }
-        # Nothing this run parked. Block-WDEdgeReinstall renames EdgeUpdate to
-        # EdgeUpdate.wd-disabled and journals a rename back, and that name
-        # matches ^Edge without being EdgeWebView - so this sweep deleted it and
-        # left a journal entry promising a folder that was gone.
         $doomed = @(Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue |
-                    Where-Object { $_.Name -match '^(Edge|Copilot)' -and
-                                   $_.Name -ne 'EdgeWebView' -and
-                                   $_.Name -notlike '*.wd-disabled' })
+                    Where-Object { $_.Name -match '^Edge( Beta| Dev| SxS)?$' })
         foreach ($d in $doomed) {
-            if ($Context.Preview) { $swept++; continue }
             $r = Remove-WDStubbornDirectory -Path $d.FullName -ProcessNames $edgeProcs
             if ($r.Gone) {
                 $swept++
@@ -651,36 +788,14 @@ Register-WDHandler 'RemoveEdge' {
             }
             # Not journalled: nothing can put a program's files back, and an
             # undo entry claiming otherwise is a lie the rollback script
-            # repeats.
+            # repeats. The program itself is already uninstalled by now.
             if ($r.Killed.Count) { $steps.Add("stopped $($r.Killed -join ', ')") }
         }
     }
-    if ($swept)  { $steps.Add("$swept folder$(if ($swept -ne 1) { 's' }) deleted") }
-    if ($queued) { $steps.Add("$queued folder$(if ($queued -ne 1) { 's' }) queued for deletion at restart") }
+    if ($swept)  { $steps.Add("$swept leftover folder$(if ($swept -ne 1) { 's' }) deleted") }
+    if ($queued) { $steps.Add("$queued leftover folder$(if ($queued -ne 1) { 's' }) queued for deletion at restart") }
 
     Set-WDRebootNeeded
-
-    # 7. Did it work? A refusal and a failure look identical from here unless
-    # the reason is carried through, and one is worth re-running while the other
-    # never will be.
-    $stillThere = @($edgeDirs | Where-Object { Test-Path (Join-Path $_ 'msedge.exe') })
-    if ($stillThere.Count) {
-        $why = Get-WDEdgeInstallerReason
-        $after = Get-WDEdgeUninstallPolicy
-        $detail = "msedge.exe is still at $($stillThere -join ', '). Every reinstall vector is blocked, " +
-                  'the updater is off and the browser will not update or come back, but it is still on the disk.'
-        if ($why) { $detail += " Edge's own log says: $why" }
-        if ($after.Known -and -not $after.Allowed) {
-            $detail += " Windows does not permit uninstalling Edge in region $($after.Region) - the " +
-                       '"Edge is uninstallable" policy in System32\IntegratedServicesRegionPolicySet.json is enabled ' +
-                       'only in the EEA. Changing the home region under Settings, Time and language, Language and ' +
-                       'region to an EEA country makes an Uninstall button appear next to Edge in Installed apps.'
-        } else {
-            $detail += ' Try again after a restart - some builds hold the files open until then.'
-        }
-        return New-WDResult -Status Blocked -Message 'Windows refused to uninstall Edge' -Detail $detail
-    }
-
     New-WDResult -Status Removed -Message 'Edge removed and reinstall blocked' `
                  -Detail (($steps | Sort-Object -Unique) -join ', ') -Reboot
 }
@@ -758,10 +873,16 @@ Register-WDHandler 'CloseResurrectionPaths' {
         elseif ($r.Status -ne 'NotPresent')       { $left.Add("ContentDeliveryManager: $($r.Message)") }
     } else { $did.Add('ContentDeliveryManager was already shut') }
 
-    # 3. Consumer features policy.
+    # 3. Consumer features policy - Enterprise and Education only. Its own ADML
+    # says "This setting only applies to Enterprise and Education SKUs" and the
+    # Policy CSP lists Pro as unsupported, so on Pro and Home writing it closed
+    # nothing while this step counted it as a path closed (the 2026-08-15 run
+    # on Pro reported exactly that, and nothing else). Not written there now.
     $cc = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' `
                             -Name 'DisableWindowsConsumerFeatures' -ErrorAction SilentlyContinue).DisableWindowsConsumerFeatures
-    if ($cc -ne 1) {
+    if (-not [bool](Get-Prop $Context.Profile 'IsEnterprise' $false)) {
+        $did.Add('the consumer features policy works only on Enterprise and Education, so it is not written on this edition; the content-delivery values above are what closes that path here')
+    } elseif ($cc -ne 1) {
         & $say "Windows can still deliver bundled apps to this machine - $verb the consumer features policy."
         $r = Invoke-WDRegistryAction -Context $Context -Action ([pscustomobject]@{
             type = 'registry'; scope = 'machine'
@@ -969,14 +1090,15 @@ function New-WDLogonGuardRunner {
 if (-not ((Test-Path -LiteralPath `$entry) -and (Test-Path -LiteralPath `$savedPlan))) { exit 0 }
 `$count = 0
 try { `$count = @((Get-Content -LiteralPath `$savedPlan -Raw | ConvertFrom-Json).selected).Count } catch { }
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File `$entry -Console -Apply -ProfilePath `$savedPlan
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File `$entry -Console -Apply -GuardRun -ProfilePath `$savedPlan
 `$rc = `$LASTEXITCODE
-# ONLY WHEN IT ACTUALLY RAN. This marker is what raises the toast telling
-# somebody their selection was re-applied at sign-in, and it was written
+# ONLY WHEN IT ACTUALLY CHANGED SOMETHING. This marker is what raises the toast
+# telling somebody their selection was re-applied at sign-in, and it was written
 # regardless of how the run above went - so a sign-in where the toolkit happened
 # to be open (exit 4, the single-instance interlock refusing) still claimed the
 # work had been done. 0 is applied cleanly and 2 is applied with some items
-# failing; both are runs that happened. 1 and 4 never got as far as the plan.
+# failing; both are runs that changed something. 6 is a guard run that found
+# nothing back, and 1 and 4 never got as far as the plan.
 if (`$rc -eq 0 -or `$rc -eq 2) {
     ([pscustomobject]@{ when = (Get-Date).ToString('o'); kind = 'logon'; items = `$count; build = '' } |
         ConvertTo-Json) | Set-Content -LiteralPath `$marker -Encoding UTF8
@@ -1002,11 +1124,14 @@ function Install-WDGuardNotice {
 }
 
 # The current OS build as one comparable string: anything a feature update
-# changes shows up here, with no per-version event log knowledge.
+# changes shows up here, with no per-version event log knowledge. CurrentBuild
+# and DisplayVersion only - it held UBR as well, which every monthly cumulative
+# update moves (this machine went 26200.9168 to .9457 in eight weeks), so a
+# guard named for feature updates fired every month.
 function Get-WDBuildStamp {
     $k = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
     $p = Get-ItemProperty -LiteralPath $k -ErrorAction SilentlyContinue
-    '{0}.{1}.{2}' -f $p.CurrentBuild, $p.UBR, $p.DisplayVersion
+    '{0}.{1}' -f $p.CurrentBuild, $p.DisplayVersion
 }
 
 # Extras are dropped: re-installing the guard from inside the guard is noise,
@@ -1030,8 +1155,15 @@ function Save-WDGuardProfile {
         (-not $section.ContainsKey([string]$_) -or $section[[string]$_] -eq 'remove')
     })
     if (-not $ids.Count) { return 0 }
-    ([pscustomobject]@{ saved = (Get-Date).ToString('o'); selected = $ids } |
-        ConvertTo-Json -Depth 4) | Set-Content -LiteralPath $Path -Encoding UTF8
+    # The run's own choices go with it, in the same options block a saved
+    # selection carries: a guard re-applying without them seized nothing it had
+    # needed ownership for and wrote to every account when the operator had
+    # narrowed the run to one.
+    $null = Save-WDSelection -Selected $ids -Path $Path -Options ([pscustomobject]@{
+        TakeOwnership   = [bool](Get-Prop $Context 'AllowOwnership' $false)
+        VendorDownloads = [bool](Get-Prop $Context 'AllowDownloads' $true)
+        Accounts        = (Get-WDContextAccounts $Context)
+    })
     $ids.Count
 }
 
@@ -1344,7 +1476,7 @@ function New-WDUpdateGuardRunner {
 `$entry     = '$($Paths.Entry)'
 `$k = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
 `$p = Get-ItemProperty -LiteralPath `$k -ErrorAction SilentlyContinue
-`$now = '{0}.{1}.{2}' -f `$p.CurrentBuild, `$p.UBR, `$p.DisplayVersion
+`$now = '{0}.{1}' -f `$p.CurrentBuild, `$p.DisplayVersion
 `$marker    = '$($Paths.Marker)'
 `$was = ''
 if (Test-Path -LiteralPath `$stampFile) { `$was = (Get-Content -LiteralPath `$stampFile -Raw).Trim() }
@@ -1352,14 +1484,15 @@ if (`$now -eq `$was) { exit 0 }
 if ((Test-Path -LiteralPath `$entry) -and (Test-Path -LiteralPath `$savedPlan)) {
     `$count = 0
     try { `$count = @((Get-Content -LiteralPath `$savedPlan -Raw | ConvertFrom-Json).selected).Count } catch { }
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File `$entry -Console -Apply -ProfilePath `$savedPlan
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File `$entry -Console -Apply -GuardRun -ProfilePath `$savedPlan
     `$rc = `$LASTEXITCODE
     # Left for the notice task, which runs in the signed-in user's session and
     # is the only thing here that can actually put something on screen - so it
-    # is written only when the run above actually happened. 0 applied cleanly,
-    # 2 applied with failures; 4 is the interlock refusing because the toolkit
-    # was open, and telling somebody their selection was re-applied when it was
-    # not is worse than saying nothing.
+    # is written only when the run above changed something. 0 applied cleanly,
+    # 2 applied with failures; 6 found nothing back to remove; 4 is the
+    # interlock refusing because the toolkit was open, and telling somebody
+    # their selection was re-applied when it was not is worse than saying
+    # nothing.
     if (`$rc -eq 0 -or `$rc -eq 2) {
         ([pscustomobject]@{ when = (Get-Date).ToString('o'); kind = 'update'; items = `$count; build = `$now } |
             ConvertTo-Json) | Set-Content -LiteralPath `$marker -Encoding UTF8
@@ -1441,9 +1574,12 @@ Register-WDHandler 'InstallUpdateGuard' {
 
         $act = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument (
             "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$($g.Runner)`"")
-        # Five minutes in, so a post-update boot finishes its own servicing
-        # before this starts uninstalling underneath it.
-        $trg = New-ScheduledTaskTrigger -AtStartup
+        # At sign-in rather than at boot: per-account changes reach only the
+        # registry hives that are loaded, and at boot nobody's is - so an
+        # at-startup re-apply reached the default profile and no real account.
+        # Five minutes in, so a post-update first sign-in finishes its own
+        # servicing before this starts uninstalling underneath it.
+        $trg = New-ScheduledTaskTrigger -AtLogOn
         $trg.Delay = 'PT5M'
         $pri = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
         $set = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd -ExecutionTimeLimit (New-TimeSpan -Hours 1)
@@ -1453,7 +1589,7 @@ Register-WDHandler 'InstallUpdateGuard' {
         Add-WDJournal -ItemId $Context.ItemId -Type 'task' -Target $taskName -Status 'Changed' `
                       -Undo @{ method = 'unregister-task'; name = $taskName }
         New-WDResult -Status Changed -Message 'Update guard installed' `
-                     -Detail ("Checks the build at every boot and re-applies $n item(s) only when it has changed, " +
+                     -Detail ("Checks the build at each sign-in and re-applies $n item(s) only when a feature update has changed it, " +
                               "then tells you it did. Build recorded as $(Get-WDBuildStamp). " +
                               "Remove with: Unregister-ScheduledTask -TaskName '$taskName'")
     } catch {
@@ -1461,8 +1597,447 @@ Register-WDHandler 'InstallUpdateGuard' {
     }
 }
 
+# ---------------------------------------------------------------------------
+# Holding update restarts while somebody is signed in.
+#
+# Windows has a policy for exactly this, NoAutoRebootWithLoggedOnUsers, and it
+# does not do it. It applies only under AUOptions = 4, Microsoft's own page says
+# it "doesn't work exactly as per description", and a 25H2 machine with both set
+# was seen logging a signed-in session off at 03:18 and restarting at 03:20.
+# AUOptions = 4 is worse than no help: it is the scheduled-install mode, which
+# restarts on a fifteen-minute timer whatever the active hours say.
+#
+# What Windows does honour is active hours - no automatic restart inside them.
+# So the hold keeps them around the current hour for as long as anybody is
+# signed in, and moves them off it when nobody is. Windows' own mechanism,
+# positioned by a task, and no policy involved: it works on Home, and Settings
+# never says the machine is managed.
+# ---------------------------------------------------------------------------
+$script:RestartHoldTask = 'Windows Setup Toolkit Restart Hold'
+$script:RestartHoldUx   = 'HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings'
+$script:RestartHoldId   = 'wu-no-restart-signed-in'
+
+function Get-WDRestartHoldPaths {
+    # The data root rather than a run folder, for the reason the guards live
+    # there: "Delete old run logs" must not pull the ground from under a task.
+    param($Context, [string]$Root)
+    if (-not $Root) { $Root = $Context.Session.Root }
+    [pscustomobject]@{
+        Root   = $Root
+        Runner = Join-Path $Root 'Invoke-WDRestartHold.ps1'
+        State  = Join-Path $Root 'restart-hold-state.json'
+        Anyway = Join-Path $Root 'restart-hold-anyway.json'
+        Only   = Join-Path $Root 'restart-hold-only.json'
+    }
+}
+
+function Get-WDRestartHoldWindow {
+    # The whole decision. The generated runner carries this function's own text
+    # rather than a second spelling of it, and the self test asks it every case
+    # without needing a clock or a session. Hours are [From, To) on a 24-hour
+    # clock and wrap past midnight; From = To is no hours at all.
+    param([int]$Hour, [bool]$SignedIn, $Anyway, $Only)
+    $inside = {
+        param($Rule)
+        if (-not $Rule) { return $false }
+        $f = [int]$Rule.From; $t = [int]$Rule.To
+        if ($f -eq $t) { return $false }
+        if ($f -lt $t) { return ($Hour -ge $f -and $Hour -lt $t) }
+        ($Hour -ge $f -or $Hour -lt $t)
+    }
+    if ($SignedIn) {
+        $hold = -not (& $inside $Anyway)
+        $why  = $(if ($hold) { 'someone is signed in' }
+                  else { 'someone is signed in, but restarts are allowed anyway at this hour' })
+    } elseif ($Only) {
+        $hold = -not (& $inside $Only)
+        $why  = $(if ($hold) { 'nobody is signed in, but restarts wait for the allowed hours' }
+                  else { 'nobody is signed in, and this is inside the allowed hours' })
+    } else {
+        $hold = $false
+        $why  = 'nobody is signed in'
+    }
+    # Eighteen hours is the longest active hours Windows accepts. Held, they
+    # start an hour ago, so this hour is inside with sixteen to spare - which is
+    # what covers a sleep the task could not see. Released, they start three
+    # hours from now, and the three is not arbitrary: the update engine's own
+    # "Attempt reboot" rule (MoUsoCoreWorker.exe on 26200) refuses a restart
+    # when the next active hours start is less than 65 minutes away, so a
+    # window starting next hour would block the very restart it was moved to
+    # allow. Three keeps it over two hours away at any minute of this hour.
+    if ($hold) { $start = ($Hour + 23) % 24; $end = ($Hour + 17) % 24 }
+    else       { $start = ($Hour + 3) % 24;  $end = ($Hour + 21) % 24 }
+    [pscustomobject]@{ Hold = [bool]$hold; Start = [int]$start; End = [int]$end; Why = [string]$why }
+}
+
+function Get-WDSignedInSessions {
+    # Every signed-in session runs a shell host - on screen, locked, or
+    # disconnected - and none runs before somebody signs in, so the process
+    # list answers this without parsing anything localized. Two names, because
+    # a replacement shell has no explorer and sihost is still there.
+    @(Get-Process -Name 'explorer', 'sihost' -ErrorAction SilentlyContinue |
+        Where-Object { $_.SessionId -gt 0 } | ForEach-Object { [int]$_.SessionId } | Sort-Object -Unique)
+}
+
+function Test-WDRestartHoldTask {
+    # Schedule.Service rather than Get-ScheduledTask, which costs a second a
+    # question - and not Test-WDTaskPresent, which lives in WD.Revert, a module
+    # the satisfied scan's runspace does not import.
+    try {
+        $svc = New-Object -ComObject 'Schedule.Service'
+        $svc.Connect()
+        try { [bool]$svc.GetFolder('\').GetTask($script:RestartHoldTask) } catch { $false }
+    } catch {
+        try { [bool](Get-ScheduledTask -TaskName $script:RestartHoldTask -ErrorAction SilentlyContinue) } catch { $false }
+    }
+}
+
+function Format-WDHour {
+    # The machine's own clock format, so it reads 3:00 AM or 03:00 as the
+    # taskbar does.
+    param([int]$Hour)
+    [datetime]::Today.AddHours((($Hour % 24) + 24) % 24).ToString('t')
+}
+
+# A file, not a -Command one-liner, for the reason the update guard's is one.
+function New-WDRestartHoldRunner {
+    param($Paths, [string]$UxPath = $script:RestartHoldUx)
+    $q = { param([string]$s) ConvertTo-WDQuotedBody $s }
+    $body = @'
+# Generated by the Windows Setup Toolkit. While anyone is signed in, keeps
+# Windows Update's active hours around the current hour, so an update cannot
+# restart the computer under them; when nobody is, moves them off it.
+# Safe to delete along with the scheduled task that runs it:
+#   __TASK__
+# Undoing the toolkit run does both and puts your own active hours back.
+$ErrorActionPreference = 'Stop'
+$ux     = '__UX__'
+$state  = '__STATE__'
+$anyway = '__ANYWAY__'
+$only   = '__ONLY__'
+
+__WINDOW__
+
+__SESSIONS__
+
+function Read-WDHoldRule {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    try {
+        $o = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+        [pscustomobject]@{ From = [int]$o.from; To = [int]$o.to }
+    } catch { $null }
+}
+
+$now      = Get-Date
+$sessions = @(Get-WDSignedInSessions)
+$w = Get-WDRestartHoldWindow -Hour $now.Hour -SignedIn ($sessions.Count -gt 0) `
+                             -Anyway (Read-WDHoldRule $anyway) -Only (Read-WDHoldRule $only)
+
+if (-not (Test-Path -LiteralPath $ux)) { $null = New-Item -Path $ux -Force }
+$cur = Get-ItemProperty -LiteralPath $ux -ErrorAction SilentlyContinue
+# Written only when they move: every write is a change notification the update
+# orchestrator re-reads, and most runs change nothing. IsExpedited is "Get me up
+# to date", which restarts even inside active hours - switched back on, it would
+# walk straight past the hold, so it is held off on every pass like the hours.
+$want = [ordered]@{ ActiveHoursStart = $w.Start; ActiveHoursEnd = $w.End; SmartActiveHoursState = 0; IsExpedited = 0 }
+foreach ($n in $want.Keys) {
+    if ($cur -and $cur.PSObject.Properties[$n] -and [int]$cur.$n -eq [int]$want[$n]) { continue }
+    Set-ItemProperty -LiteralPath $ux -Name $n -Value $want[$n] -Type DWord
+}
+
+# What it decided and why, for whoever asks why the computer did or did not
+# restart. Overwritten every time: a reading, not a history.
+try {
+    $pending = Test-Path -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'
+    ([pscustomobject]@{
+        when             = $now.ToString('o')
+        sessions         = $sessions.Count
+        hold             = $w.Hold
+        why              = $w.Why
+        activeHoursStart = $w.Start
+        activeHoursEnd   = $w.End
+        restartPending   = [bool]$pending
+    } | ConvertTo-Json) | Set-Content -LiteralPath $state -Encoding UTF8
+} catch { }
+exit 0
+'@
+    $fill = [ordered]@{
+        '__TASK__'     = $script:RestartHoldTask
+        '__UX__'       = (& $q $UxPath)
+        '__STATE__'    = (& $q ([string]$Paths.State))
+        '__ANYWAY__'   = (& $q ([string]$Paths.Anyway))
+        '__ONLY__'     = (& $q ([string]$Paths.Only))
+        # Last, so nothing inside the two function bodies is taken for a
+        # placeholder.
+        '__WINDOW__'   = "function Get-WDRestartHoldWindow {$((Get-Command Get-WDRestartHoldWindow).Definition)}"
+        '__SESSIONS__' = "function Get-WDSignedInSessions {$((Get-Command Get-WDSignedInSessions).Definition)}"
+    }
+    foreach ($k in $fill.Keys) { $body = $body.Replace($k, [string]$fill[$k]) }
+    $body
+}
+
+function New-WDRestartHoldTaskXml {
+    # XML because the ScheduledTasks cmdlets cannot make an event trigger, and
+    # waking from sleep is the moment a held restart is most exposed: a laptop
+    # asleep past the end of its window wakes outside active hours. The
+    # repeating trigger starts two minutes out so nothing fires while the
+    # handler is still journalling what it is about to change.
+    param([string]$Runner, [datetime]$Start = (Get-Date).AddMinutes(2))
+    $sb  = $Start.ToString('yyyy-MM-ddTHH:mm:ss')
+    $arg = [Security.SecurityElement]::Escape(
+        "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Runner`"")
+    $resume = [Security.SecurityElement]::Escape(
+        "<QueryList><Query Id=`"0`" Path=`"System`"><Select Path=`"System`">*[System[Provider[@Name='Microsoft-Windows-Power-Troubleshooter'] and EventID=1]]</Select></Query></QueryList>")
+    @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Author>Windows Setup Toolkit</Author>
+    <Description>Keeps Windows Update from restarting this computer while anyone is signed in, by moving its active hours. Undo the toolkit run to remove it.</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <BootTrigger><Enabled>true</Enabled></BootTrigger>
+    <LogonTrigger><Enabled>true</Enabled></LogonTrigger>
+    <SessionStateChangeTrigger><Enabled>true</Enabled><StateChange>SessionUnlock</StateChange></SessionStateChangeTrigger>
+    <EventTrigger><Enabled>true</Enabled><Subscription>$resume</Subscription></EventTrigger>
+    <TimeTrigger>
+      <Repetition><Interval>PT15M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition>
+      <StartBoundary>$sb</StartBoundary>
+      <Enabled>true</Enabled>
+    </TimeTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel></Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT5M</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec><Command>powershell.exe</Command><Arguments>$arg</Arguments></Exec>
+  </Actions>
+</Task>
+"@
+}
+
+function Read-WDRestartHoldRule {
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $null }
+    try {
+        $o = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+        [pscustomobject]@{ From = [int]$o.from; To = [int]$o.to }
+    } catch { $null }
+}
+
+function Write-WDRestartHoldFile {
+    # One of the hold's own files, journalled so the rollback script takes it
+    # back: restored from a copy when it was already there, deleted when this
+    # run made it. The PowerToys config is handled the same way.
+    # -Discard is for a file the task writes and nothing needs back: undo
+    # deletes it whatever was there before.
+    param([string]$Path, [string]$Text, $Context, [string]$Kind = 'file', [switch]$Discard)
+    $bak = $null
+    if (-not $Discard -and (Test-Path -LiteralPath $Path)) {
+        $bak = "$Path.wdbak"
+        Copy-Item -LiteralPath $Path -Destination $bak -Force -ErrorAction Stop
+    }
+    if ($Text) { Set-Content -LiteralPath $Path -Value $Text -Encoding UTF8 -ErrorAction Stop }
+    Add-WDJournal -ItemId $Context.ItemId -Type $Kind -Target $Path -Status 'Changed' `
+                  -Undo @{ method = 'file-restore'; file = $bak; target = $Path }
+}
+
+function Start-WDRestartHoldNow {
+    # Runs the task once and waits for its reading, so the result can say what
+    # the hold actually did rather than what it was asked to do.
+    param($Paths, [int]$Seconds = 20)
+    $before = $(if (Test-Path -LiteralPath $Paths.State) { (Get-Item -LiteralPath $Paths.State).LastWriteTimeUtc } else { [datetime]::MinValue })
+    try { Start-ScheduledTask -TaskName $script:RestartHoldTask -ErrorAction Stop } catch { return $null }
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    while ($sw.Elapsed.TotalSeconds -lt $Seconds) {
+        Start-Sleep -Milliseconds 400
+        if ((Test-Path -LiteralPath $Paths.State) -and (Get-Item -LiteralPath $Paths.State).LastWriteTimeUtc -gt $before) {
+            try { return (Get-Content -LiteralPath $Paths.State -Raw | ConvertFrom-Json) } catch { return $null }
+        }
+    }
+    $null
+}
+
+Register-WDHandler 'HoldUpdateRestarts' {
+    param($Action, $Context)
+
+    $p       = Get-WDRestartHoldPaths -Context $Context
+    $runner  = New-WDRestartHoldRunner -Paths $p
+    $present = Test-WDRestartHoldTask
+    $onDisk  = $(if (Test-Path -LiteralPath $p.Runner) { [string](Get-Content -LiteralPath $p.Runner -Raw) } else { '' })
+    $same    = ($onDisk.Trim() -eq $runner.Trim())
+
+    # Active hours set by policy are the one thing that outranks the values the
+    # task moves, so on such a machine it would move numbers nothing reads.
+    $wuPol = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate' -ErrorAction SilentlyContinue
+    if ($wuPol -and $wuPol.PSObject.Properties['SetActiveHours'] -and [int]$wuPol.SetActiveHours -eq 1) {
+        return New-WDResult -Status Obstruction -Message 'Active hours are set by policy here, so the hold cannot move them' `
+                            -Detail ('SetActiveHours = 1 under HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate fixes active hours ' +
+                                     "at $(Format-WDHour ([int]$wuPol.ActiveHoursStart)) to $(Format-WDHour ([int]$wuPol.ActiveHoursEnd)), " +
+                                     'and Windows reads that before anything a task can write. Nothing was installed.')
+    }
+    # Not this option's to change, but it decides whether the option can work:
+    # the scheduled-install mode restarts on a timer of its own.
+    $au = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' -ErrorAction SilentlyContinue
+    $auNote = ''
+    if ($au -and $au.PSObject.Properties['AUOptions'] -and [int]$au.AUOptions -eq 4) {
+        $auNote = ' AUOptions is 4 here (download and schedule the install), which restarts on a fifteen-minute timer whatever the active hours say. It did not come from this option and was left alone - remove it if restarts still happen.'
+    }
+
+    if ($present -and $same) {
+        return New-WDResult -Status AlreadySet -Message 'Restarts are already held while anyone is signed in' -Detail $auNote.Trim()
+    }
+    if ($Context.Preview) {
+        if ($present) { return New-WDResult -Status Changed -Message "Would update the restart hold's script" }
+        return New-WDResult -Status Changed -Message 'Would register a task that holds update restarts while anyone is signed in' -Detail $auNote.Trim()
+    }
+
+    try {
+        $null = New-Item -ItemType Directory -Path $p.Root -Force -ErrorAction SilentlyContinue
+
+        # Already registered by an earlier run: only the script is this run's
+        # to change, and the active hours it has been moving are not an
+        # original worth recording.
+        if ($present) {
+            Write-WDRestartHoldFile -Path $p.Runner -Text $runner -Context $Context
+            $r = Start-WDRestartHoldNow -Paths $p
+            return New-WDResult -Status Changed -Message "Restart hold's script updated" `
+                                -Detail $(if ($r) { "It ran: $($r.why), active hours $(Format-WDHour $r.activeHoursStart) to $(Format-WDHour $r.activeHoursEnd).$auNote" }
+                                          else { "The task is registered but did not report back within 20 seconds.$auNote" })
+        }
+
+        # Journalled in the order the rollback must undo it: the task first, so
+        # nothing moves the active hours again while they are being put back.
+        $null = Register-ScheduledTask -TaskName $script:RestartHoldTask -Xml (New-WDRestartHoldTaskXml -Runner $p.Runner) -Force -ErrorAction Stop
+        Add-WDJournal -ItemId $Context.ItemId -Type 'task' -Target $script:RestartHoldTask -Status 'Changed' `
+                      -Undo @{ method = 'unregister-task'; name = $script:RestartHoldTask }
+        # Discarded on undo even if one was lying here: without its task it was
+        # a leftover, and putting a leftover back is not restoring anything.
+        Write-WDRestartHoldFile -Path $p.Runner -Text $runner -Context $Context -Discard
+        # Not written yet - the task writes it - but it is this option's file
+        # and the rollback should take it with the rest.
+        Write-WDRestartHoldFile -Path $p.State -Text '' -Context $Context -Discard
+
+        # Through the ordinary executor, so your own active hours are what the
+        # journal records and what undoing this puts back.
+        $sess = @(Get-WDSignedInSessions)
+        $w = Get-WDRestartHoldWindow -Hour (Get-Date).Hour -SignedIn ($sess.Count -gt 0) `
+                                     -Anyway (Read-WDRestartHoldRule $p.Anyway) -Only (Read-WDRestartHoldRule $p.Only)
+        $ux  = $script:RestartHoldUx
+        $was = Get-ItemProperty -LiteralPath $ux -ErrorAction SilentlyContinue
+        $vals = @(
+            [pscustomobject]@{ path = $ux; name = 'ActiveHoursStart';      kind = 'DWord'; value = $w.Start }
+            [pscustomobject]@{ path = $ux; name = 'ActiveHoursEnd';        kind = 'DWord'; value = $w.End }
+            [pscustomobject]@{ path = $ux; name = 'SmartActiveHoursState'; kind = 'DWord'; value = 0 }
+            # "Get me up to date" - restart as soon as possible, even during
+            # active hours. Left on, it walks straight past the hold.
+            [pscustomobject]@{ path = $ux; name = 'IsExpedited';           kind = 'DWord'; value = 0 }
+            # The policy this option used to be. Off because it does not do the
+            # job, and because Microsoft documents it switching the active hours
+            # policy off when it is on.
+            [pscustomobject]@{ path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
+                               name = 'NoAutoRebootWithLoggedOnUsers'; kind = 'DWord'; value = 0; delete = $true }
+        )
+        $reg = Invoke-WDRegistryAction -Action ([pscustomobject]@{ type = 'registry'; scope = 'machine'; values = $vals }) -Context $Context
+        if ([string]$reg.Status -notin @('Changed', 'AlreadySet', 'Removed')) {
+            return New-WDResult -Status Partial -Message 'Restart hold registered, but active hours could not be set' `
+                                -Detail "$($reg.Message). The task will try again within 15 minutes."
+        }
+
+        $own = ''
+        if ($was -and $was.PSObject.Properties['ActiveHoursStart'] -and $was.PSObject.Properties['ActiveHoursEnd']) {
+            $own = " Your own active hours, $(Format-WDHour ([int]$was.ActiveHoursStart)) to $(Format-WDHour ([int]$was.ActiveHoursEnd)), come back when this is undone."
+        }
+        $r = Start-WDRestartHoldNow -Paths $p
+        $now = $(if ($r) { "It ran once: $($r.why), so active hours are $(Format-WDHour $r.activeHoursStart) to $(Format-WDHour $r.activeHoursEnd)." }
+                 else { 'It did not report back within 20 seconds, so it has not been seen to run yet.' })
+        New-WDResult -Status Changed -Message 'Update restarts held while anyone is signed in' `
+                     -Detail ("$now It runs every 15 minutes, and at sign-in, unlock, and wake.$own$auNote " +
+                              "Remove with: Unregister-ScheduledTask -TaskName '$($script:RestartHoldTask)'")
+    } catch {
+        New-WDResult -Status Failed -Message 'Could not set up the restart hold' -Detail $_.Exception.Message
+    }
+}
+
+# The two answers that refine the hold. Each is a file of its own beside the
+# runner, so undoing one leaves the other - and the hold - exactly as it was.
+$script:WDHoldRules = @{
+    'anyway' = @{ File = 'Anyway'; From = 'restartAnywayFrom'; To = 'restartAnywayTo'
+                  Say = 'Restarts allowed anyway, signed in or not' }
+    'only'   = @{ File = 'Only';   From = 'restartOnlyFrom';   To = 'restartOnlyTo'
+                  Say = 'With nobody signed in, restarts wait for' }
+}
+
+Register-WDHandler 'SetRestartHoldHours' {
+    param($Action, $Context)
+
+    $rule = [string](Get-Prop $Action 'rule' '')
+    if (-not $script:WDHoldRules.ContainsKey($rule)) {
+        return New-WDResult -Status Failed -Message "Unknown restart hold rule '$rule'"
+    }
+    $spec = $script:WDHoldRules[$rule]
+    $p    = Get-WDRestartHoldPaths -Context $Context
+    $path = [string]$p.($spec.File)
+
+    $root = ''
+    try { $root = [string]$Context.Session.Root } catch { }
+    $from = [int](Get-Prop $Action 'from' 0)
+    $to   = [int](Get-Prop $Action 'to' 0)
+    $c = Get-WDRunOption -Root $root -Name ([string]$spec.From) -Default $null
+    if ($null -ne $c) { $from = [int]$c }
+    $c = Get-WDRunOption -Root $root -Name ([string]$spec.To) -Default $null
+    if ($null -ne $c) { $to = [int]$c }
+    # Clamped rather than trusted: the file is editable. Equal ends would be no
+    # hours at all, which nobody means by picking a range.
+    $from = (($from % 24) + 24) % 24
+    $to   = (($to % 24) + 24) % 24
+    if ($from -eq $to) { $to = ($from + 1) % 24 }
+    $range = "$(Format-WDHour $from) and $(Format-WDHour $to)"
+
+    $planned = Get-Prop $Context 'PlannedIds' $null
+    $coming  = [bool]($planned -and $planned.Contains($script:RestartHoldId))
+    if (-not (Test-WDRestartHoldTask) -and -not ($Context.Preview -and $coming)) {
+        return New-WDResult -Status Skipped -Message 'Needs "Never restart while someone is signed in", which is not set up here' `
+                            -Detail 'These hours only change what the hold does, so on their own there is nothing for them to change.'
+    }
+
+    $cur = Read-WDRestartHoldRule $path
+    if ($cur -and [int]$cur.From -eq $from -and [int]$cur.To -eq $to) {
+        return New-WDResult -Status AlreadySet -Message "$($spec.Say) between $range already"
+    }
+    if ($Context.Preview) { return New-WDResult -Status Changed -Message "$($spec.Say) between $range" }
+
+    try {
+        Write-WDRestartHoldFile -Path $path -Text (([pscustomobject]@{ from = $from; to = $to }) | ConvertTo-Json) -Context $Context
+        $r = Start-WDRestartHoldNow -Paths $p
+        New-WDResult -Status Changed -Message "$($spec.Say) between $range" `
+                     -Detail $(if ($r) { "The hold re-read it: $($r.why), active hours $(Format-WDHour $r.activeHoursStart) to $(Format-WDHour $r.activeHoursEnd)." }
+                               else { 'The hold picks it up within 15 minutes.' })
+    } catch {
+        New-WDResult -Status Failed -Message 'Could not record the hours' -Detail $_.Exception.Message
+    }
+}
+
 Export-ModuleMember -Function Get-WDBrowserRegistrations, Get-WDDefaultBrowserProgId,
                               Get-WDAssociationLock, Set-WDDefaultBrowserBestEffort,
+                              Get-WDDefaultBrowserPlan, Get-WDSetDefaultScope,
                               Get-WDHeldAssociations, Get-WDOrphanedAssociations, Test-WDProgIdResolves,
                               Block-WDEdgeReinstall, Get-WDGuardPaths, Copy-WDToolkitForGuard,
                               Get-WDBuildStamp,
@@ -1474,4 +2049,7 @@ Export-ModuleMember -Function Get-WDBrowserRegistrations, Get-WDDefaultBrowserPr
                               Get-WDUiStatePath, Get-WDUiState, Save-WDUiState, ConvertTo-WDPresetMap,
                               Get-WDStorageCache, New-WDStorageCacheEntry,
                               Get-WDEdgeUninstallPolicy, Get-WDEdgeInstallerReason,
-                              Get-WDHomeGeoId, Set-WDHomeGeoId, Get-WDGeoIso2
+                              Get-WDHomeGeoId, Set-WDHomeGeoId, Get-WDGeoIso2,
+                              Get-WDRestartHoldPaths, Get-WDRestartHoldWindow, Get-WDSignedInSessions,
+                              Test-WDRestartHoldTask, Format-WDHour, New-WDRestartHoldRunner,
+                              New-WDRestartHoldTaskXml, Read-WDRestartHoldRule
