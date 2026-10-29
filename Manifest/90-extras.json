@@ -24,7 +24,7 @@
           "name": "Install a replacement browser",
           "section": "add",
           "desc": "Chosen under Add, and offered again beside Edge removal. Nothing is installed unless you pick one.",
-          "riskNote": "It is fetched with winget from that vendor's own package, and it is uninstalled again if you revert this run.",
+          "riskNote": "It is fetched with winget from that vendor's own package, and it is uninstalled again if you revert this run. When winget's copy of Chrome's package is behind Google's latest release, Chrome is fetched from Google directly instead and installed only if Google's signature on it is valid - unless vendor downloads are turned off.",
           "overhead": "Whatever the browser costs: roughly 200-400 MB on disk, plus its own updater. Declining leaves you with no browser at all until you install one yourself.",
           "risk": 1, "tier": 0, "default": false, "order": 91,
           "actions": [ { "type": "script", "handler": "InstallChosenBrowser" } ]

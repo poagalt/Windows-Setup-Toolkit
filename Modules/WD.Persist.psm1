@@ -1209,6 +1209,82 @@ $script:BrowserCatalog = [ordered]@{
 }
 function Get-WDBrowserCatalog { $script:BrowserCatalog }
 
+# The vendor's own installer, for a browser whose winget package points at a
+# fixed address. The manifest pins the hash of whatever was there when it was
+# written, so from a vendor release until winget-pkgs catches up the download
+# no longer matches and winget refuses it - INSTALLER_HASH_MISMATCH, which an
+# elevated winget will not override. On 2026-10-29 Google served Chrome
+# 156.0.8078.74 at that address against a manifest written for .48. The same
+# file is fetched from the vendor instead, and its signature stands in for the
+# stale hash. Keyed by catalog name, then by processor.
+$script:BrowserVendorInstaller = @{
+    'Google Chrome' = @{
+        Signer = 'O=Google LLC'
+        Urls   = @{
+            AMD64 = 'https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi'
+            ARM64 = 'https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise_arm64.msi'
+            x86   = 'https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise.msi'
+        }
+    }
+}
+
+function Install-WDBrowserFromVendor {
+    # $null when there is no vendor route, so the caller keeps winget's own
+    # failure rather than one about a download nobody asked for.
+    param([string]$Name, [string]$Id, $Context, [string]$WingetFailure = '')
+    if (-not $script:BrowserVendorInstaller.ContainsKey($Name)) { return $null }
+    if (-not $Context.AllowDownloads) { return $null }
+
+    $v   = $script:BrowserVendorInstaller[$Name]
+    $cpu = [string]$env:PROCESSOR_ARCHITECTURE
+    if (-not $v.Urls.ContainsKey($cpu)) { $cpu = 'x86' }
+    $url = [string]$v.Urls[$cpu]
+    $dst = Join-Path $Context.Session.RunDir ([IO.Path]::GetFileName(([uri]$url).AbsolutePath))
+    Write-WDLog "winget's package for $Name is behind the vendor's installer, so it is being fetched from $url instead." -Level Info -Item $Context.ItemId
+
+    try {
+        # The progress bar alone makes a 160 MB download several times slower
+        # on PowerShell 5.1.
+        $ProgressPreference = 'SilentlyContinue'
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing -TimeoutSec 900
+        # The hash winget had was the only thing pinning this file, so nothing
+        # runs elevated without a valid signature from the vendor.
+        $sig = Get-AuthenticodeSignature -FilePath $dst -ErrorAction Stop
+        if ([string]$sig.Status -ne 'Valid' -or -not $sig.SignerCertificate -or
+            [string]$sig.SignerCertificate.Subject -notmatch [regex]::Escape($v.Signer)) {
+            return New-WDResult -Status Failed -Message "the $Name installer from the vendor was not validly signed, so it was not run" `
+                                -Detail "Signature $($sig.Status), signer '$([string]$sig.SignerCertificate.Subject)'. $WingetFailure"
+        }
+        $res = Invoke-WDProcess -FilePath (Join-Path $env:SystemRoot 'System32\msiexec.exe') `
+                                -ArgumentList @('/i', "`"$dst`"", '/qn', '/norestart') -TimeoutSeconds 900
+        if ($res.TimedOut) {
+            return New-WDResult -Status Failed -Message "the $Name installer from the vendor timed out" -Detail $WingetFailure
+        }
+        # 3010 is installed, finishing at the next restart.
+        if ($res.ExitCode -ne 0 -and $res.ExitCode -ne 3010) {
+            return New-WDResult -Status Failed -Message "the $Name installer from the vendor failed (msiexec exit $($res.ExitCode))" -Detail $WingetFailure
+        }
+        # Asked of the machine rather than of the exit code: the step after this
+        # one hands it the web links, and needs it registered as a browser.
+        if (-not @(Get-WDBrowserRegistrations | Where-Object { $_.Name -like "*$Name*" -or $_.Key -like "*$Name*" }).Count) {
+            return New-WDResult -Status Failed -Message "$Name installed from the vendor but did not register as a browser" -Detail $WingetFailure
+        }
+        if ($res.ExitCode -eq 3010) { Set-WDRebootNeeded }
+        # Journalled exactly as a winget install is: the manifest names the MSI's
+        # UpgradeCode, so winget uninstall finds it whichever version this was.
+        Add-WDJournal -ItemId $Context.ItemId -Type 'winget' -Target $Id -Status 'Changed' -Undo @{ method = 'uninstall'; name = $Id }
+        New-WDResult -Status Changed -Message "1 app(s) installed from the vendor" `
+                     -Detail "$Id from $url, signed by $($v.Signer -replace '^O=', '')" `
+                     -Recovered "winget refused it: $WingetFailure"
+    } catch {
+        New-WDResult -Status Failed -Message "the $Name installer could not be fetched from the vendor" -Detail "$($_.Exception.Message) | $WingetFailure"
+    } finally {
+        # Windows Installer keeps its own copy for repair and uninstall.
+        Remove-Item -LiteralPath $dst -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # Authored, not measured - nothing on a machine that has never had Firefox knows
 # how big Firefox is - so every figure from these is reported as approximate.
 $script:BrowserSizeMb = @{
@@ -1463,8 +1539,18 @@ Register-WDHandler 'InstallChosenBrowser' {
     $here = New-Object System.Collections.Generic.List[string]
     $bad  = New-Object System.Collections.Generic.List[string]
     $detail = New-Object System.Collections.Generic.List[string]
+    $recovered = New-Object System.Collections.Generic.List[string]
     foreach ($b in $picked) {
         $r = Invoke-WDWingetInstall -Action $Action -Context $Context -Ids @([string]$b.Id)
+        # 0x8A150011, the hash mismatch: the vendor has moved on and the winget
+        # manifest has not.
+        if ([string]$r.Status -eq 'Failed' -and [string]$r.Detail -match '0x8A150011') {
+            $v = Install-WDBrowserFromVendor -Name ([string]$b.Name) -Id ([string]$b.Id) -Context $Context -WingetFailure ([string]$r.Detail)
+            if ($v) {
+                $r = $v
+                if ($v.Recovered) { $recovered.Add("$($b.Name): $($v.Recovered)") }
+            }
+        }
         switch ([string]$r.Status) {
             'Changed'    { $done.Add($b.Name) }
             'NotPresent' { $here.Add($b.Name) }
@@ -1484,9 +1570,10 @@ Register-WDHandler 'InstallChosenBrowser' {
     $dt  = $(if ($detail.Count) { $detail -join "`n" } else { $null })
 
     if ($bad.Count -and -not $done.Count) { return New-WDResult -Status Failed  -Message $msg -Detail $dt }
-    if ($bad.Count)                       { return New-WDResult -Status Partial -Message $msg -Detail $dt }
+    $rec = ($recovered -join '; ')
+    if ($bad.Count)                       { return New-WDResult -Status Partial -Message $msg -Detail $dt -Recovered $rec }
     if (-not $done.Count)                 { return New-WDResult -Status NotPresent -Message $msg -Detail $dt }
-    New-WDResult -Status Changed -Message $msg -Detail $dt
+    New-WDResult -Status Changed -Message $msg -Detail $dt -Recovered $rec
 }
 
 # A file, not a -Command one-liner: the quoting to nest this inside a scheduled
