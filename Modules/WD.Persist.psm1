@@ -11,14 +11,19 @@ $script:EdgeGuids = @{
 # Edge asks Windows whether it may be uninstalled at all, and Windows answers
 # out of IntegratedServicesRegionPolicySet.json. This policy is disabled by
 # default and enabled only in the EEA, so outside those regions setup.exe exits
-# non-zero and leaves the browser where it was, logging "not uninstallable for
-# process".
-# The lever is the home region, an ordinary per-user value with an ordinary
-# undo. Rewriting Microsoft's compliance data in System32 is the other way past
-# it, and this toolkit will not do that.
+# 93 and leaves the browser where it was, logging "Browser/WebView is sticky,
+# uninstall not allowed".
+# The region it is answered for is the device setup region, not the home
+# location. This used to borrow IE as the home location for the length of the
+# uninstall; on 2026-10-29 that ran three times on a US machine and was refused
+# with 93 every time. The device setup region is picked once, during setup, is
+# guarded from scripts by the same driver that guards the default browser, and
+# takes a restart to apply - and current builds accept the uninstall only when
+# Settings starts it (532 otherwise), EEA or not. Every way past that defeats a
+# Windows protection: rewriting Microsoft's compliance data in System32,
+# slipping past that driver, or faking the uninstaller's parent. This toolkit
+# does none of them, so outside the EEA it says so and leaves Edge alone.
 $script:EdgeUninstallPolicyGuid = '{1bca278a-5d11-4acf-ad2f-f9ab6d7f93a6}'
-# Ireland. English-speaking, in the enabled list, and unambiguous in a log.
-$script:EdgeUninstallGeoId = 68
 
 function Get-WDGeoIso2 {
     param([int]$GeoId)
@@ -54,6 +59,17 @@ function Set-WDHomeGeoId {
     if ($iso) { Set-ItemProperty -LiteralPath $key -Name 'Name' -Value $iso -Type String -Force -ErrorAction SilentlyContinue }
 }
 
+function Get-WDDeviceRegionGeoId {
+    # The region Windows' region policy is decided for: the device setup region,
+    # shown under Settings > Time and language > Language and region. Builds
+    # without the value decide it from the home location, so that is the
+    # fallback.
+    $v = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Control Panel\DeviceRegion' `
+                          -Name 'DeviceRegion' -ErrorAction SilentlyContinue
+    if ($v -and $v.PSObject.Properties['DeviceRegion']) { return [int]$v.DeviceRegion }
+    Get-WDHomeGeoId
+}
+
 function Get-WDEdgeUninstallPolicy {
     $out = [pscustomobject]@{
         Known   = $false
@@ -63,7 +79,7 @@ function Get-WDEdgeUninstallPolicy {
         Regions = @()
         Path    = (Join-Path ([string]$env:SystemRoot) 'System32\IntegratedServicesRegionPolicySet.json')
     }
-    $out.GeoId  = Get-WDHomeGeoId
+    $out.GeoId  = Get-WDDeviceRegionGeoId
     $out.Region = Get-WDGeoIso2 -GeoId $out.GeoId
 
     if (-not (Test-Path -LiteralPath $out.Path -ErrorAction SilentlyContinue)) { return $out }
@@ -312,7 +328,8 @@ function Get-WDSetDefaultScope {
         $pol = @($doc.policies | Where-Object { [string]$_.guid -ieq $script:DefaultAppsExtraTypesGuid })
         if ($pol.Count) {
             $extended = ([string]$pol[0].defaultState -ieq 'enabled')
-            $iso = Get-WDGeoIso2 -GeoId (Get-WDHomeGeoId)
+            # Same policy file, same region: the device setup region.
+            $iso = Get-WDGeoIso2 -GeoId (Get-WDDeviceRegionGeoId)
             if ($iso -and @($pol[0].conditions.region.enabled) -contains $iso) { $extended = $true }
         }
     } catch { }
@@ -640,13 +657,21 @@ Register-WDHandler 'RemoveEdge' {
 
     $policy = Get-WDEdgeUninstallPolicy
 
+    # Refused before anything is touched, preview included: outside the EEA no
+    # script can do anything Windows accepts (see the top of this file), and
+    # stopping the updater and closing Edge for an attempt that cannot succeed
+    # only shut the browser on whoever was using it.
+    if ($policy.Known -and -not $policy.Allowed) {
+        return New-WDResult -Status Blocked -Message 'Windows allows Edge to be uninstalled only on a PC set up in the EEA' `
+            -Detail ("This PC's device setup region is $($policy.Region) - Settings > Time and language > Language and region " +
+                     'shows it as Device setup region. It was chosen when Windows was first set up: changing Country or region ' +
+                     'does not change it, and Windows does not let scripts change it, so nothing was attempted and Edge is ' +
+                     'untouched and still updating. Setting Windows up again with an EEA region is the supported way past it. ' +
+                     'Another browser can stay the default with Edge installed.')
+    }
+
     if ($Context.Preview) {
-        $note = 'Uninstalls Edge, and only once it is really gone blocks its updater, its update tasks, and the Windows Update channel that reinstalls it. WebView2 Runtime is kept, but stops receiving updates with the updater off.'
-        if ($policy.Known -and -not $policy.Allowed) {
-            $note = "Windows refuses to uninstall Edge in region $($policy.Region) unless the home region is an EEA one, so " +
-                    'the run sets it to IE for the length of the uninstall and straight back. Current builds can refuse ' +
-                    'anyway; if so, Edge is left exactly as it was. ' + $note
-        }
+        $note = 'Uninstalls Edge, and only once it is really gone blocks its updater, its update tasks, and the Windows Update channel that reinstalls it. WebView2 Runtime is kept, but stops receiving updates with the updater off. Where Windows accepts the uninstall only from Settings, Installed apps is opened for one click.'
         $handover = Set-WDDefaultBrowserBestEffort -Context $Context
         $note = "$($handover.Message) " + $note
         return New-WDResult -Status Removed `
@@ -694,90 +719,58 @@ Register-WDHandler 'RemoveEdge' {
         Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 600
 
-    # 2. Lift the regional refusal. Journalled as well as restored in the
-    # finally: the finally covers an exception, the journal covers this process
-    # being killed between the two.
-    $geoWas = -1
-    if ($policy.Known -and -not $policy.Allowed) {
-        $geoWas = $policy.GeoId
-        try {
-            Set-WDHomeGeoId -GeoId $script:EdgeUninstallGeoId
-            Add-WDJournal -ItemId $Context.ItemId -Type 'registry' -Target 'HKCU:\Control Panel\International\Geo\Nation' `
-                          -Status 'Changed' -Undo @{ method = 'registry'; path = 'HKCU:\Control Panel\International\Geo'
-                                                     name = 'Nation'; previous = "$geoWas"; kind = 'String'; raw = $true }
-            $steps.Add("home region temporarily set to IE (was $($policy.Region))")
-            Write-WDLog ("Windows does not permit uninstalling Edge in region $($policy.Region). " +
-                         'Setting the home region to IE for the length of the uninstall.') -Level Warn -Item $Context.ItemId
-        } catch {
-            $geoWas = -1
-            Write-WDLog "Could not change the home region: $($_.Exception.Message)" -Level Warn -Item $Context.ItemId
-        }
-    }
-
+    # 2. Run every setup.exe there is. Version folders move between updates, so
+    # search rather than assume a path.
     $exits = New-Object System.Collections.Generic.List[string]
     $tried = Get-Date
-    try {
-        # 3. Run every setup.exe there is. Version folders move between updates,
-        # so search rather than assume a path.
-        foreach ($dir in $edgeDirs) {
-            $setups = @(Get-ChildItem -LiteralPath $dir -Recurse -Filter 'setup.exe' -ErrorAction SilentlyContinue |
-                        Where-Object { $_.FullName -match '\\Installer\\setup\.exe$' })
-            foreach ($s in $setups) {
-                $r = Invoke-WDProcess -FilePath $s.FullName -TimeoutSeconds 600 -ArgumentList @(
-                    '--uninstall', '--system-level', '--verbose-logging', '--force-uninstall')
-                $exits.Add([string]$r.ExitCode)
-            }
-        }
-    } finally {
-        if ($geoWas -ge 0) {
-            try {
-                Set-WDHomeGeoId -GeoId $geoWas; $steps.Add('home region restored')
-                # Logged as well as listed: the log said when the region went to
-                # IE and, until now, never said it came back.
-                Write-WDLog "Home region set back to $($policy.Region)." -Level Info -Item $Context.ItemId
-            } catch { Write-WDLog ("The home region was left set to IE - set it back under Settings, " +
-                                 "Time and language, Language and region.") -Level Error -Item $Context.ItemId }
+    foreach ($dir in $edgeDirs) {
+        $setups = @(Get-ChildItem -LiteralPath $dir -Recurse -Filter 'setup.exe' -ErrorAction SilentlyContinue |
+                    Where-Object { $_.FullName -match '\\Installer\\setup\.exe$' })
+        foreach ($s in $setups) {
+            $r = Invoke-WDProcess -FilePath $s.FullName -TimeoutSeconds 600 -ArgumentList @(
+                '--uninstall', '--system-level', '--verbose-logging', '--force-uninstall')
+            $exits.Add([string]$r.ExitCode)
         }
     }
 
-    # 4. Did it work? Asked of the disk, not of the exit code, which has no
+    # 3. Did it work? Asked of the disk, not of the exit code, which has no
     # documented meaning - and BEFORE anything is swept, because a sweep after
     # a refusal is what turned "Windows said no" into a half-deleted browser.
     $stillThere = @(& $installed)
     if ($stillThere.Count) {
         foreach ($s in $wasRunning) { try { Start-Service -Name $s.Name -ErrorAction Stop } catch { } }
         $why = Get-WDEdgeInstallerReason -Since $tried
-        $after = Get-WDEdgeUninstallPolicy
         $detail = "Edge is still installed at $($stillThere -join ', ') (uninstaller exit $($exits -join ', ')). " +
                   'Nothing else was changed: Edge keeps updating, and its updater is untouched.'
-        # The region change is the one thing this attempt did touch, and the
-        # Blocked result is where somebody looks for whether it was put back.
-        if ($steps -contains 'home region restored') {
-            $detail += " The home region was set to IE for the attempt and is back to $($policy.Region)."
-        } elseif ($geoWas -ge 0) {
-            $detail += " The home region could not be set back and is still IE - change it under Settings, Time and language, Language and region."
-        }
         if ($why) { $detail += " Edge's own log says: $why" }
-        if ($after.Known -and -not $after.Allowed) {
-            $detail += " Windows permits uninstalling Edge only in the EEA. On current builds it also refuses an uninstall " +
-                       'that Settings did not start: with the home region set to an EEA country under Settings, Time and ' +
-                       'language, Language and region, Installed apps shows an Uninstall button next to Edge.'
-        } else {
-            $detail += ' Uninstall it from Settings > Apps > Installed apps, which is the caller Windows accepts.'
+        # 93 is the region refusal. Anything else here, where the region allows
+        # it, is on current builds 532: the uninstall was not started by
+        # Settings, the one caller Windows accepts. So Settings gets the click -
+        # unless this is a guard run as SYSTEM, with nobody at the screen.
+        $sys = $false
+        try { $sys = [Security.Principal.WindowsIdentity]::GetCurrent().IsSystem } catch { }
+        if ($exits -notcontains '93' -and -not $sys) {
+            $opened = $false
+            try { Start-Process 'ms-settings:appsfeatures' -ErrorAction Stop; $opened = $true } catch { }
+            return New-WDResult -Status Obstruction -Message 'Windows accepts the Edge uninstall only from Settings' -Detail (
+                "$detail $(if ($opened) { 'Installed apps has been opened:' } else { 'Open Settings > Apps > Installed apps:' }) " +
+                'find Microsoft Edge, press the three dots next to it, and choose Uninstall. Then run this option again, ' +
+                'which switches off the updater so it cannot come back.')
         }
-        return New-WDResult -Status Blocked -Message 'Windows refused to uninstall Edge' -Detail $detail
+        return New-WDResult -Status Blocked -Message 'Windows refused to uninstall Edge' `
+                            -Detail "$detail Exit 93 is Windows refusing it for this PC's region."
     }
     $steps.Add('uninstaller removed Edge')
 
-    # 5. Gone, so now the updater and every channel that would reinstall it.
+    # 4. Gone, so now the updater and every channel that would reinstall it.
     foreach ($b in (Block-WDEdgeReinstall -Context $Context)) { $steps.Add($b) }
 
-    # 6. The Store-delivered package, for all users and provisioned.
+    # 5. The Store-delivered package, for all users and provisioned.
     $ax = Invoke-WDAppxAction -Action ([pscustomobject]@{
         names = @('Microsoft.MicrosoftEdge.Stable', 'Microsoft.MicrosoftEdge.Beta', 'Microsoft.MicrosoftEdgeDevToolsClient') }) -Context $Context
     if ($ax.Status -eq 'Removed') { $steps.Add('appx package removed') }
 
-    # 7. Clear EdgeUpdate's own record that Edge exists, or it re-stages.
+    # 6. Clear EdgeUpdate's own record that Edge exists, or it re-stages.
     # Exported before deletion, through the key executor, so it is journalled.
     $clients = New-Object System.Collections.Generic.List[string]
     foreach ($root in @('HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients',
@@ -787,7 +780,7 @@ Register-WDHandler 'RemoveEdge' {
     $cr = Invoke-WDRegistryKeyAction -Context $Context -Action ([pscustomobject]@{ type = 'registryKey'; paths = $clients.ToArray() })
     if ([string]$cr.Status -eq 'Removed') { $steps.Add('updater client record cleared') }
 
-    # 8. What the uninstaller left of Edge's own folder. Only Edge's: EdgeCore
+    # 7. What the uninstaller left of Edge's own folder. Only Edge's: EdgeCore
     # is WebView2's servicing copy (its msedge.dll is a hardlink of the one in
     # EdgeWebView), EdgeWebView is WebView2, EdgeUpdate is parked above, and the
     # Copilot folders were never Edge's to take. The old ^(Edge|Copilot) sweep
@@ -2164,7 +2157,7 @@ Export-ModuleMember -Function Get-WDBrowserRegistrations, Get-WDDefaultBrowserPr
                               Get-WDUiStatePath, Get-WDUiState, Save-WDUiState, ConvertTo-WDPresetMap,
                               Get-WDStorageCache, New-WDStorageCacheEntry,
                               Get-WDEdgeUninstallPolicy, Get-WDEdgeInstallerReason,
-                              Get-WDHomeGeoId, Set-WDHomeGeoId, Get-WDGeoIso2,
+                              Get-WDHomeGeoId, Set-WDHomeGeoId, Get-WDDeviceRegionGeoId, Get-WDGeoIso2,
                               Get-WDRestartHoldPaths, Get-WDRestartHoldWindow, Get-WDSignedInSessions,
                               Test-WDRestartHoldTask, Format-WDHour, New-WDRestartHoldRunner,
                               New-WDRestartHoldTaskXml, Read-WDRestartHoldRule

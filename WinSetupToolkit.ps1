@@ -1302,22 +1302,19 @@ if ($SelfTest) {
         $failures++
     }
 
-    # Windows refuses the Edge uninstall outside the EEA. Three pieces the fix
-    # stands on: the policy file parses, the region resolves, and our verdict
-    # matches the list.
+    # Windows refuses the Edge uninstall outside the EEA, decided by the device
+    # setup region. Three pieces the verdict stands on: the policy file parses,
+    # that region resolves, and our verdict matches the list.
     try {
         $egBad = @()
         $pol = Get-WDEdgeUninstallPolicy
-        $here = Get-WDHomeGeoId
-        if ($here -lt 0) { $egBad += 'this machine has no home region set' }
+        $here = Get-WDDeviceRegionGeoId
+        if ($here -lt 0) { $egBad += 'this machine has no device or home region set' }
         $iso = Get-WDGeoIso2 -GeoId $here
         if (-not $iso) { $egBad += "geo id $here did not resolve to a region code" }
-        # Ireland, the region the uninstall borrows.
-        $ie = Get-WDGeoIso2 -GeoId 68
-        if ($ie -ne 'IE') { $egBad += "geo id 68 resolved to '$ie', not IE" }
+        if ($pol.GeoId -ne $here) { $egBad += "the policy was read for geo id $($pol.GeoId), the device region is $here" }
         if ($pol.Known) {
             if (-not @($pol.Regions).Count) { $egBad += 'the policy was found but lists no regions' }
-            elseif ($pol.Regions -notcontains 'IE') { $egBad += 'IE is not in the policy list the workaround relies on' }
             $expect = ($pol.Regions -contains $iso)
             if ($pol.Allowed -ne $expect) { $egBad += "policy says allowed=$($pol.Allowed) for $iso, list says $expect" }
         }
@@ -1327,7 +1324,7 @@ if ($SelfTest) {
         } else {
             $verdict = if (-not $pol.Known) { 'no regional gate on this build' }
                        elseif ($pol.Allowed) { "permitted in $iso" }
-                       else { "refused in $iso, so the run borrows IE and puts it back" }
+                       else { "refused in $iso, so removal reports Blocked and touches nothing" }
             Write-Host "  OK      edge       Windows' own answer on whether Edge may be uninstalled ($verdict)"
         }
     } catch {
