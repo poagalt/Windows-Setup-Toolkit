@@ -1656,7 +1656,11 @@ function Export-WDRunNotes {
         # work without one.
         [string]$RunId = '',
         [string]$UndoFile = '',
-        [datetime]$Started = [datetime]::MinValue
+        [datetime]$Started = [datetime]::MinValue,
+        # What each option actually did. Without it this is the plan, and the
+        # 2026-10-29 notes said "installs Microsoft.PowerToys" and counted three
+        # winget packages for a run in which every install failed.
+        $Results = $null
     )
     if (-not $Path) {
         if (-not $script:Session) { return }
@@ -1682,6 +1686,25 @@ function Export-WDRunNotes {
         $mech += Get-WDItemMechanics -Item $i
     }
 
+    # By item id, with any nested list opened up, the way Export-WDReport reads
+    # the same results.
+    $outcome = @{}
+    if ($null -ne $Results) {
+        foreach ($x in @($Results)) {
+            foreach ($y in @($x)) {
+                if ($null -ne $y -and $y.PSObject.Properties['Status'] -and $y.PSObject.Properties['Id']) { $outcome[[string]$y.Id] = $y }
+            }
+        }
+    }
+    $hasOutcome = [bool]$outcome.Count
+    $outcomeLabel = @{
+        Removed = 'Done - removed'; Changed = 'Done - changed'; Partial = 'Partly done'
+        AlreadySet = 'Nothing to do - already set'; NotPresent = 'Nothing to do - not on this machine'
+        Skipped = 'Skipped'; Obstruction = 'Needs your click'; Blocked = 'Blocked'; Failed = 'Failed'
+    }
+    $didStatus  = @('Removed', 'Changed', 'Partial')
+    $idleStatus = @('AlreadySet', 'NotPresent')
+
     $sb = New-Object System.Text.StringBuilder
     $w  = { param([string]$Line = '') $null = $sb.AppendLine($Line) }
 
@@ -1702,6 +1725,8 @@ function Export-WDRunNotes {
     }
     $tally = [ordered]@{}
     foreach ($m in $mech) {
+        # Only what changed something, once there is a result to say so.
+        if ($hasOutcome -and -not ($outcome.ContainsKey([string]$m.Id) -and [string]$outcome[[string]$m.Id].Status -in $didStatus)) { continue }
         foreach ($l in @($m.Lines)) {
             foreach ($k in $kinds.Keys) {
                 if (-not ([string]$l).StartsWith($k)) { continue }
@@ -1733,11 +1758,39 @@ function Export-WDRunNotes {
     # wants is the one their machine changed.
     & $w "Applied $($Started.ToString('d MMMM yyyy')) at $($Started.ToString('HH:mm'))."
     & $w
-    & $w "**$(@($mech).Count) options were selected.** Every one of them is below, with what it"
-    & $w 'changed and how to put that one thing back.'
+    $attention = @()
+    if ($hasOutcome) {
+        # Three piles that add up: done, nothing to do, and everything else -
+        # Partial goes in the last, since part of it is still to do.
+        $rs = @($mech | ForEach-Object { $outcome[[string]$_.Id] } | Where-Object { $_ })
+        $nDid  = @($rs | Where-Object { [string]$_.Status -in @('Removed', 'Changed') }).Count
+        $nIdle = @($rs | Where-Object { [string]$_.Status -in $idleStatus }).Count
+        $attention = @($mech | Where-Object {
+            $o = $outcome[[string]$_.Id]
+            $o -and [string]$o.Status -notin @('Removed', 'Changed', 'AlreadySet', 'NotPresent') })
+        & $w "**$(@($mech).Count) options were selected.** $nDid changed something, $nIdle had nothing to do,"
+        & $w "and $(@($attention).Count) did not finish$(if (@($attention).Count) { ' - those are listed first, under Needs attention' })."
+        & $w 'Every option is below with what it does, what happened this run, and how to put it back.'
+    } else {
+        & $w "**$(@($mech).Count) options were selected.** Every one of them is below, with what it"
+        & $w 'changed and how to put that one thing back.'
+    }
     & $w
 
+    if (@($attention).Count) {
+        & $w '## Needs attention'
+        & $w
+        foreach ($m in $attention) {
+            $o = $outcome[[string]$m.Id]
+            $line = "- **$($m.Name)** (``$($m.Id)``) - $($outcomeLabel[[string]$o.Status]): $($o.Message)"
+            if ($o.Detail) { $line += " - $(([string]$o.Detail) -replace '\s*[\r\n]+\s*', ' ')" }
+            & $w $line
+        }
+        & $w
+    }
+
     if ($tally.Count) {
+        if ($hasOutcome) { & $w 'Counted over the options that changed something.'; & $w }
         & $w '| What was touched | How many |'
         & $w '| --- | ---: |'
         foreach ($k in $tally.Keys) { & $w "| $k | $($tally[$k]) |" }
@@ -1767,7 +1820,12 @@ function Export-WDRunNotes {
     & $w 'type `regedit`, press Enter, and paste the path into the address bar at the top.'
     & $w 'The same goes for `services.msc` and `taskschd.msc` where an option names one.'
     & $w
-    & $w '> The values shown below are what this run **wrote**, not what was there before.'
+    if ($hasOutcome) {
+        & $w '> The values shown below are what each option **writes**, not what was there before -'
+        & $w '> the **This run** line under each one says whether this run had to write them.'
+    } else {
+        & $w '> The values shown below are what this run **wrote**, not what was there before.'
+    }
     & $w '> The rollback script holds the previous value for every one of them, and the'
     & $w '> lookup document spells each one out as numbered steps.'
     & $w
@@ -1802,6 +1860,17 @@ function Export-WDRunNotes {
             & $w "#### $($m.Name)"
             & $w
             & $w "``id: $($m.Id)`` - reversing the run puts this back **$($m.Revert)**"
+            if ($hasOutcome) {
+                $o = $outcome[[string]$m.Id]
+                & $w
+                if ($o) {
+                    $line = "**This run:** $($outcomeLabel[[string]$o.Status])"
+                    if ($o.Message) { $line += " - $($o.Message)" }
+                    & $w $line
+                } else {
+                    & $w '**This run:** no result was recorded'
+                }
+            }
             if ($m.RiskNote) {
                 & $w
                 & $w "> **Why it matters.** $($m.RiskNote)"

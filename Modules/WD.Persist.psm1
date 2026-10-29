@@ -89,12 +89,18 @@ function Get-WDEdgeUninstallPolicy {
 function Get-WDEdgeInstallerReason {
     # Quoted verbatim rather than paraphrased: "not uninstallable for process"
     # is Edge's claim, not ours.
+    #
+    # Only from a log written since -Since. The 2026-10-29 run quoted a line a
+    # month old as the reason it had just been refused: that attempt wrote no
+    # log here, and the user TEMP copy still held the first run's refusal.
+    param([datetime]$Since = [datetime]::MinValue)
     $logs = @(
         (Join-Path ([string]$env:TEMP) 'msedge_installer.log')
         (Join-Path ([string]$env:SystemRoot) 'Temp\msedge_installer.log')
     )
     foreach ($l in $logs) {
         if (-not (Test-Path -LiteralPath $l -ErrorAction SilentlyContinue)) { continue }
+        try { if ((Get-Item -LiteralPath $l -ErrorAction Stop).LastWriteTime -lt $Since) { continue } } catch { continue }
         try {
             $hit = @(Get-Content -LiteralPath $l -Tail 400 -ErrorAction Stop |
                      Where-Object { $_ -match 'uninstallable|Uninstall allowed|uninstall not allowed' })
@@ -649,14 +655,24 @@ Register-WDHandler 'RemoveEdge' {
 
     $steps = New-Object System.Collections.Generic.List[string]
 
+    # A replacement was picked and is not here, which means its install failed
+    # earlier in this run - on 2026-10-29 Chrome's did, and this went on to try
+    # the uninstall anyway; only Windows refusing it kept the machine from
+    # being left with no browser. Declining the offer is a choice to go
+    # without, and that path is unchanged.
+    $picked = @()
+    try { $picked = @(Get-WDChosenBrowsers (Get-WDBrowserChoice -Root $Context.Session.Root)) } catch { }
+    if ($picked.Count -and -not @(Get-WDBrowserRegistrations | Where-Object { -not $_.IsEdge }).Count) {
+        $names = (@($picked | ForEach-Object { $_.Name })) -join ', '
+        return New-WDResult -Status Skipped -Message "Edge kept: $names was chosen to replace it and is not installed" `
+            -Detail "Removing Edge now would leave this machine with no browser at all. Install $names, then run this option again."
+    }
+
     # 0. Hand over the associations first, while Edge is still here to hold
     # them. Afterwards, nothing owns http and every web link answers "You'll
     # need an app to open this".
     $prefer = ''
-    try {
-        $picked = @(Get-WDChosenBrowsers (Get-WDBrowserChoice -Root $Context.Session.Root))
-        if ($picked.Count) { $prefer = [string]$picked[0].Name }
-    } catch { }
+    if ($picked.Count) { $prefer = [string]$picked[0].Name }
     $assoc = Set-WDDefaultBrowserBestEffort -Context $Context -PreferName $prefer
     if ($assoc.Ok) {
         $steps.Add('default browser already handed over')
@@ -699,6 +715,7 @@ Register-WDHandler 'RemoveEdge' {
     }
 
     $exits = New-Object System.Collections.Generic.List[string]
+    $tried = Get-Date
     try {
         # 3. Run every setup.exe there is. Version folders move between updates,
         # so search rather than assume a path.
@@ -713,8 +730,12 @@ Register-WDHandler 'RemoveEdge' {
         }
     } finally {
         if ($geoWas -ge 0) {
-            try { Set-WDHomeGeoId -GeoId $geoWas; $steps.Add('home region restored') }
-            catch { Write-WDLog ("The home region was left set to IE - set it back under Settings, " +
+            try {
+                Set-WDHomeGeoId -GeoId $geoWas; $steps.Add('home region restored')
+                # Logged as well as listed: the log said when the region went to
+                # IE and, until now, never said it came back.
+                Write-WDLog "Home region set back to $($policy.Region)." -Level Info -Item $Context.ItemId
+            } catch { Write-WDLog ("The home region was left set to IE - set it back under Settings, " +
                                  "Time and language, Language and region.") -Level Error -Item $Context.ItemId }
         }
     }
@@ -725,10 +746,17 @@ Register-WDHandler 'RemoveEdge' {
     $stillThere = @(& $installed)
     if ($stillThere.Count) {
         foreach ($s in $wasRunning) { try { Start-Service -Name $s.Name -ErrorAction Stop } catch { } }
-        $why = Get-WDEdgeInstallerReason
+        $why = Get-WDEdgeInstallerReason -Since $tried
         $after = Get-WDEdgeUninstallPolicy
         $detail = "Edge is still installed at $($stillThere -join ', ') (uninstaller exit $($exits -join ', ')). " +
                   'Nothing else was changed: Edge keeps updating, and its updater is untouched.'
+        # The region change is the one thing this attempt did touch, and the
+        # Blocked result is where somebody looks for whether it was put back.
+        if ($steps -contains 'home region restored') {
+            $detail += " The home region was set to IE for the attempt and is back to $($policy.Region)."
+        } elseif ($geoWas -ge 0) {
+            $detail += " The home region could not be set back and is still IE - change it under Settings, Time and language, Language and region."
+        }
         if ($why) { $detail += " Edge's own log says: $why" }
         if ($after.Known -and -not $after.Allowed) {
             $detail += " Windows permits uninstalling Edge only in the EEA. On current builds it also refuses an uninstall " +

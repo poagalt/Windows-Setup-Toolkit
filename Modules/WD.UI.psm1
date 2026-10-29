@@ -13703,7 +13703,7 @@ function Show-WDWindow {
                 # a preview is the sort of thing somebody finds three weeks
                 # later and believes.
                 if (-not $PreviewMode) {
-                    $Sync.NotesFile = [string](Export-WDRunNotes -Items $plan -PresetName $PresetName)
+                    $Sync.NotesFile = [string](Export-WDRunNotes -Items $plan -PresetName $PresetName -Results $results)
                     # Asked of the file rather than of the selection, because
                     # the item can be ticked and still fail.
                     try { $Sync.HasUndo = [bool](Test-Path -LiteralPath $session.UndoFile) } catch { $Sync.HasUndo = $false }

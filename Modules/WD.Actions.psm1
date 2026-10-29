@@ -439,6 +439,7 @@ $script:WDWingetCodes = @{
     '8A150014' = 'NO_APPLICATIONS_FOUND: no package with that id'
     '8A150017' = 'NO_MANIFEST_FOUND: no manifest matches'
     '8A15004B' = 'FAILED_TO_OPEN_ALL_SOURCES: the package sources could not be opened - usually no internet connection'
+    '8A15005E' = 'PINNED_CERTIFICATE_MISMATCH: a package source answered with a certificate winget does not expect - usually the msstore source on an out-of-date winget; Microsoft Store > Library > Get updates updates App Installer'
     '8A150101' = 'INSTALL_PACKAGE_IN_USE: the application is running'
     '8A150102' = 'INSTALL_INSTALL_IN_PROGRESS: another installation is already running'
     '8A150103' = 'INSTALL_FILE_IN_USE: a file it needs is in use'
@@ -471,7 +472,11 @@ function Format-WDWingetFailure {
               ForEach-Object { ($_ -replace '[^\x20-\x7E]', '').Trim() } |
               Where-Object { $_.Length -gt 3 -and $_ -notmatch '^[-\\|/ .]+$' })
     if ($said.Count) {
-        $tail = ($said | Select-Object -Last 3) -join ' / '
+        # The tail is not always the reason. When one source fails, winget names
+        # it and its error first, then lists what the working sources found -
+        # and a run kept only that list, so it never said which source or why.
+        $why  = @($said | Where-Object { $_ -match '^Failed when searching source|^0x[0-9A-Fa-f]{8}\s*:' })
+        $tail = (@($why) + @($said | Select-Object -Last 3 | Where-Object { $why -notcontains $_ })) -join ' / '
         if ($tail.Length -gt 400) { $tail = $tail.Substring(0, 400) + '...' }
         $line += " - winget said: $tail"
     }
@@ -497,7 +502,13 @@ function Invoke-WDWingetInstall {
         # tools land as an empty shell unless the workload is named - so an item
         # can supply the installer's own command line.
         $over = [string](Get-Prop $Action 'override' '')
-        $argv = @('install', '--id', $id, '--exact')
+        # Named, never left to winget. Without --source it searches every source,
+        # and when any one of them fails it refuses to install at all, even with
+        # the package found - on 2026-10-29 the msstore source failed its
+        # certificate check (0x8A15005E) and took all four installs down with
+        # it. Every id in the manifest is a winget-pkgs id.
+        $src  = [string](Get-Prop $Action 'source' 'winget')
+        $argv = @('install', '--id', $id, '--exact', '--source', $src)
         if ($over) { $argv += @('--override', $over) } else { $argv += '--silent' }
         $argv += @('--accept-source-agreements', '--accept-package-agreements', '--disable-interactivity')
         # Big toolchains legitimately outrun the default.

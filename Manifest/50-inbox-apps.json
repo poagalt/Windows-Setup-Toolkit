@@ -714,6 +714,7 @@
                                              "bloat": 3,
                                              "name":  "Uninstall Microsoft Edge",
                                              "desc":  "Uninstalls the Edge browser, and once it is gone switches off its updater and the Windows Update channel that reinstalls it. If Windows refuses the uninstall, Edge is left exactly as it was, still updating. WebView2 Runtime is kept.",
+                                             "riskNote":  "Edge's updater is also what keeps WebView2 Runtime patched, so once Edge is really gone and the updater is off, WebView2 - which other programs use to show web pages - stops getting security updates. Undoing the run turns the updater back on. If a replacement browser was picked and did not install, Edge is kept rather than leaving the machine with no browser.",
                                              "risk":  1,
                                              "default":  true,
                                              "order":  92,

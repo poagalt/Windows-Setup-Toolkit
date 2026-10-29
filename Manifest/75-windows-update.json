@@ -77,9 +77,9 @@
                                              "settingsPath": "Undo this option from the toolkit. Settings has no page for it - it is the Specify deadline for automatic updates and restarts for quality update policy.",
                                              "symptoms": ["pc restarted for updates", "forced restart", "forced update restart", "restart deadline", "update restart countdown", "restart in 15 minutes", "your organization requires a restart", "some settings are managed by your organization"],
                                              "name":  "Restart for overdue security updates",
-                                             "desc":  "Windows' own deadline: once a monthly update has waited the days below, it restarts for it after a 15-minute warning, hold or no hold.",
+                                             "desc":  "Windows' own deadline: once a monthly update is the days below past its release, it restarts for it after a 15-minute warning, hold or no hold.",
                                              "risk":  1,
-                                             "riskNote":  "When the deadline passes Windows restarts after a 15-minute warning, signed in or not, at whatever hour that is - overnight included, so a job left running can be cut off - and what was left open is not saved. Restarting yourself when a restart is pending, before the deadline, keeps it from ever firing. That is the point: it stops Never restart while someone is signed in from keeping a security fix waiting for ever. Annual feature updates get no deadline. With a deadline set, Windows also installs monthly updates as soon as they are offered, and treats the machine as managed, so new features that arrive in monthly updates stay off until the next annual update. Home editions ignore this policy, so the option is not offered there.",
+                                             "riskNote":  "When the deadline passes Windows restarts after a 15-minute warning, signed in or not, at whatever hour that is - overnight included, so a job left running can be cut off - and what was left open is not saved. Restarting yourself when a restart is pending, before the deadline, keeps it from ever firing. That is the point: it stops Never restart while someone is signed in from keeping a security fix waiting for ever. The days count from Microsoft's release date, not from when this PC got the update, so a PC that comes online behind - a new one, or one left off for a while - finds the update already overdue: it installs straight away and restarts once the grace days are up. Annual feature updates get no deadline. With a deadline set, Windows also installs monthly updates as soon as they are offered, and treats the machine as managed, so new features that arrive in monthly updates stay off until the next annual update. Home editions ignore this policy, so the option is not offered there.",
                                              "revert":  "full",
                                              "default":  true,
                                              "order":  72,
@@ -124,7 +124,7 @@
                                              "settingsPath": "Undo the run. It is the Display options for update notifications policy, so Settings has no switch for it.",
                                              "symptoms": ["no update notifications", "not told about updates", "missed an update", "no update available notification"],
                                              "name":  "Update notifications, except restart warnings",
-                                             "desc":  "Turns off Windows Update's toasts about updates being available, downloading, and installed. The warning before a restart Windows has scheduled still appears.",
+                                             "desc":  "Turns off Windows Update's toasts about updates being available, downloading, installed, and failing to install. The warning before a restart Windows has scheduled still appears.",
                                              "risk":  0,
                                              "default":  true,
                                              "order":  72,
@@ -149,7 +149,7 @@
                                                              }
                                                          ],
                                              "tier":  2,
-                                             "riskNote":  "You stop being told updates are waiting, so check Windows Update yourself now and then. Restart warnings are deliberately kept: with Restart for overdue security updates ticked, the warning before its restart is the only notice you get. It is a policy, so Settings says some settings are managed by your organization. Home editions ignore it, so the option is not offered there."
+                                             "riskNote":  "You stop being told updates are waiting, and also when one fails - an update can fail and retry for days with nothing on screen - so check Windows Update yourself now and then. Restart warnings are deliberately kept: with Restart for overdue security updates ticked, the warning before its restart is the only notice you get. It is a policy, so Settings says some settings are managed by your organization. Home editions ignore it, so the option is not offered there."
                                          },
                                          {
                                              "id":  "wu-no-drivers",

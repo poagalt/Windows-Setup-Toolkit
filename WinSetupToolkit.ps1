@@ -3643,7 +3643,7 @@ if ($Console) {
     $report = Export-WDReport -Results $results -Session $session -Profile $profileInfo -PresetName $Preset -OnlyIfChanged:$GuardRun
     # Only on an apply. A file called "what this run did" describing a preview
     # is the sort of thing somebody finds three weeks later and believes.
-    if (-not $Preview -and (-not $GuardRun -or $didChange)) { $null = Export-WDRunNotes -Items $plan -PresetName $Preset }
+    if (-not $Preview -and (-not $GuardRun -or $didChange)) { $null = Export-WDRunNotes -Items $plan -PresetName $Preset -Results $results }
 
     # Counted off the results rather than the plan, so an item that changed
     # nothing does not ask for a restart.
