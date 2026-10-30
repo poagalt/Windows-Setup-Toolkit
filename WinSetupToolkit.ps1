@@ -334,7 +334,12 @@ if ($ListItems) {
 }
 
 function Resolve-Selection {
-    if ($Select)      { return @($Select) }
+    # Split as well as taken: -File hands "a,b,c" over as one string, and the
+    # elevation relaunch above joins a list into exactly that - so on
+    # 2026-10-29 "-Select remove-edge,close-resurrection,remove-edge-data"
+    # arrived as one id that matched nothing, and the run died after its
+    # restore point with "Cannot bind argument to parameter 'Plan'".
+    if ($Select)      { return @($Select | ForEach-Object { ([string]$_) -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
     if ($ProfilePath) {
         $loaded = Import-WDSelection -Path $ProfilePath
         if (-not $loaded) { throw "Could not read a selection from $ProfilePath" }
@@ -3570,6 +3575,12 @@ if ($Console) {
     $plan     = Resolve-WDPlan -Categories $categories -Selected $selected -Profile $profileInfo
 
     Write-Host "$(@($plan).Count) of $($selected.Count) selected items apply to this machine." -ForegroundColor Gray
+    # Before the restore point, not after: an empty plan has nothing to protect,
+    # and handing it on was a binding error with the window closing behind it.
+    if (-not @($plan | Where-Object { $_ }).Count) {
+        Write-Host "Nothing to run: none of $($selected -join ', ') is an item that applies here. -ListItems shows the ids." -ForegroundColor Red
+        exit 1
+    }
 
     # Already in the log by now, but the console is where somebody running this
     # is looking.

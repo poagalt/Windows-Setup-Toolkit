@@ -113,6 +113,9 @@ function Get-WDEdgeInstallerReason {
     $logs = @(
         (Join-Path ([string]$env:TEMP) 'msedge_installer.log')
         (Join-Path ([string]$env:SystemRoot) 'Temp\msedge_installer.log')
+        # Where a system-level setup.exe writes it on 24H2 and later - the
+        # 2026-10-29 uninstall's log was here and in neither of the above.
+        (Join-Path ([string]$env:SystemRoot) 'SystemTemp\msedge_installer.log')
     )
     foreach ($l in $logs) {
         if (-not (Test-Path -LiteralPath $l -ErrorAction SilentlyContinue)) { continue }
@@ -553,28 +556,78 @@ Register-WDHandler 'SetDefaultBrowser' {
           else { 'Open Settings, Apps, Default apps, pick ' + $r.Pick + ' and press Set default.' }) + $tail)
 }
 
+# The Copilot app's updater id. Edge Update installs and updates it, and since
+# April 2026 it ships a whole Edge engine of its own (msedge.exe and all).
+$script:CopilotGuid = '{C50565E9-CCCF-44B4-BA15-5AC5C6569197}'
+
+function Get-WDEdgeUpdateRecordPaths {
+    # The updater's records of the browser channels. While any of these exist
+    # it treats that channel as installed - updating, repairing, and running
+    # its on-os-upgrade command - so they are what makes an uninstalled Edge
+    # come back through it. WebView2's ({F3017226-...}) and the updater's own
+    # ({F3C4FE00-...}) are not in $script:EdgeGuids and are never named here.
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($view in 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate', 'HKLM:\SOFTWARE\Microsoft\EdgeUpdate') {
+        foreach ($sub in 'Clients', 'ClientState', 'ClientStateMedium') {
+            foreach ($g in $script:EdgeGuids.Values) { $out.Add("$view\$sub\$g") }
+        }
+    }
+    @($out)
+}
+
+function Get-WDWebView2UpdaterGap {
+    # WebView2 with nothing left to patch it: Edge Update's files deleted from
+    # under it - on 2026-10-29 by changes made outside the toolkit - with its
+    # services still registered and pointing at nothing. Said rather than
+    # repaired: putting an updater back is the operator's call.
+    $wv = Test-Path -LiteralPath (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\EdgeWebView\Application')
+    $up = Test-Path -LiteralPath (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\EdgeUpdate\MicrosoftEdgeUpdate.exe')
+    if ($wv -and -not $up) {
+        return ('WebView2 is installed but the files of Edge Update, its only updater, are gone, so WebView2 gets no ' +
+                'security fixes. Reinstalling the WebView2 Runtime from Microsoft puts the updater back without the browser; ' +
+                'if its installer then reports a failure, the updater repairs its own registration on its next scheduled run.')
+    }
+    ''
+}
+
+function Get-WDEdgeInstallerCachePaths {
+    # A full Edge installer the updater kept - 199 MB of it on the 2026-10-29
+    # machine, under the Stable channel's id.
+    $dl = Join-Path ${env:ProgramFiles(x86)} 'Microsoft\EdgeUpdate\Download'
+    @($script:EdgeGuids.Values | ForEach-Object { Join-Path $dl $_ } | Where-Object { Test-Path -LiteralPath $_ })
+}
+
 function Block-WDEdgeReinstall {
+    # What would put Edge back, short of the updater itself. Edge Update is
+    # also the only thing that patches WebView2, which Windows Search and much
+    # else run on, and Microsoft documents that a WebView2 update never
+    # installs the browser. This used to disable its services and tasks and
+    # park its folder, which left WebView2 unpatched for good; what the updater
+    # would act on is removed instead - its records of Edge and its cached
+    # installer, in Remove-WDEdgeLeftovers.
     param($Context)
 
     $blocked = New-Object System.Collections.Generic.List[string]
 
-    # The EdgeUpdate policies, through the registry executor so that every value
-    # is journalled - this used to journal InstallDefault alone of the fourteen
-    # it wrote, so a rollback left thirteen behind. They bind only a machine
-    # joined to a domain: Microsoft documents InstallDefault and UpdateDefault
-    # as "available only on Windows instances that are joined to a Microsoft
-    # Active Directory domain", and on this machine the updater's own log reads
-    # "Machine is not Enterprise Managed" with them in place. Everywhere else
-    # the services, tasks, and folder below are what stop it.
+    # Through the registry executor, so every value is journalled. Install and
+    # update off for each browser channel and for Copilot, and the updater's
+    # experimentation service off, which is what drives rollouts like
+    # Copilot's. The per-product browser policies bind only a machine joined to
+    # a domain - "available only on Windows instances that are joined to a
+    # Microsoft Active Directory domain", and the updater's log reads "Machine
+    # is not Enterprise Managed" with them in place - so on most machines the
+    # records are what stops it and these are a second line. Nothing here
+    # names WebView2: the blanket InstallDefault, UpdateDefault, and
+    # AutoUpdateCheckPeriodMinutes this used to write stop WebView2 updating
+    # too wherever they do bind.
     $pol  = 'HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate'
     $vals = New-Object System.Collections.Generic.List[psobject]
     $base = [ordered]@{
-        'InstallDefault'                = 0
-        'UpdateDefault'                 = 0
-        'AutoUpdateCheckPeriodMinutes'  = 0
-        'DoNotUpdateToEdgeWithChromium' = 1
-        'CreateDesktopShortcutDefault'  = 0
-        'RemoveDesktopShortcutDefault'  = 1
+        'DoNotUpdateToEdgeWithChromium'                        = 1
+        'CreateDesktopShortcutDefault'                         = 0
+        'RemoveDesktopShortcutDefault'                         = 1
+        'UpdaterExperimentationAndConfigurationServiceControl' = 0
+        "Install$($script:CopilotGuid)"                        = 0
     }
     foreach ($k in $base.Keys) { $vals.Add([pscustomobject]@{ path = $pol; name = $k; kind = 'DWord'; value = $base[$k] }) }
     foreach ($g in $script:EdgeGuids.Values) {
@@ -582,47 +635,30 @@ function Block-WDEdgeReinstall {
         $vals.Add([pscustomobject]@{ path = $pol; name = "Update$g";  kind = 'DWord'; value = 0 })
     }
     $reg = Invoke-WDRegistryAction -Context $Context -Action ([pscustomobject]@{ type = 'registry'; scope = 'machine'; values = $vals.ToArray() })
-    if ([string]$reg.Status -in @('Changed', 'AlreadySet')) { $blocked.Add('update policy') }
+    if ([string]$reg.Status -eq 'Changed') { $blocked.Add('install policy for Edge and Copilot') }
 
-    # The Windows Update channel that put EdgeUpdate back on this machine eight
-    # days after the 2026-08-15 run (its log: "/install ... brand=WAAS",
-    # Windows servicing) - the same orchestrator entry Microsoft tells admins
-    # to delete to stop the new Outlook being reinstalled. Exported first.
+    # The Windows Update orchestrator's two entries for the updater. Both run
+    # it update-only today, but the OOBE one put the updater back on this
+    # toolkit's test machine eight days after the 2026-08-15 run (its log:
+    # "/install ... brand=WAAS"), and the updater's own hourly task already
+    # keeps WebView2 current without either. Exported first.
     $uso = Invoke-WDRegistryKeyAction -Context $Context -Action ([pscustomobject]@{
-        type = 'registryKey'; paths = @('HKLM:\SOFTWARE\Microsoft\WindowsUpdate\Orchestrator\UScheduler_Oobe\EdgeUpdate') })
+        type = 'registryKey'; paths = @(
+            'HKLM:\SOFTWARE\Microsoft\WindowsUpdate\Orchestrator\UScheduler_Oobe\EdgeUpdate',
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Orchestrator\UScheduler\EdgeUpdate') })
     if ([string]$uso.Status -eq 'Removed') { $blocked.Add('Windows Update reinstall channel') }
 
-    # The updater itself: services, then tasks, then its binaries.
+    # The browser's own service and tasks - not the updater's. The elevation
+    # service runs elevation_service.exe out of Edge\Application.
     $svc = Invoke-WDServiceAction -Action ([pscustomobject]@{
-        names = @('edgeupdate', 'edgeupdatem', 'MicrosoftEdgeElevationService')
+        names = @('MicrosoftEdgeElevationService', 'MicrosoftEdgeBetaElevationService', 'MicrosoftEdgeDevElevationService')
         startupType = 'Disabled'; stop = $true }) -Context $Context
-    if ($svc.Status -in @('Changed','Removed','AlreadySet')) { $blocked.Add('updater services') }
-
-    # Deleted with each definition exported first, so the rollback registers
-    # them again.
+    if ($svc.Status -in @('Changed','Removed')) { $blocked.Add('Edge elevation service') }
     $tsk = Invoke-WDTaskAction -Action ([pscustomobject]@{
-        tasks = @('\MicrosoftEdgeUpdateTask*'); delete = $true }) -Context $Context
-    if ($tsk.Status -in @('Changed','Removed')) { $blocked.Add('updater tasks') }
+        tasks = @('\MicrosoftEdgeUpdateBrowserReplacementTask*', '\MicrosoftEdgeShadowStackRollbackTask*'); delete = $true }) -Context $Context
+    if ($tsk.Status -in @('Changed','Removed')) { $blocked.Add('Edge browser tasks') }
 
-    # Rename rather than delete, so the rollback story stays honest.
-    $updDir = Join-Path ${env:ProgramFiles(x86)} 'Microsoft\EdgeUpdate'
-    if ((Test-Path -LiteralPath $updDir) -and -not $Context.Preview) {
-        try {
-            $parked = "$updDir.wd-disabled"
-            if (Test-Path -LiteralPath $parked) { Remove-Item -LiteralPath $parked -Recurse -Force -ErrorAction SilentlyContinue }
-            Rename-Item -LiteralPath $updDir -NewName 'EdgeUpdate.wd-disabled' -Force -ErrorAction Stop
-            $blocked.Add('updater binaries parked')
-            Add-WDJournal -ItemId $Context.ItemId -Type 'file' -Target $updDir -Status 'Changed' `
-                          -Undo @{ method = 'rename'; from = $parked; to = $updDir }
-        } catch {
-            # Held open by a running updater; the services above still hold.
-            Write-WDLog "EdgeUpdate folder is in use, left in place: $($_.Exception.Message)" -Level Warn -Item $Context.ItemId
-        }
-    } elseif ($Context.Preview -and (Test-Path -LiteralPath $updDir)) {
-        $blocked.Add('updater binaries parked')
-    }
-
-    $blocked
+    @($blocked)
 }
 
 Register-WDHandler 'RemoveEdge' {
@@ -646,13 +682,21 @@ Register-WDHandler 'RemoveEdge' {
     ) | Where-Object { Test-Path -LiteralPath $_ }
     $installed = { @($edgeDirs | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'msedge.exe') }) }
 
-    $appx = @()
-    try { $appx = @(Get-AppxPackage -Name 'Microsoft.MicrosoftEdge.Stable' -ErrorAction SilentlyContinue) } catch { }
-
-    if (-not @(& $installed).Count -and -not $appx) {
-        # Already gone: shut what would bring it back.
-        $null = Block-WDEdgeReinstall -Context $Context
-        return New-WDResult -Status NotPresent -Message 'Edge is not installed; reinstall vectors blocked anyway'
+    # Already gone: clear what it left and shut what would bring it back.
+    # msedge.exe is what makes Edge installed, not its Store package - an
+    # uninstall done outside the toolkit on 2026-10-29 left that registered,
+    # and keying on it sent a machine with no Edge down the uninstall path,
+    # which then reported removing it.
+    if (-not @(& $installed).Count) {
+        $left = @(Remove-WDEdgeLeftovers -Context $Context)
+        $gap  = Get-WDWebView2UpdaterGap
+        if ($gap) { Write-WDLog $gap -Level Warn -Item $Context.ItemId }
+        if (-not $left.Count) { return New-WDResult -Status NotPresent -Message 'Edge is not installed and nothing of it is left' -Detail $gap }
+        if (-not $Context.Preview) { Set-WDRebootNeeded }
+        return New-WDResult -Status Removed -Reboot:(-not $Context.Preview) `
+            -Message $(if ($Context.Preview) { 'Edge is already uninstalled; would clear what it left and block its return' }
+                       else { 'Edge was already uninstalled; what it left is cleared and its return blocked' }) `
+            -Detail ((($left | Sort-Object -Unique) -join ', ') + $(if ($gap) { ". $gap" } else { '' }))
     }
 
     $policy = Get-WDEdgeUninstallPolicy
@@ -762,29 +806,189 @@ Register-WDHandler 'RemoveEdge' {
     }
     $steps.Add('uninstaller removed Edge')
 
-    # 4. Gone, so now the updater and every channel that would reinstall it.
+    # 4. Gone, so now everything it left.
+    foreach ($b in (Remove-WDEdgeLeftovers -Context $Context)) { $steps.Add($b) }
+
+    Set-WDRebootNeeded
+    New-WDResult -Status Removed -Message 'Edge removed and reinstall blocked' `
+                 -Detail (($steps | Sort-Object -Unique) -join ', ') -Reboot
+}
+
+Register-WDHandler 'RemoveEdgeProfileData' {
+    # Edge's own data - history, saved sign-ins, cookies, caches - which its
+    # uninstaller keeps unless told --delete-profile and nothing else here
+    # touches. Only once Edge is gone: while it is installed this is its live
+    # profile. Per account in scope, through the file executor, to the Recycle
+    # Bin unless the run is irreversible - so it is the operator's to empty.
+    param($Action, $Context)
+
+    $live = @((Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'),
+              (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe')) | Where-Object { Test-Path -LiteralPath $_ }
+    if ($live) {
+        return New-WDResult -Status Skipped -Message 'Edge is still installed, so this is its live profile' `
+                            -Detail 'Uninstall Edge first, then run this option again.'
+    }
+
+    $hives = @(Select-WDAccountHives -Hives (Get-WDUserHives) -Default $Context.DefaultHive -Accounts (Get-WDContextAccounts $Context))
+    if (-not $hives.Count) {
+        return New-WDResult -Status Skipped -Message 'No account selected to delete it for' `
+                            -Detail 'Tick an account under "which accounts per-user settings are written to", then run this option again.'
+    }
+    $paths = New-Object System.Collections.Generic.List[string]
+    foreach ($h in $hives) {
+        # A hive is named by its SID, or CurrentUser for this account; the
+        # default profile's is the mounted one.
+        $dir = ''
+        if ([bool](Get-Prop $h 'Mounted' $false)) {
+            $dir = Join-Path $env:SystemDrive 'Users\Default'
+        } else {
+            $sid = [string]$h.Name
+            if ($sid -eq 'CurrentUser') { $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value }
+            try {
+                $dir = [Environment]::ExpandEnvironmentVariables([string](Get-ItemProperty -ErrorAction Stop `
+                    -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid").ProfileImagePath)
+            } catch { }
+        }
+        if (-not $dir) { continue }
+        foreach ($ch in 'Edge', 'Edge Beta', 'Edge Dev', 'Edge SxS') { $paths.Add((Join-Path $dir "AppData\Local\Microsoft\$ch")) }
+    }
+
+    $present = @($paths | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -Unique)
+    if (-not $present.Count) { return New-WDResult -Status NotPresent -Message 'No Edge data left in the accounts in scope' }
+    $r = Invoke-WDFileAction -Context $Context -Action ([pscustomobject]@{ type = 'file'; paths = $present; recycle = $true })
+    if ([string]$r.Status -eq 'Blocked' -and -not $Context.Preview) {
+        # A folder can refuse to move while everything in it goes: on
+        # 2026-10-29 the shell answered 120 for ...\Microsoft\Edge and then
+        # moved its User Data at once - most likely a watcher holding the
+        # directory itself. So what is left goes a level down, and a folder
+        # that ends up empty is removed; restoring its contents from the bin
+        # puts it back.
+        $kids = @($present | Where-Object { Test-Path -LiteralPath $_ } |
+                  ForEach-Object { Get-ChildItem -LiteralPath $_ -Force -ErrorAction SilentlyContinue } | ForEach-Object { $_.FullName })
+        if ($kids.Count) {
+            $r = Invoke-WDFileAction -Context $Context -Action ([pscustomobject]@{ type = 'file'; paths = $kids; recycle = $true })
+        }
+        foreach ($p in $present) {
+            if ((Test-Path -LiteralPath $p) -and -not @(Get-ChildItem -LiteralPath $p -Force -Recurse -ErrorAction SilentlyContinue).Count) {
+                try { [IO.Directory]::Delete($p) } catch { }
+            }
+        }
+    }
+    $gone = @($present | Where-Object { $Context.Preview -or -not (Test-Path -LiteralPath $_) })
+    $left = @($present | Where-Object { $gone -notcontains $_ })
+    if (-not $gone.Count) { return $r }
+    $where = $(if (Test-WDIrreversible) { 'deleted' } else { 'moved to the Recycle Bin' })
+    if ($left.Count) {
+        return New-WDResult -Status Partial -Message "$($gone.Count) Edge data folder(s) $where, $($left.Count) not" `
+                            -Detail "Done: $($gone -join ', ') | Left: $($left -join ', ') - $($r.Detail)"
+    }
+    New-WDResult -Status Removed -Detail ($gone -join ', ') `
+                 -Message $(if ($Context.Preview) { "Would move $($gone.Count) Edge data folder(s) to the Recycle Bin" }
+                            else { "$($gone.Count) Edge data folder(s) $where" })
+}
+
+function Remove-WDEdgeLeftovers {
+    # What an uninstall leaves that would bring Edge back or point at it. Shared
+    # by a run that uninstalled Edge and one that found it already gone - which
+    # used to block the updater and nothing else, so an uninstall done outside
+    # the toolkit kept its Store package, the updater's records of it, and its
+    # leftover folder. Returns what it did, one phrase each.
+    param($Context)
+    $steps = New-Object System.Collections.Generic.List[string]
+
+    # 1. The updater and every channel that would reinstall it.
     foreach ($b in (Block-WDEdgeReinstall -Context $Context)) { $steps.Add($b) }
 
-    # 5. The Store-delivered package, for all users and provisioned.
+    # 2. The Store-delivered packages, for all users and provisioned. Game
+    # Assist is "a special version of Microsoft Edge" that Edge 137 and later
+    # installs as a package of its own, here for SYSTEM only - none of the
+    # Edge removers' patterns match its name. DevToolsClient is not here: it is
+    # a Windows component that SFC puts back.
     $ax = Invoke-WDAppxAction -Action ([pscustomobject]@{
-        names = @('Microsoft.MicrosoftEdge.Stable', 'Microsoft.MicrosoftEdge.Beta', 'Microsoft.MicrosoftEdgeDevToolsClient') }) -Context $Context
-    if ($ax.Status -eq 'Removed') { $steps.Add('appx package removed') }
+        names = @('Microsoft.MicrosoftEdge.Stable', 'Microsoft.MicrosoftEdge.Beta', 'Microsoft.MicrosoftEdge.Dev',
+                  'Microsoft.MicrosoftEdge.Canary', 'Microsoft.Edge.GameAssist') }) -Context $Context
+    if ($ax.Status -eq 'Removed') { $steps.Add('Edge and Game Assist packages removed') }
 
-    # 6. Clear EdgeUpdate's own record that Edge exists, or it re-stages.
-    # Exported before deletion, through the key executor, so it is journalled.
-    $clients = New-Object System.Collections.Generic.List[string]
-    foreach ($root in @('HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients',
-                        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients')) {
-        foreach ($g in $script:EdgeGuids.Values) { $clients.Add((Join-Path $root $g)) }
+    # 3. The updater's records of the browser - Clients alone used to be
+    # cleared, and ClientState and ClientStateMedium are enough on their own
+    # for it to treat Edge as installed - then the browser's registrations.
+    # Exported before deletion, through the key executor, so each is journalled.
+    $cr = Invoke-WDRegistryKeyAction -Context $Context -Action ([pscustomobject]@{ type = 'registryKey'; paths = @(Get-WDEdgeUpdateRecordPaths) })
+    if ([string]$cr.Status -eq 'Removed') { $steps.Add('updater record of Edge cleared') }
+
+    $keys = New-Object System.Collections.Generic.List[string]
+    foreach ($view in 'HKLM:\SOFTWARE', 'HKLM:\SOFTWARE\WOW6432Node') {
+        foreach ($ch in '', ' Beta', ' Dev') {
+            $keys.Add("$view\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft Edge$ch")
+            $keys.Add("$view\Clients\StartMenuInternet\Microsoft Edge$ch")
+        }
+        # Runs at every new account's first sign-in.
+        $keys.Add("$view\Microsoft\Active Setup\Installed Components\{9459C573-B17A-45AE-9F64-1857B5D58CEE}")
+        # The IE-to-Edge redirect add-on, which lives in Edge's own folder.
+        $keys.Add("$view\Microsoft\Windows\CurrentVersion\Explorer\Browser Helper Objects\{1FD49718-1D00-4B19-AF5F-070AF6D5D54C}")
+        $keys.Add("$view\Classes\CLSID\{1FD49718-1D00-4B19-AF5F-070AF6D5D54C}")
+        $keys.Add("$view\Microsoft\Edge")
     }
-    $cr = Invoke-WDRegistryKeyAction -Context $Context -Action ([pscustomobject]@{ type = 'registryKey'; paths = $clients.ToArray() })
-    if ([string]$cr.Status -eq 'Removed') { $steps.Add('updater client record cleared') }
+    $keys.Add('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe')
+    $keys.Add('HKLM:\SOFTWARE\Microsoft\Internet Explorer\EdgeIntegration')
+    $keys.Add('HKLM:\SOFTWARE\Microsoft\Internet Explorer\EdgeDebugActivation')
+    # The same per account, and in the profile new accounts are copied from.
+    # microsoft-edge: is what Search, Widgets, and Settings open links with;
+    # after an uninstall it points at a pwahelper.exe whose only job is the
+    # Store page that reinstalls Edge.
+    $perUser = @('SOFTWARE\Microsoft\Edge', 'SOFTWARE\Microsoft\Edge Beta', 'SOFTWARE\Microsoft\Edge Dev', 'SOFTWARE\Microsoft\Edge SxS',
+                 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft Edge',
+                 'SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe',
+                 'SOFTWARE\Clients\StartMenuInternet\Microsoft Edge',
+                 'SOFTWARE\Microsoft\Windows\Shell\Associations\UrlAssociations\microsoft-edge',
+                 'SOFTWARE\Microsoft\Windows\Shell\Associations\UrlAssociations\microsoft-edge-holographic')
+    # The per-account updater records Edge writes while it runs (its logon
+    # launch command, usage ids), which outlive it. Edge's channels only:
+    # WebView2 keeps a ClientState of its own beside them.
+    foreach ($sub in 'Clients', 'ClientState', 'ClientStateMedium') {
+        foreach ($g in $script:EdgeGuids.Values) { $perUser += "SOFTWARE\Microsoft\EdgeUpdate\$sub\$g" }
+    }
+    $classes =@('MSEdgeHTM', 'MSEdgePDF', 'MSEdgeMHT', 'MSEdgeBHTML', 'MSEdgeDHTML', 'microsoft-edge', 'microsoft-edge-holographic')
+    foreach ($c in $classes) { $keys.Add("HKLM:\SOFTWARE\Classes\$c") }
+    $hives = @(Select-WDAccountHives -Hives (Get-WDUserHives) -Default $Context.DefaultHive -Accounts (Get-WDContextAccounts $Context))
+    foreach ($h in $hives) {
+        foreach ($p in $perUser) { $keys.Add("$($h.Path)\$p") }
+        foreach ($c in $classes) { $keys.Add("$($h.Path)\SOFTWARE\Classes\$c") }
+    }
+    $kr = Invoke-WDRegistryKeyAction -Context $Context -Action ([pscustomobject]@{ type = 'registryKey'; paths = $keys.ToArray() })
+    if ([string]$kr.Status -eq 'Removed') { $steps.Add("$([regex]::Match([string]$kr.Message, '^\d+').Value) of Edge's registry keys removed") }
+    elseif ([string]$kr.Status -eq 'Blocked') { Write-WDLog "Some of Edge's registrations could not be removed: $($kr.Detail)" -Level Warn -Item $Context.ItemId }
 
-    # 7. What the uninstaller left of Edge's own folder. Only Edge's: EdgeCore
+    # Values rather than keys: Edge's name in the registered-browsers list, the
+    # add-on's entry in the IE add-on policy list, and Startup Boost.
+    $vals = New-Object System.Collections.Generic.List[psobject]
+    $vals.Add([pscustomobject]@{ path = 'HKLM:\SOFTWARE\RegisteredApplications'; name = 'Microsoft Edge'; delete = $true })
+    $vals.Add([pscustomobject]@{ path = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Ext\CLSID'; name = '{1FD49718-1D00-4B19-AF5F-070AF6D5D54C}'; delete = $true })
+    $mr = Invoke-WDRegistryAction -Context $Context -Action ([pscustomobject]@{ type = 'registry'; scope = 'machine'; values = $vals.ToArray() })
+    $uvals = New-Object System.Collections.Generic.List[psobject]
+    $uvals.Add([pscustomobject]@{ path = 'SOFTWARE\RegisteredApplications'; name = 'Microsoft Edge'; delete = $true })
+    foreach ($h in $hives) {
+        foreach ($r in 'SOFTWARE\Microsoft\Windows\CurrentVersion\Run', 'SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run') {
+            $k = $null
+            try { $k = Get-Item -LiteralPath "$($h.Path)\$r" -ErrorAction Stop } catch { }
+            if (-not $k) { continue }
+            foreach ($n in $k.GetValueNames()) {
+                if ($n -like 'MicrosoftEdgeAutoLaunch_*' -and -not @($uvals | Where-Object { $_.path -eq $r -and $_.name -eq $n }).Count) {
+                    $uvals.Add([pscustomobject]@{ path = $r; name = $n; delete = $true })
+                }
+            }
+        }
+    }
+    $ur = Invoke-WDRegistryAction -Context $Context -Action ([pscustomobject]@{ type = 'registry'; scope = 'allusers'; values = $uvals.ToArray() })
+    if ('Changed' -in @([string]$mr.Status, [string]$ur.Status)) { $steps.Add('Edge registered-browser and startup entries removed') }
+
+    # 4. What the uninstaller left of Edge's own folder. Only Edge's: EdgeCore
     # is WebView2's servicing copy (its msedge.dll is a hardlink of the one in
     # EdgeWebView), EdgeWebView is WebView2, EdgeUpdate is parked above, and the
     # Copilot folders were never Edge's to take. The old ^(Edge|Copilot) sweep
-    # deleted all of those but EdgeWebView.
+    # deleted all of those but EdgeWebView. Not in a preview: nothing here has
+    # a preview of its own.
+    if ($Context.Preview) { return @($steps) }
     $sweepRoots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) |
         Where-Object { $_ } | ForEach-Object { Join-Path $_ 'Microsoft' }
     $edgeProcs = @('msedge', 'MicrosoftEdgeUpdate', 'identity_helper',
@@ -816,9 +1020,29 @@ Register-WDHandler 'RemoveEdge' {
     if ($swept)  { $steps.Add("$swept leftover folder$(if ($swept -ne 1) { 's' }) deleted") }
     if ($queued) { $steps.Add("$queued leftover folder$(if ($queued -ne 1) { 's' }) queued for deletion at restart") }
 
-    Set-WDRebootNeeded
-    New-WDResult -Status Removed -Message 'Edge removed and reinstall blocked' `
-                 -Detail (($steps | Sort-Object -Unique) -join ', ') -Reboot
+    # 5. The installer the updater cached for the browser channels. Not
+    # WebView2's or the updater's own, which sit beside it under their ids.
+    foreach ($c in (Get-WDEdgeInstallerCachePaths)) {
+        $r = Remove-WDStubbornDirectory -Path $c -ProcessNames @('MicrosoftEdgeUpdate')
+        if ($r.Gone) { $steps.Add('cached Edge installer deleted') }
+        elseif ($r.Pending) { $steps.Add('cached Edge installer queued for deletion at restart') }
+        else { Write-WDLog "The cached Edge installer at $c could not be removed - $($r.Note)." -Level Warn -Item $Context.ItemId }
+    }
+
+    # 6. Firewall rules for Edge's own program, which an uninstall leaves - by
+    # program path, so WebView2's rules beside them are kept. Not journalled
+    # for the same reason as the folders: an Edge install writes them again.
+    try {
+        foreach ($f in @(Get-NetFirewallApplicationFilter -ErrorAction Stop | Where-Object { [string]$_.Program -match '\\Microsoft\\Edge( Beta| Dev)?\\Application\\' })) {
+            $rule = $f | Get-NetFirewallRule -ErrorAction SilentlyContinue
+            if (-not $rule) { continue }
+            $rule | Remove-NetFirewallRule -ErrorAction Stop
+            $steps.Add("firewall rule '$($rule.DisplayName)' removed")
+        }
+    } catch {
+        Write-WDLog "Edge's firewall rules could not be read or removed: $($_.Exception.Message)" -Level Warn -Item $Context.ItemId
+    }
+    @($steps)
 }
 
 Register-WDHandler 'CloseResurrectionPaths' {
@@ -915,29 +1139,28 @@ Register-WDHandler 'CloseResurrectionPaths' {
         elseif ($r.Status -ne 'NotPresent')       { $left.Add("consumer features policy: $($r.Message)") }
     } else { $did.Add('bundled app delivery was already blocked') }
 
-    # 4. Edge reinstall vectors, and only when Edge is actually gone: an
-    # un-updating browser is a worse outcome than the one this guards against.
+    # 4. Edge's way back through its updater, once Edge is gone: the updater's
+    # records of it and the installer it cached. Never the updater itself, which
+    # is WebView2's only updater too - this used to disable it, leaving WebView2
+    # unpatched, and InstallDefault, which it also wrote, binds only on a
+    # domain.
     if (-not (Test-Path (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'))) {
-        $inst = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate' `
-                                  -Name 'InstallDefault' -ErrorAction SilentlyContinue).InstallDefault
-        $live = @(Get-Service -Name 'edgeupdate','edgeupdatem' -ErrorAction SilentlyContinue |
-                  Where-Object { $_.StartType -ne 'Disabled' })
-        if ($inst -ne 0 -or $live.Count) {
-            & $say "Edge is gone but its updater is still live and will put it back - $verb both halves."
-            $r = Invoke-WDRegistryAction -Context $Context -Action ([pscustomobject]@{
-                type = 'registry'; scope = 'machine'
-                values = @([pscustomobject]@{
-                    path = 'HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate'
-                    name = 'InstallDefault'; kind = 'DWord'; value = 0 })
-            })
-            if ($r.Status -notin @('Changed','Removed','NotPresent')) { $left.Add("EdgeUpdate policy: $($r.Message)") }
-            if ($live.Count) {
-                $s = Invoke-WDServiceAction -Context $Context -Action ([pscustomobject]@{
-                    type = 'service'; startupType = 'Disabled'; names = @('edgeupdate','edgeupdatem') })
-                if ($s.Status -notin @('Changed','Removed','NotPresent')) { $left.Add("EdgeUpdate services: $($s.Message)") }
+        $rec   = @(Get-WDEdgeUpdateRecordPaths | Where-Object { Test-Path -LiteralPath $_ })
+        $cache = @(Get-WDEdgeInstallerCachePaths)
+        if ($rec.Count -or $cache.Count) {
+            & $say "Edge is gone but its updater still has $(if ($rec.Count) { 'a record of it' } else { 'its installer cached' }) and would put it back - $verb that."
+            if ($rec.Count) {
+                $r = Invoke-WDRegistryKeyAction -Context $Context -Action ([pscustomobject]@{ type = 'registryKey'; paths = $rec })
+                if ($r.Status -notin @('Removed','NotPresent')) { $left.Add("the updater's record of Edge: $($r.Message)") }
             }
-            $shut.Add('the Edge updater')
-        } else { $did.Add('Edge cannot reinstall itself') }
+            if ($cache.Count -and -not $Context.Preview) {
+                foreach ($c in $cache) {
+                    $d = Remove-WDStubbornDirectory -Path $c -ProcessNames @('MicrosoftEdgeUpdate')
+                    if (-not $d.Gone -and -not $d.Pending) { $left.Add("the cached Edge installer: $($d.Note)") }
+                }
+            }
+            $shut.Add("the updater's way back to Edge")
+        } else { $did.Add('Edge cannot reinstall itself through its updater') }
     }
 
     # 5. PushToInstall re-adding removed in-box apps.

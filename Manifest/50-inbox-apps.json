@@ -713,7 +713,7 @@
                                              "symptoms": ["edge missing", "no browser", "cannot open links", "you will need an app to open this", "links not opening", "pdf will not open", "html will not open", "edge gone", "browser missing", "app shows blank page", "webview not working", "email links broken"],
                                              "bloat": 3,
                                              "name":  "Uninstall Microsoft Edge",
-                                             "desc":  "Uninstalls the Edge browser, and once it is gone switches off its updater and the Windows Update channel that reinstalls it. Windows allows this only on a PC set up in the EEA, and current builds only from Settings, where it opens Installed apps for one click. Anywhere else it reports Blocked and Edge is left exactly as it was, still updating. WebView2 Runtime is kept.",
+                                             "desc":  "Uninstalls the Edge browser, and once it is gone - removed by this or any other way - clears what it leaves: Game Assist, its Store packages and registrations, and everything that would put it back, including the Windows Update channel and the updater's records and cached installer. Edge Update itself stays, because it is also what patches WebView2. Windows allows the uninstall only on a PC set up in the EEA, and current builds only from Settings, where it opens Installed apps for one click; anywhere else it reports Blocked and Edge is left exactly as it was.",
                                              "risk":  1,
                                              "default":  true,
                                              "order":  92,
@@ -725,7 +725,7 @@
                                                          ],
                                              "tier":  3,
                                              "reboot":  true,
-                                             "riskNote":  "Windows decides whether Edge may be uninstalled at all, from the device setup region picked when Windows was first set up: outside about thirty-five EEA regions the answer is no, and nothing a script can do changes that without defeating a Windows protection, so there this item reports Blocked and changes nothing. Inside them, current builds accept the uninstall only when Settings starts it, so Installed apps is opened for the click; run the item again afterwards to switch the updater off. Once Edge is gone, the updater it shares with WebView2 goes off, so WebView2 - which apps that embed a browser use - stops receiving security updates until Edge or the updater is reinstalled. If a replacement browser was picked and did not install, Edge is kept rather than leaving the machine with no browser. A few Windows surfaces expect Edge and may fall back awkwardly.",
+                                             "riskNote":  "Windows decides whether Edge may be uninstalled at all, from the device setup region picked when Windows was first set up: outside about thirty-five EEA regions the answer is no, and nothing a script can do changes that without defeating a Windows protection, so there this item reports Blocked and changes nothing. Inside them, current builds accept the uninstall only when Settings starts it, so Installed apps is opened for the click; run the item again afterwards to clear what it left. Edge Update is kept on purpose: it is also the only updater for WebView2, which Windows Search and many apps show web content with, and Microsoft documents that a WebView2 update never installs the browser. It is left with no record of Edge, no cached Edge installer, and a policy against Copilot installs (Copilot ships its own copy of Edge's engine), which Edge Update honours only on PCs managed by a domain or MDM. A Windows feature update, repair install, or reset can still put Edge back from the Windows image, and outside the EEA this item cannot take it off again. Links Windows opens with microsoft-edge: (from Search, Widgets, and some Settings pages) stop working. If a replacement browser was picked and did not install, Edge is kept rather than leaving the machine with no browser.",
                                              "covers":  [
                                                             "Microsoft Edge",
                                                             "Microsoft Edge Update*",
@@ -734,6 +734,25 @@
                                                             "edgeupdatem",
                                                             "MicrosoftEdgeElevationService"
                                                         ]
+                                         },
+                                         {
+                                             "id":  "remove-edge-data",
+                                             "requires":  "remove-edge",
+                                             "settingsPath": "Restore the folders from the Recycle Bin, or undo the run. Once the bin is emptied there is no way back.",
+                                             "symptoms": ["edge history gone", "edge passwords gone", "edge favorites gone", "edge profile missing", "lost edge data"],
+                                             "name":  "Delete Edge's browsing data",
+                                             "desc":  "Once Edge is uninstalled, moves its profile - history, saved sign-ins, cookies, and caches - to the Recycle Bin for each account the run writes to. Edge's uninstaller keeps it on purpose.",
+                                             "riskNote":  "Anything you kept in Edge goes with it: export bookmarks and passwords first, or import them into your new browser, which needs Edge's data still here. The folders sit in the Recycle Bin until you empty it, or are deleted outright if the run is set to be irreversible. Nothing happens while Edge is still installed.",
+                                             "risk":  1,
+                                             "default":  false,
+                                             "order":  93,
+                                             "actions":  [
+                                                             {
+                                                                 "type":  "script",
+                                                                 "handler":  "RemoveEdgeProfileData"
+                                                             }
+                                                         ],
+                                             "tier":  0
                                          }
                                      ]
                        }
